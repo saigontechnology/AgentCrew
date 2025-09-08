@@ -1,6 +1,6 @@
 [project]
 name = "agentcrew-ai"
-version = "0.6.10"
+version = "0.6.11"
 requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",

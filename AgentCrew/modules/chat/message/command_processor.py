@@ -687,8 +687,7 @@ class CommandProcessor:
             # Notify user about the state change
             status = "enabled" if new_state else "disabled"
             self.message_handler._notify(
-                "system_message",
-                f"🔄 Transfer enforcement is now {status}."
+                "system_message", f"🔄 Transfer enforcement is now {status}."
             )
 
             return CommandResult(handled=True, clear_flag=True)
