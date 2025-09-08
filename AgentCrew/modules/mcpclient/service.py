@@ -385,6 +385,30 @@ class MCPService:
                 "description": tool.description,
                 "input_schema": tool.inputSchema,
             }
+        if provider == "github_copilot":
+            from jsonref import replace_refs
+            import json
+
+            merged_inputSchema_string = json.dumps(
+                replace_refs(
+                    tool.inputSchema,
+                    merge_props=True,
+                    jsonschema=True,
+                ),
+                indent=2,
+            )
+            merged_inputSchema = json.loads(merged_inputSchema_string)
+            if "$defs" in merged_inputSchema:
+                del merged_inputSchema["$defs"]
+            return {
+                "type": "function",
+                "function": {
+                    "name": namespaced_name,
+                    "description": tool.description,
+                    "parameters": merged_inputSchema,
+                },
+            }
+
         else:  # Default format (OpenAI-compatible)
             return {
                 "type": "function",
