@@ -93,6 +93,8 @@ class CommandProcessor:
             return await self._handle_voice_command(user_input)
         elif user_input.lower() == "/end_voice":
             return await self._handle_end_voice_command(user_input)
+        elif user_input.lower() == "/toggle_transfer":
+            return self._handle_toggle_transfer_command(user_input)
         return CommandResult(handled=False)
 
     def _is_exit_command(self, user_input: str) -> bool:
@@ -672,4 +674,27 @@ class CommandProcessor:
         except Exception as e:
             self.message_handler._notify("error", f"End voice command failed: {str(e)}")
             self.message_handler._notify("voice_recording_completed", None)
+            return CommandResult(handled=True, clear_flag=True)
+
+    def _handle_toggle_transfer_command(self, user_input: str) -> CommandResult:
+        """Handle /toggle_transfer command to toggle the enforce_transfer property of agent_manager."""
+        try:
+            # Toggle the enforce_transfer property
+            current_state = self.message_handler.agent_manager.enforce_transfer
+            self.message_handler.agent_manager.enforce_transfer = not current_state
+            new_state = self.message_handler.agent_manager.enforce_transfer
+
+            # Notify user about the state change
+            status = "enabled" if new_state else "disabled"
+            self.message_handler._notify(
+                "system_message",
+                f"🔄 Transfer enforcement is now {status}."
+            )
+
+            return CommandResult(handled=True, clear_flag=True)
+
+        except Exception as e:
+            self.message_handler._notify(
+                "error", f"Failed to toggle transfer enforcement: {str(e)}"
+            )
             return CommandResult(handled=True, clear_flag=True)

@@ -471,13 +471,22 @@ class LocalAgent(BaseAgent):
             ):
                 adaptive_messages = {
                     "role": "user",
-                    "content": [
+                    "content": [],
+                }
+                if (
+                    self.services.get("agent_manager")
+                    and self.services["agent_manager"].enforce_transfer
+                ):
+                    adaptive_messages["content"].append(
                         {
                             "type": "text",
-                            "text": "Before processing my request, evaluate other agents capabilities and transfer my request other agent are more suitable. Keep the evaluating concise in xml format within <agent_evaluation> tags.",
-                        },
-                    ],
-                }
+                            "text": """Before processing my request:
+- Break my request into sub-tasks when applicable.
+- For each sub-task, evaluate other agents capabilities.
+- Transfer sub-task to other agent if they are more suitable. 
+- Keep the evaluating quick and concise using xml format within <agent_evaluation> tags.""",
+                        }
+                    )
 
                 if len(adaptive_behaviors.keys()) > 0:
                     adaptive_text = ""
@@ -493,6 +502,7 @@ Ask for clarification if uncertain which behaviors apply.
 END OF ADAPTABLE BEHAVIORS.""",
                         }
                     )
+                print(adaptive_messages)
                 last_user_index = -1
                 for i, msg in reversed(list(enumerate(final_messages))):
                     if msg.get("role", "assistant") == "user":
@@ -524,29 +534,29 @@ END OF ADAPTABLE BEHAVIORS.""",
                     ) = self.llm.process_stream_chunk(
                         chunk, assistant_response, _tool_uses
                     )
-                    if (
-                        "<agent_evaluation>" in assistant_response
-                        and "</agent_evaluation>" not in assistant_response
-                    ):
-                        continue
-                    transfer_index_start = assistant_response.find("<agent_evaluation>")
-                    transfer_index_end = assistant_response.find("</agent_evaluation>")
-                    if transfer_index_start >= 0 and transfer_index_end >= 0:
-                        assistant_response = (
-                            assistant_response[:transfer_index_start]
-                            + assistant_response[transfer_index_end + 19 :]
-                        )
-                    if chunk_text:
-                        chunk_transfer_index_start = chunk_text.find(
-                            "<agent_evaluation>"
-                        )
-                        if chunk_transfer_index_start >= 0:
-                            chunk_text = chunk_text[:chunk_transfer_index_start]
-                        chunk_transfer_index_end = chunk_text.find(
-                            "</agent_evaluation>"
-                        )
-                        if chunk_transfer_index_end >= 0:
-                            chunk_text = chunk_text[chunk_transfer_index_end + 19 :]
+                    # if (
+                    #     "<agent_evaluation>" in assistant_response
+                    #     and "</agent_evaluation>" not in assistant_response
+                    # ):
+                    #     continue
+                    # transfer_index_start = assistant_response.find("<agent_evaluation>")
+                    # transfer_index_end = assistant_response.find("</agent_evaluation>")
+                    # if transfer_index_start >= 0 and transfer_index_end >= 0:
+                    #     assistant_response = (
+                    #         assistant_response[:transfer_index_start]
+                    #         + assistant_response[transfer_index_end + 19 :]
+                    #     )
+                    # if chunk_text:
+                    #     chunk_transfer_index_start = chunk_text.find(
+                    #         "<agent_evaluation>"
+                    #     )
+                    #     if chunk_transfer_index_start >= 0:
+                    #         chunk_text = chunk_text[:chunk_transfer_index_start]
+                    #     chunk_transfer_index_end = chunk_text.find(
+                    #         "</agent_evaluation>"
+                    #     )
+                    #     if chunk_transfer_index_end >= 0:
+                    #         chunk_text = chunk_text[chunk_transfer_index_end + 19 :]
                     yield (assistant_response, chunk_text, thinking_chunk)
 
                     if tool_uses:

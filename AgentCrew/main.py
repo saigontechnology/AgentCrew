@@ -717,6 +717,7 @@ def a2a_server(
         # Get agent manager
         agent_manager = AgentManager.get_instance()
 
+        agent_manager.enforce_transfer = False
         # Create and start server
         from AgentCrew.modules.a2a.server import A2AServer
 

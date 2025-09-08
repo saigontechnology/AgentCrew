@@ -62,6 +62,7 @@ class AgentManager:
         if not self._initialized:
             self.agents: Dict[str, BaseAgent] = {}
             self.current_agent: Optional[BaseAgent] = None
+            self.enforce_transfer: bool = True  # Flag to enforce agent transfers
             self._initialized = True
 
     @classmethod
@@ -540,10 +541,26 @@ When system access is requested:
          • Set clear expectations about what the specialist will deliver
 
       4. **POST_ACTION_SPECIFICATION:**
-         • Define next steps when logical continuation exists
+         • Define next steps following Post_Action_Templates when logical continuation exists
          • Examples: "ask user for next phase", "report completion status", "transfer to [specific agent] for implementation"
          • Omit if task completion is the final objective
     </Transfer_Execution_Rules>
+    
+    <Post_Action_Templates>
+        <Handback_Protocol>
+            When task requires return to original agent:
+            • Define clear handback conditions
+            • Specify expected deliverables format
+            • Include success/failure criteria
+        </Handback_Protocol>
+
+        <Chain_Transfer>
+            For multi-agent workflows:
+            • Define transfer chain: Agent A → B → C
+            • Set checkpoint validations between transfers
+            • Allow for conditional branching
+        </Chain_Transfer>
+    </Post_Action_Templates>
 
     <Tool_Usage>
       Required parameters for `transfer` tool:
