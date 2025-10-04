@@ -185,6 +185,7 @@ class ChatCompleter(Completer):
             ("/load", "Load a conversation (usage: /load <conversation_id>)"),
             ("/help", "Show help message"),
             ("/toggle_transfer", "Toggle agent transfer enforcement on/off"),
+            ("/toggle_yolo", "Toggle YOLO mode for auto-approval of tool calls"),
             ("/exit", "Exit the application"),
             ("/quit", "Exit the application"),
         ]

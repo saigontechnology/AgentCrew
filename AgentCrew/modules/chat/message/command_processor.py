@@ -95,6 +95,8 @@ class CommandProcessor:
             return await self._handle_end_voice_command(user_input)
         elif user_input.lower() == "/toggle_transfer":
             return self._handle_toggle_transfer_command(user_input)
+        elif user_input.lower() == "/toggle_yolo":
+            return self._handle_toggle_yolo_command(user_input)
         return CommandResult(handled=False)
 
     def _is_exit_command(self, user_input: str) -> bool:
@@ -715,5 +717,43 @@ class CommandProcessor:
         except Exception as e:
             self.message_handler._notify(
                 "error", f"Failed to toggle transfer enforcement: {str(e)}"
+            )
+            return CommandResult(handled=True, clear_flag=True)
+
+    def _handle_toggle_yolo_command(self, user_input: str) -> CommandResult:
+        """Handle /toggle_yolo command to toggle YOLO mode for auto-approval of tool calls."""
+        try:
+            # Initialize config management
+            config_management = ConfigManagement()
+            global_config = config_management.read_global_config_data()
+
+            # Get current YOLO mode state
+            current_state = global_config.get("global_settings", {}).get("yolo_mode", False)
+            new_state = not current_state
+
+            # Update the global config
+            if "global_settings" not in global_config:
+                global_config["global_settings"] = {}
+            global_config["global_settings"]["yolo_mode"] = new_state
+
+            # Save the updated config
+            config_management.write_global_config_data(global_config)
+
+            # Update the current tool manager's yolo_mode setting
+            self.message_handler.tool_manager.yolo_mode = new_state
+
+            # Notify user about the state change
+            status = "enabled" if new_state else "disabled"
+            emoji = "🚀" if new_state else "🛡️"
+            self.message_handler._notify(
+                "system_message", 
+                f"{emoji} YOLO mode is now {status}. Tool auto-approval: {'ON' if new_state else 'OFF'}."
+            )
+
+            return CommandResult(handled=True, clear_flag=True)
+
+        except Exception as e:
+            self.message_handler._notify(
+                "error", f"Failed to toggle YOLO mode: {str(e)}"
             )
             return CommandResult(handled=True, clear_flag=True)

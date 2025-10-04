@@ -292,6 +292,10 @@ class DisplayHandlers:
                 "Use '/toggle_transfer' to toggle agent transfer enforcement.",
                 style=RICH_STYLE_YELLOW,
             ),
+            Text(
+                "Use '/toggle_yolo' to toggle YOLO mode (auto-approval of tool calls).",
+                style=RICH_STYLE_YELLOW,
+            ),
             Text("Use '/list' to list saved conversations.", style=RICH_STYLE_YELLOW),
             Text(
                 "Use '/load <id>' or '/load <number>' to load a conversation.",
