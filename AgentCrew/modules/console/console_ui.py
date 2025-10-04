@@ -419,6 +419,25 @@ class ConsoleUI(Observer):
                         self.print_welcome_message()
                         continue
 
+                    # Handle toggle_yolo command directly (console only, session-based)
+                    if user_input.strip() == "/toggle_yolo":
+                        try:
+                            # Toggle YOLO mode in the tool manager (session-only, no config update)
+                            current_state = self.message_handler.tool_manager.get_effective_yolo_mode()
+                            new_state = not current_state
+                            self.message_handler.tool_manager.set_yolo_mode_session_override(new_state)
+                            
+                            # Notify user about the state change
+                            status = "enabled" if new_state else "disabled"
+                            status_text = Text("🚀 YOLO mode is now ", style=RICH_STYLE_YELLOW)
+                            status_text.append(f"{status}", style=RICH_STYLE_YELLOW_BOLD)
+                            status_text.append(" (auto-approval of tool calls).")
+                            self.console.print(status_text)
+                        except Exception as e:
+                            error_text = Text(f"❌ Failed to toggle YOLO mode: {str(e)}", style=RICH_STYLE_YELLOW)
+                            self.console.print(error_text)
+                        continue
+
                     # Start loading animation while waiting for response
                     if (
                         not user_input.startswith("/")

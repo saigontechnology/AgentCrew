@@ -349,9 +349,11 @@ class MessageHandler(Observable):
                 config_management = ConfigManagement()
                 global_config = config_management.read_global_config_data()
 
-                self.tool_manager.yolo_mode = global_config.get(
-                    "global_settings", {}
-                ).get("yolo_mode", False)
+                # Only update yolo_mode if there's no session override
+                if self.tool_manager.yolo_mode_session_override is None:
+                    self.tool_manager.yolo_mode = global_config.get(
+                        "global_settings", {}
+                    ).get("yolo_mode", False)
 
                 # Process each tool use
                 for tool_use in tool_uses:
