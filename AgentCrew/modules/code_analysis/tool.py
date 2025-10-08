@@ -87,12 +87,20 @@ def get_file_content_tool_definition(provider="claude"):
     Returns:
         Dict containing the tool definition
     """
-    tool_description = "Reads the content of a file, or a specific code element within that file (function or class body). Use this to examine the logic of specific functions, the structure of classes, or the overall content of a file."
+    tool_description = "Reads the content of a file, or a specific lines within that file (function or class body). Use this to examine the logic of specific functions, the structure of classes, or the overall content of a file."
 
     tool_arguments = {
         "file_path": {
             "type": "string",
             "description": "The relative path from the current directory of the agent to the local repository file. Example: 'src/my_module.py'",
+        },
+        "start_line": {
+            "type": "integer",
+            "description": "Optional. The starting line number (1-indexed) to begin reading from. If provided with end_line, only reads the specified line range.",
+        },
+        "end_line": {
+            "type": "integer",
+            "description": "Optional. The ending line number (1-indexed) to stop reading at (inclusive). If provided with start_line, only reads the specified line range.",
         },
     }
     tool_required = ["file_path"]
@@ -129,6 +137,8 @@ def get_file_content_tool_handler(
 
     def handler(**params) -> str:
         file_path = params.get("file_path", "./")
+        start_line = params.get("start_line")
+        end_line = params.get("end_line")
 
         if not file_path:
             raise Exception("File path is required")
@@ -136,7 +146,9 @@ def get_file_content_tool_handler(
         if not os.path.isabs(file_path):
             file_path = os.path.abspath(file_path)
 
-        results = code_analysis_service.get_file_content(file_path)
+        results = code_analysis_service.get_file_content(
+            file_path, start_line=start_line, end_line=end_line
+        )
 
         content = ""
 

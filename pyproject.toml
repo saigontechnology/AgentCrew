@@ -1,6 +1,6 @@
 [project]
 name = "agentcrew-ai"
-version = "0.6.17-2"
+version = "0.6.18-1"
 requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -52,6 +52,7 @@ dependencies = [
   "jsonref>=1.1.0",
   "pychromedevtools>=0.3.3",
   "html-to-markdown[lxml]>=1.14.0",
+  "pip-system-certs>=5.2",
 ]
 
 [project.optional-dependencies]

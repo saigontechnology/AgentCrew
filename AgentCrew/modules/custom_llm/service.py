@@ -92,6 +92,7 @@ class CustomLLMService(OpenAIService):
                         tool_call.pop("arguments", {})
                     )
             if msg.get("role") == "tool":
+                msg.pop("tool_name", None)
                 cleaned_tool_content = []
                 if isinstance(msg.get("content", ""), List):
                     for tool_content in msg["content"]:

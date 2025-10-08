@@ -952,6 +952,7 @@ class CodeAnalysisService:
 
             node_type = node.get("type", "")
             node_name = node.get("name", "")
+            node_lines = f"(L:{node.get('start_line', '')}-{node.get('end_line', '')})"
 
             # Handle decorated functions - extract the actual function definition
             if node_type == "decorated_definition" and "children" in node:
@@ -992,7 +993,7 @@ class CodeAnalysisService:
                 "module",
                 "type_declaration",
             }:
-                node_info = f"class {node_name}"
+                node_info = f"class {node_name}{node_lines}"
             elif node_type in {
                 "function_definition",
                 "function_declaration",
@@ -1013,7 +1014,7 @@ class CodeAnalysisService:
             }:
                 # Handle parameters
                 if "first_line" in node:
-                    node_info = node["first_line"]
+                    node_info = node["first_line"] + node_lines
                 else:
                     params = []
                     modfilers = ""
@@ -1038,7 +1039,7 @@ class CodeAnalysisService:
                     params_str = params_str.replace("\n", "")
                     if "modifiers" in node:
                         modfilers = " ".join(node["modifiers"]) + " "
-                    node_info = f"{modfilers}{node_name}({params_str})"
+                    node_info = f"{modfilers}{node_name}({params_str}){node_lines}"
             else:
                 if "first_line" in node:
                     node_info = node["first_line"]
@@ -1211,138 +1212,55 @@ class CodeAnalysisService:
         )
 
     def get_file_content(
-        self, file_path, element_type=None, element_name=None, scope_path=None
+        self,
+        file_path,
+        start_line=None,
+        end_line=None,
     ) -> Dict[str, str]:
-        """Return the content of a file, optionally extracting only a specific element."""
-        # First, read the whole file
+        """
+        Return the content of a file, optionally reading only a specific line range.
+
+        Args:
+            file_path: Path to the file to read
+            start_line: Optional starting line number (1-indexed)
+            end_line: Optional ending line number (1-indexed, inclusive)
+
+        Returns:
+            Dictionary with file content (key: "file", value: file content string)
+        """
+        # Read the whole file
         with open(file_path, "rb") as file:
             content = file.read()
 
-        # If no specific element requested, return the whole file
-        if not element_type or not element_name:
-            return {"file": content.decode("utf-8")}
+        decoded_content = content.decode("utf-8")
 
-        # Use tree-sitter to parse and extract specific elements
-        language = self._detect_language(file_path)
+        # If line range is specified, extract those lines
+        if start_line is not None and end_line is not None:
+            # Validate line range
+            if start_line < 1:
+                raise ValueError("start_line must be >= 1")
+            if end_line < start_line:
+                raise ValueError("end_line must be >= start_line")
 
-        if not language:
-            raise ValueError(f"Could not detect language for file: {file_path}")
+            lines = decoded_content.split("\n")
+            total_lines = len(lines)
 
-        parser = self._get_language_parser(language)
+            # Validate bounds
+            if start_line > total_lines:
+                raise ValueError(
+                    f"start_line {start_line} exceeds file length ({total_lines} lines)"
+                )
+            if end_line > total_lines:
+                raise ValueError(
+                    f"end_line {end_line} exceeds file length ({total_lines} lines)"
+                )
 
-        tree = parser.parse(content)
-        root_node = tree.root_node
+            # Extract the line range (convert to 0-indexed)
+            selected_lines = lines[start_line - 1 : end_line]
+            return {"file": "\n".join(selected_lines)}
 
-        # Find all matching elements
-        matches = []
-        self._find_matching_nodes(
-            content, root_node, element_type, element_name, scope_path, matches
-        )
-
-        if not matches:
-            raise ValueError(f"No {element_type} named '{element_name}' found")
-
-        # Format the results
-        results = {}
-        for idx, node in enumerate(matches):
-            # Generate a unique key for each match
-            if len(matches) > 1:
-                # If we have a scope path for this node, use it
-                if hasattr(node, "scope_path") and node.scope_path:
-                    key = f"{element_type}:{node.scope_path}"
-                else:
-                    key = f"{element_type}:{element_name}_{idx + 1}"
-            else:
-                key = f"{element_type}:{element_name}"
-
-            # Extract the text for this node
-            results[key] = self._extract_node_text(node, content)
-
-        return results
-
-    def _find_matching_nodes(
-        self,
-        source_code,
-        node,
-        element_type,
-        element_name,
-        scope_path=None,
-        matches=None,
-    ):
-        """Recursively find nodes matching the given type and name."""
-        if matches is None:
-            matches = []
-
-        # Check if this node is a class or function definition
-        is_target_type = False
-        if element_type == "class" and node.type in self.class_types:
-            is_target_type = True
-        elif element_type == "function" and node.type in self.function_types:
-            is_target_type = True
-
-        # If this is our target type, check if the name matches
-        if is_target_type:
-            # Find the identifier (name) node
-            name_node = None
-            for child in node.children:
-                if child.type == "identifier" or child.type == "name":
-                    name_node = child
-                    break
-
-            if name_node:
-                node_name = self._extract_node_text(name_node, source_code)
-                if node_name == element_name:
-                    # If scope_path provided, check if this node is in that scope
-                    if scope_path:
-                        # Calculate the scope path for this node
-                        current_scope_path = self._get_node_scope_path(
-                            source_code, node
-                        )
-                        if current_scope_path == scope_path:
-                            node.scope_path = current_scope_path
-                            matches.append(node)
-                    else:
-                        # No scope path specified, so include all matches
-                        matches.append(node)
-
-        # Recurse through child nodes
-        for child in node.children:
-            self._find_matching_nodes(
-                source_code, child, element_type, element_name, scope_path, matches
-            )
-
-        return matches
-
-    def _get_node_scope_path(self, source_code, node):
-        """Calculate the full scope path for a node."""
-        # Start with the node's name
-        name_node = None
-        for child in node.children:
-            if child.type == "identifier" or child.type == "name":
-                name_node = child
-                break
-
-        if not name_node:
-            return ""
-
-        node_name = self._extract_node_text(name_node, source_code)
-
-        # Find parent scope(s)
-        scope_parts = [node_name]
-        parent = node.parent
-
-        while parent:
-            if parent.type in ("class_definition", "class"):
-                # Found a class parent, add to path
-                for child in parent.children:
-                    if child.type == "identifier" or child.type == "name":
-                        parent_name = self._extract_node_text(child, source_code)
-                        scope_parts.insert(0, parent_name)
-                        break
-
-            parent = parent.parent
-
-        return ".".join(scope_parts)
+        # Return the whole file
+        return {"file": decoded_content}
 
     def _format_analysis_results(
         self,

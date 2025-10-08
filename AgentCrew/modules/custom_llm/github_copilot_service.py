@@ -88,6 +88,7 @@ class GithubCopilotService(CustomLLMService):
             if msg.get("role") == "tool":
                 # Special treatment for GitHub Copilot GPT-4.1 model
                 # At the the time of writing, GitHub Copilot GPT-4.1 model cannot read tool results with array content
+                msg.pop("tool_name", None)
                 if isinstance(msg.get("content", ""), List):
                     if self._is_github_provider() and self.model != "gpt-4.1":
                         # OpenAI format for tool responses

@@ -67,7 +67,7 @@ wheels = [
 
 [[package]]
 name = "agentcrew-ai"
-version = "0.6.17.post2"
+version = "0.6.18.post1"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },
@@ -85,6 +85,7 @@ dependencies = [
     { name = "numpy", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version >= '3.13' and extra == 'extra-12-agentcrew-ai-cpu' and extra == 'extra-12-agentcrew-ai-nvidia') or (sys_platform != 'darwin' and extra == 'extra-12-agentcrew-ai-cpu' and extra == 'extra-12-agentcrew-ai-nvidia')" },
     { name = "openai" },
     { name = "pillow" },
+    { name = "pip-system-certs" },
     { name = "prompt-toolkit" },
     { name = "pychromedevtools" },
     { name = "pyobjc", marker = "sys_platform == 'darwin' or (extra == 'extra-12-agentcrew-ai-cpu' and extra == 'extra-12-agentcrew-ai-nvidia')" },
@@ -149,6 +150,7 @@ requires-dist = [
     { name = "numpy", marker = "python_full_version < '3.13' and sys_platform == 'darwin'", specifier = ">=1.24.4,<2" },
     { name = "openai", specifier = ">=1.65.2" },
     { name = "pillow", specifier = ">=11.0.0" },
+    { name = "pip-system-certs", specifier = ">=5.2" },
     { name = "prompt-toolkit", specifier = ">=3.0.50" },
     { name = "pychromedevtools", specifier = ">=0.3.3" },
     { name = "pyobjc", marker = "sys_platform == 'darwin'" },
@@ -2463,6 +2465,27 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f0/77/bc6f92a3e8e6e46c0ca78abfffec0037845800ea38c73483760362804c41/pillow-11.3.0-cp314-cp314t-win32.whl", hash = "sha256:118ca10c0d60b06d006be10a501fd6bbdfef559251ed31b794668ed569c87e12", size = 6377370, upload-time = "2025-07-01T09:15:46.673Z" },
     { url = "https://files.pythonhosted.org/packages/4a/82/3a721f7d69dca802befb8af08b7c79ebcab461007ce1c18bd91a5d5896f9/pillow-11.3.0-cp314-cp314t-win_amd64.whl", hash = "sha256:8924748b688aa210d79883357d102cd64690e56b923a186f35a82cbc10f997db", size = 7121500, upload-time = "2025-07-01T09:15:48.512Z" },
     { url = "https://files.pythonhosted.org/packages/89/c7/5572fa4a3f45740eaab6ae86fcdf7195b55beac1371ac8c619d880cfe948/pillow-11.3.0-cp314-cp314t-win_arm64.whl", hash = "sha256:79ea0d14d3ebad43ec77ad5272e6ff9bba5b679ef73375ea760261207fa8e0aa", size = 2512835, upload-time = "2025-07-01T09:15:50.399Z" },
+]
+
+[[package]]
+name = "pip"
+version = "25.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/16/650289cd3f43d5a2fadfd98c68bd1e1e7f2550a1a5326768cddfbcedb2c5/pip-25.2.tar.gz", hash = "sha256:578283f006390f85bb6282dffb876454593d637f5d1be494b5202ce4877e71f2", size = 1840021, upload-time = "2025-07-30T21:50:15.401Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/3f/945ef7ab14dc4f9d7f40288d2df998d1837ee0888ec3659c813487572faa/pip-25.2-py3-none-any.whl", hash = "sha256:6d67a2b4e7f14d8b31b8b52648866fa717f45a1eb70e83002f4331d07e953717", size = 1752557, upload-time = "2025-07-30T21:50:13.323Z" },
+]
+
+[[package]]
+name = "pip-system-certs"
+version = "5.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pip" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/0c/a338ae5d49192861cf54da4d5c2af0efe47edbaa0827995b284005366ca5/pip_system_certs-5.2.tar.gz", hash = "sha256:80b776b5cf17191bf99d313699b7fce2fdb84eb7bbb225fd134109a82706406f", size = 5408, upload-time = "2025-06-17T23:33:15.322Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/ce/608bbe82759363d6e752dd370daf066be3be8e7ffdb79838501ed6104173/pip_system_certs-5.2-py3-none-any.whl", hash = "sha256:e6ef3e106d4d02313e33955c2bcc4c2b143b2da07ef91e28a6805a0c1c512126", size = 5866, upload-time = "2025-06-17T23:33:14.554Z" },
 ]
 
 [[package]]

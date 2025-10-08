@@ -1,7 +1,6 @@
 import nest_asyncio
 from AgentCrew.modules.config import ConfigManagement
 import click
-import importlib
 import os
 import sys
 import traceback
@@ -198,6 +197,23 @@ def setup_services(provider, memory_llm=None):
         click.echo(f"⚠️ Browser automation service not available: {str(e)}")
         browser_automation_service = None
 
+    try:
+        from AgentCrew.modules.file_editing import FileEditingService
+
+        file_editing_service = FileEditingService()
+    except Exception as e:
+        click.echo(f"⚠️ File editing service not available: {str(e)}")
+        file_editing_service = None
+
+    # Initialize command execution service
+    try:
+        from AgentCrew.modules.command_execution import CommandExecutionService
+
+        command_execution_service = CommandExecutionService.get_instance()
+    except Exception as e:
+        click.echo(f"⚠️ Command execution service not available: {str(e)}")
+        command_execution_service = None
+
     # Register all tools with their respective services
     services = {
         "llm": llm_service,
@@ -208,6 +224,8 @@ def setup_services(provider, memory_llm=None):
         "context_persistent": context_service,
         "image_generation": image_gen_service,
         "browser": browser_automation_service,
+        "file_editing": file_editing_service,
+        "command_execution": command_execution_service,
     }
     return services
 
@@ -324,52 +342,6 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
             click.echo(
                 f"⚠️ Unknown agent: {first_agent_name}. Using default agent. Available agents: {available_agents}"
             )
-
-
-def discover_and_register_tools(services=None):
-    """
-    Discover and register all tools
-
-    DEPRECATED: This function is deprecated and will be removed in a future version.
-    Use setup_agents() and register_agent_tools() instead.
-
-    Args:
-        services: Dictionary mapping service names to service instances
-    """
-    import warnings
-
-    warnings.warn(
-        "discover_and_register_tools is deprecated. Use setup_agents() and register_agent_tools() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    if services is None:
-        services = {}
-
-    # List of tool modules and their corresponding service keys
-    tool_modules = [
-        ("modules.memory.tool", "memory"),
-        ("modules.code_analysis.tool", "code_analysis"),
-        ("modules.clipboard.tool", "clipboard"),
-        ("modules.web_search.tool", "web_search"),
-        ("modules.coding.tool", "aider"),
-        ("modules.image_generation.tool", "image_generation"),
-    ]
-
-    for module_name, service_key in tool_modules:
-        try:
-            module = importlib.import_module(module_name)
-            if hasattr(module, "register"):
-                service_instance = services.get(service_key)
-                module.register(service_instance)
-                # print(f"✅ Registered tools from {module_name}")
-        except ImportError as e:
-            print(f"⚠️ Error importing tool module {module_name}: {e}")
-
-    from AgentCrew.modules.mcpclient.tool import register as mcp_register
-
-    mcp_register()
 
 
 @cli.command()

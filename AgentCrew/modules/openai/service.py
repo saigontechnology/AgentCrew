@@ -67,6 +67,7 @@ class OpenAIService(BaseLLMService):
     def _convert_internal_format(self, messages: List[Dict[str, Any]]):
         for msg in messages:
             msg.pop("agent", None)
+            msg.pop("tool_name", None)
             if "tool_calls" in msg and msg.get("tool_calls", []):
                 for tool_call in msg["tool_calls"]:
                     tool_call["function"] = {}
