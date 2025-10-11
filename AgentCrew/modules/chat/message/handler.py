@@ -10,7 +10,6 @@ from AgentCrew.modules.chat.history import ChatHistoryManager
 from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.chat.file_handler import FileHandler
 
-from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.memory import (
     BaseMemoryService,
     ContextPersistenceService,
