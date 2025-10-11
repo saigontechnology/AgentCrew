@@ -21,8 +21,11 @@ class ToolManager:
 
         self._pending_confirmations = {}  # Store futures for confirmation requests
         self._next_confirmation_id = 0  # ID counter for confirmation requests
-        self.yolo_mode = False  # Enable/disable auto-approval mode
-        self.yolo_mode_session_override = False  # Track session-based overrides
+
+        # Initialize yolo_mode from config
+        config_manager = ConfigManagement()
+        global_config = config_manager.read_global_config_data()
+        self.yolo_mode = global_config.get("global_settings", {}).get("yolo_mode", False)
 
     def _load_persistent_auto_approved_tools(self):
         """Load persistent auto-approved tools from config."""
@@ -74,7 +77,7 @@ class ToolManager:
 
         if (
             not self.message_handler.is_non_interactive
-            and not (self.yolo_mode_session_override or self.yolo_mode)
+            and not self.yolo_mode
             and tool_name not in self._auto_approved_tools
         ):
             # Request confirmation from the user

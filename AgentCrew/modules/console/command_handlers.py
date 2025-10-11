@@ -135,14 +135,10 @@ class CommandHandlers:
         Handle the /toggle_yolo command to toggle YOLO mode for auto-approval of tool calls.
         This toggles the effective YOLO state via session override.
         """
-        current_effective = (
-            self.message_handler.tool_manager.yolo_mode_session_override
-            or self.message_handler.tool_manager.yolo_mode
-        )
+        next_status = not self.message_handler.tool_manager.yolo_mode
+        self.message_handler.tool_manager.yolo_mode = next_status
 
-        self.message_handler.tool_manager.yolo_mode_session_override = not current_effective
-
-        status = "enabled" if not current_effective else "disabled"
+        status = "enabled" if next_status else "disabled"
         status_text = Text("🚀 YOLO mode is now ", style=RICH_STYLE_YELLOW)
         status_text.append(f"{status}", style=RICH_STYLE_YELLOW_BOLD)
         status_text.append(" (auto-approval of tool calls).")
