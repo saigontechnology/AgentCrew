@@ -15,6 +15,7 @@ from rich.text import Text
 
 from AgentCrew.modules.console.constants import (
     RICH_STYLE_YELLOW,
+    RICH_STYLE_YELLOW_BOLD,
 )
 from AgentCrew.modules.chat.message.handler import MessageHandler
 from AgentCrew.modules.config.config_management import ConfigManagement
@@ -128,6 +129,27 @@ class CommandHandlers:
         )
 
         self.open_file_in_editor(config_path)
+
+    def handle_toggle_yolo_command(self) -> None:
+        """
+        Handle the /toggle_yolo command to toggle YOLO mode for auto-approval of tool calls.
+
+        This toggles the session-based YOLO mode override without persisting to config.
+        """
+        # Toggle YOLO mode in the tool manager (session-only, no config update)
+        current_state = (
+            self.message_handler.tool_manager.yolo_mode_session_override
+            or self.message_handler.tool_manager.yolo_mode
+        )
+        new_state = not current_state
+        self.message_handler.tool_manager.yolo_mode_session_override = new_state
+
+        # Notify user about the state change
+        status = "enabled" if new_state else "disabled"
+        status_text = Text("🚀 YOLO mode is now ", style=RICH_STYLE_YELLOW)
+        status_text.append(f"{status}", style=RICH_STYLE_YELLOW_BOLD)
+        status_text.append(" (auto-approval of tool calls).")
+        self.console.print(status_text)
 
     def handle_export_agent_command(
         self, agent_names_str: str, output_file: str

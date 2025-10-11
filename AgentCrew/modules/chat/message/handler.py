@@ -357,7 +357,7 @@ class MessageHandler(Observable):
                 global_config = config_management.read_global_config_data()
 
                 # Only update yolo_mode if there's no session override
-                if self.tool_manager.yolo_mode_session_override is None:
+                if not self.tool_manager.yolo_mode_session_override:
                     self.tool_manager.yolo_mode = global_config.get(
                         "global_settings", {}
                     ).get("yolo_mode", False)
