@@ -113,7 +113,7 @@ class ConversationManager:
                 )
 
                 self.message_handler.last_assisstant_response_idx = len(
-                    self.message_handler.agent.history
+                    self.message_handler.streamline_messages
                 )
                 try:
                     self.message_handler.latest_assistant_response = (

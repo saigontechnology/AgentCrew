@@ -19,8 +19,6 @@ from PySide6.QtWidgets import (
     QTabWidget,
 )
 import os
-import toml
-import json
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 
@@ -887,8 +885,8 @@ class AgentsConfigTab(QWidget):
             )
             return
 
-        # Load the configuration file
         try:
+            # First, try to load to check for conflicts
             temp_config = ConfigManagement(import_file_path)
             imported_config = temp_config.get_config()
 
@@ -904,150 +902,100 @@ class AgentsConfigTab(QWidget):
                 )
                 return
 
+            # Check for conflicts
+            existing_agent_names = set()
+            for i in range(self.agents_list.count()):
+                item = self.agents_list.item(i)
+                agent_data = item.data(Qt.ItemDataRole.UserRole)
+                existing_agent_names.add(agent_data.get("name", ""))
+
+            # Find conflicts
+            conflict_names = []
+            imported_names = []
+
+            for agent in local_agents:
+                name = agent.get("name", "")
+                if name:
+                    imported_names.append(name)
+                    if name in existing_agent_names:
+                        conflict_names.append(name)
+
+            for agent in remote_agents:
+                name = agent.get("name", "")
+                if name:
+                    imported_names.append(name)
+                    if name in existing_agent_names:
+                        conflict_names.append(name)
+
+            # If there are conflicts, ask user how to proceed
+            skip_conflicts = False
+            if conflict_names:
+                conflict_list = "\n".join([f"• {name}" for name in conflict_names])
+
+                message_box = QMessageBox(self)
+                message_box.setWindowTitle("Agent Name Conflicts")
+                message_box.setIcon(QMessageBox.Icon.Warning)
+                message_box.setText(
+                    f"The following agent(s) already exist and will be overridden:\n\n"
+                    f"{conflict_list}\n\n"
+                    f"How would you like to proceed?"
+                )
+
+                override_btn = message_box.addButton(
+                    "Override", QMessageBox.ButtonRole.AcceptRole
+                )
+                skip_btn = message_box.addButton(
+                    "Skip Conflicts", QMessageBox.ButtonRole.ActionRole
+                )
+
+                message_box.exec()
+
+                clicked_button = message_box.clickedButton()
+                if clicked_button == override_btn:
+                    skip_conflicts = False
+                elif clicked_button == skip_btn:
+                    skip_conflicts = True
+                else:
+                    return  # User canceled
+
+            # Use ConfigManagement to import agents
+            result = self.config_manager.import_agents(
+                import_file_path, merge_strategy="update", skip_conflicts=skip_conflicts
+            )
+
+            if not result["success"]:
+                QMessageBox.critical(
+                    self,
+                    "Import Error",
+                    f"Failed to import agents:\n{result.get('error', 'Unknown error')}",
+                )
+                return
+
+            # Reload agents in UI
+            self.load_agents()
+
+            # Select the first imported agent in the list if any were imported
+            if result["imported_agents"]:
+                index = self._find_agent_index_by_name(result["imported_agents"][0])
+                if index >= 0:
+                    self.agents_list.setCurrentRow(index)
+
+            # Show success message
+            status_message = f"Successfully imported {result['added_count'] + result['updated_count']} agent(s)."
+
+            if result["added_count"] > 0:
+                status_message += f"\n• Added: {result['added_count']}"
+            if result["updated_count"] > 0:
+                status_message += f"\n• Updated: {result['updated_count']}"
+            if result["skipped_count"] > 0:
+                status_message += f"\n• Skipped: {result['skipped_count']}"
+
+            QMessageBox.information(self, "Import Complete", status_message)
+
         except Exception as e:
             QMessageBox.critical(
-                self, "Import Error", f"Failed to load agent configuration: {str(e)}"
+                self, "Import Error", f"Failed to import agent configuration: {str(e)}"
             )
-            return
-
-        # Check for conflicts
-        existing_agent_names = set()
-        for i in range(self.agents_list.count()):
-            item = self.agents_list.item(i)
-            agent_data = item.data(Qt.ItemDataRole.UserRole)
-            existing_agent_names.add(agent_data.get("name", ""))
-
-        # Find conflicts
-        conflict_names = []
-        imported_names = []
-
-        for agent in local_agents:
-            name = agent.get("name", "")
-            if name:
-                imported_names.append(name)
-                if name in existing_agent_names:
-                    conflict_names.append(name)
-
-        for agent in remote_agents:
-            name = agent.get("name", "")
-            if name:
-                imported_names.append(name)
-                if name in existing_agent_names:
-                    conflict_names.append(name)
-
-        # If there are conflicts, show warning dialog
-        user_choice = "import_all"  # Default: import all
-        if conflict_names:
-            conflict_list = "\n".join([f"• {name}" for name in conflict_names])
-
-            message_box = QMessageBox(self)
-            message_box.setWindowTitle("Agent Name Conflicts")
-            message_box.setIcon(QMessageBox.Icon.Warning)
-            message_box.setText(
-                f"The following agent(s) already exist and will be overridden:\n\n"
-                f"{conflict_list}\n\n"
-                f"How would you like to proceed?"
-            )
-
-            override_btn = message_box.addButton(
-                "Override", QMessageBox.ButtonRole.AcceptRole
-            )
-            skip_btn = message_box.addButton(
-                "Skip Conflicts", QMessageBox.ButtonRole.ActionRole
-            )
-            _ = message_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-
-            message_box.exec()
-
-            clicked_button = message_box.clickedButton()
-            if clicked_button == override_btn:
-                user_choice = "import_all"
-            elif clicked_button == skip_btn:
-                user_choice = "skip_conflicts"
-            else:
-                user_choice = "cancel"
-
-        if user_choice == "cancel":
-            return
-
-        # Process the import based on user's choice
-        imported_count = 0
-        skipped_count = 0
-
-        # Get current config to update
-        current_local_agents = self.agents_config.get("agents", [])
-        current_remote_agents = self.agents_config.get("remote_agents", [])
-
-        # Process local agents
-        for imported_agent in local_agents:
-            name = imported_agent.get("name", "")
-            if not name:
-                continue
-
-            is_conflict = name in existing_agent_names
-
-            if is_conflict and user_choice == "skip_conflicts":
-                skipped_count += 1
-                continue
-
-            if is_conflict:
-                current_local_agents = [
-                    a for a in current_local_agents if a.get("name") != name
-                ]
-                current_remote_agents = [
-                    a for a in current_remote_agents if a.get("name") != name
-                ]
-
-            if "enabled" not in imported_agent:
-                imported_agent["enabled"] = True
-
-            current_local_agents.append(imported_agent)
-            imported_count += 1
-
-        for imported_agent in remote_agents:
-            name = imported_agent.get("name", "")
-            if not name:
-                continue
-
-            is_conflict = name in existing_agent_names
-
-            if is_conflict and user_choice == "skip_conflicts":
-                skipped_count += 1
-                continue
-
-            if is_conflict:
-                current_local_agents = [
-                    a for a in current_local_agents if a.get("name") != name
-                ]
-                current_remote_agents = [
-                    a for a in current_remote_agents if a.get("name") != name
-                ]
-
-            if "enabled" not in imported_agent:
-                imported_agent["enabled"] = True
-
-            current_remote_agents.append(imported_agent)
-            imported_count += 1
-
-        # Update the configuration
-        self.agents_config["agents"] = current_local_agents
-        self.agents_config["remote_agents"] = current_remote_agents
-
-        # Save the updated configuration and refresh the UI
-        self.config_manager.write_agents_config(self.agents_config)
-        self.load_agents()
-
-        # Select the first imported agent in the list if any were imported
-        if imported_count > 0 and imported_names:
-            index = self._find_agent_index_by_name(imported_names[0])
-            if index >= 0:
-                self.agents_list.setCurrentRow(index)
-
-        status_message = f"Successfully imported {imported_count} agent(s)."
-        if skipped_count > 0:
-            status_message += f" Skipped {skipped_count} agent(s) due to conflicts."
-
-        QMessageBox.information(self, "Import Complete", status_message)
 
     def export_agents(self):
         """Export selected agents to a file."""
@@ -1058,29 +1006,27 @@ class AgentsConfigTab(QWidget):
             )
             return
 
-        selected_agents_data = []
-        selected_remote_agents_data = []
-
+        # Collect agent names
+        agent_names = []
         for item in selected_items:
             agent_data = item.data(Qt.ItemDataRole.UserRole)
-            agent_type = agent_data.get("agent_type", "local")
+            agent_name = agent_data.get("name")
+            if agent_name:
+                agent_names.append(agent_name)
 
-            export_data = agent_data.copy()
-            export_data.pop("agent_type", None)
-
-            if agent_type == "local":
-                selected_agents_data.append(export_data)
-            elif agent_type == "remote":
-                selected_remote_agents_data.append(export_data)
-
-        if len(selected_items) == 1:
-            agent_name = (
-                selected_items[0].data(Qt.ItemDataRole.UserRole).get("name", "agent")
+        if not agent_names:
+            QMessageBox.warning(
+                self, "No Agents", "No valid agents selected for export."
             )
-            default_filename = f"{agent_name}_export"
+            return
+
+        # Determine default filename
+        if len(selected_items) == 1:
+            default_filename = f"{agent_names[0]}_export"
         else:
             default_filename = f"agents_export_{len(selected_items)}_agents"
 
+        # File dialog
         file_dialog = QFileDialog(self)
         file_dialog.setWindowTitle("Export Agent Configuration")
         file_dialog.setFileMode(QFileDialog.FileMode.AnyFile)
@@ -1103,25 +1049,32 @@ class AgentsConfigTab(QWidget):
         )
 
         try:
-            export_config = {}
-            if selected_agents_data:
-                export_config["agents"] = selected_agents_data
-            if selected_remote_agents_data:
-                export_config["remote_agents"] = selected_remote_agents_data
-
-            with open(export_file_path, "w", encoding="utf-8") as f:
-                if file_format == "toml":
-                    toml.dump(export_config, f)
-                else:
-                    json.dump(export_config, f, indent=2, ensure_ascii=False)
-
-            agent_count = len(selected_items)
-            agent_word = "agent" if agent_count == 1 else "agents"
-            QMessageBox.information(
-                self,
-                "Export Successful",
-                f"Successfully exported {agent_count} {agent_word} to:\n{export_file_path}",
+            # Use ConfigManagement to export agents
+            result = self.config_manager.export_agents(
+                agent_names, export_file_path, file_format=file_format
             )
+
+            if not result["success"]:
+                QMessageBox.critical(
+                    self,
+                    "Export Error",
+                    f"Failed to export agents:\n{result.get('error', 'Unknown error')}",
+                )
+                return
+
+            # Show success message
+            agent_count = result["exported_count"]
+            agent_word = "agent" if agent_count == 1 else "agents"
+
+            message = f"Successfully exported {agent_count} {agent_word} to:\n{result['output_file']}"
+
+            if result["missing_agents"]:
+                message += (
+                    "\n\nWarning: The following agents were not found:\n"
+                    + "\n".join(result["missing_agents"])
+                )
+
+            QMessageBox.information(self, "Export Successful", message)
 
         except Exception as e:
             QMessageBox.critical(

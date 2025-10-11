@@ -10,7 +10,6 @@ from AgentCrew.modules.chat.history import ChatHistoryManager
 from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.chat.file_handler import FileHandler
 
-# from AgentCrew.modules.llm.message import MessageTransformer
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.memory import (
     BaseMemoryService,
@@ -89,12 +88,9 @@ class MessageHandler(Observable):
 
     def _messages_append(self, message):
         """Append a message to the agent history and streamline messages."""
-        self.agent.history.append(message)
-
-        # std_msg = MessageTransformer.standardize_messages(
-        #     [message], self.agent.get_provider(), self.agent.name
-        # )
         self.streamline_messages.append(message)
+
+        self.agent.append_message(message)
 
     def _prepare_files_processing(self, file_command):
         file_paths_str: str = file_command[6:].strip()
@@ -274,29 +270,40 @@ class MessageHandler(Observable):
                             "<agent_evaluation>" in assistant_response
                             and "</agent_evaluation>" in assistant_response
                         ) or (
-                            "<agent_evaluation>" not in assistant_response
+                            # First token of agent evaluation
+                            "<agent" not in assistant_response
                             and "</agent_evaluation>" not in assistant_response
                         ):
                             voice_sentence += chunk_text
 
                     if (
                         voice_sentence
-                        and "\n" in voice_sentence.strip()
+                        and "\n" in voice_sentence.lstrip("\n ").strip("<>_-")
                         and self.voice_service
                         and voice_id
                     ):
-                        voice_sentence = voice_sentence.replace(
-                            "<agent_evaluation>", ""
-                        ).replace("</agent_evaluation>", "")
-                        self.voice_service.text_to_speech_stream(
-                            voice_sentence.strip().partition("\n")[0], voice_id=voice_id
+                        voice_sentence = (
+                            voice_sentence.replace("<agent_evaluation>", "")
+                            .replace("</agent_evaluation>", "")
+                            .replace("<agent", "")
+                            .replace("evaluation>", "")
+                            .lstrip("\n ")
+                            .strip("<>_-")
                         )
-                        if voice_mode == "partial":
-                            voice_sentence = None
-                        else:
-                            voice_sentence = (
-                                voice_sentence.strip().partition("\n")[-1].lstrip("\n")
+                        print(voice_sentence)
+                        if len(voice_sentence.split("\n")) > 1:
+                            self.voice_service.text_to_speech_stream(
+                                voice_sentence.strip().partition("\n")[0],
+                                voice_id=voice_id,
                             )
+                            if voice_mode == "partial":
+                                voice_sentence = None
+                            else:
+                                voice_sentence = (
+                                    voice_sentence.strip()
+                                    .partition("\n")[-1]
+                                    .lstrip("\n")
+                                )
 
             # End thinking when break the response stream
             if not end_thinking and start_thinking:
@@ -396,21 +403,13 @@ class MessageHandler(Observable):
             # --- Start of Persistence Logic ---
             if self.current_conversation_id and self.last_assisstant_response_idx >= 0:
                 try:
-                    # Get all messages added since the user input for this turn
-                    # current_provider = self.agent.get_provider()
-                    messages_for_this_turn = self.agent.history[
-                        self.last_assisstant_response_idx :
-                    ]
-                    # MessageTransformer.standardize_messages(
-                    #     self.agent.history[self.last_assisstant_response_idx :],
-                    #     current_provider,
-                    #     self.agent.name,
-                    # )
+                    messages_for_this_turn = self.get_recent_agent_responses()
                     if (
                         messages_for_this_turn
                     ):  # Only save if there are messages for the turn
                         self.persistent_service.append_conversation_messages(
-                            self.current_conversation_id, messages_for_this_turn
+                            self.current_conversation_id,
+                            messages_for_this_turn,
                         )
                         self._notify(
                             "conversation_saved", {"id": self.current_conversation_id}
@@ -420,7 +419,7 @@ class MessageHandler(Observable):
                     logger.error(f"ERROR: {error_message}")
                     self._notify("error", {"message": error_message})
 
-            self.last_assisstant_response_idx = len(self.agent.history)
+            self.last_assisstant_response_idx = len(self.streamline_messages)
             # --- End of Persistence Logic ---
 
             if self.current_user_input and self.current_user_input_idx >= 0:
@@ -464,26 +463,18 @@ class MessageHandler(Observable):
                 self.current_user_input = None
                 self.current_user_input_idx = -1
             if self.current_conversation_id and self.last_assisstant_response_idx >= 0:
-                # Get all messages added since the user input for this turn
-                # current_provider = self.agent.get_provider()
-                messages_for_this_turn = self.agent.history[
-                    self.last_assisstant_response_idx :
-                ]
-                # MessageTransformer.standardize_messages(
-                #     self.agent.history[self.last_assisstant_response_idx :],
-                #     current_provider,
-                #     self.agent.name,
-                # )
+                messages_for_this_turn = self.get_recent_agent_responses()
                 if (
                     messages_for_this_turn
                 ):  # Only save if there are messages for the turn
                     self.persistent_service.append_conversation_messages(
-                        self.current_conversation_id, messages_for_this_turn
+                        self.current_conversation_id,
+                        messages_for_this_turn,
                     )
                     self._notify(
                         "conversation_saved", {"id": self.current_conversation_id}
                     )
-            self.last_assisstant_response_idx = len(self.agent.history)
+            self.last_assisstant_response_idx = len(self.streamline_messages)
 
             error_message = str(e)
             traceback_str = traceback.format_exc()
@@ -496,6 +487,9 @@ class MessageHandler(Observable):
                 },
             )
             return None, 0, 0
+
+    def get_recent_agent_responses(self) -> List:
+        return self.streamline_messages[self.last_assisstant_response_idx :]
 
     # Delegate conversation management methods
     def list_conversations(self):

@@ -83,8 +83,8 @@ class AgentCompleter(Completer):
     def get_completions(self, document, complete_event):
         text = document.text
 
-        # Only provide completions for the /agent command
-        if text.startswith("/agent "):
+        # Only provide completions for the /agent command and /export_agent command
+        if text.startswith("/agent ") or text.startswith("/export_agent "):
             word_before_cursor = document.get_word_before_cursor(
                 pattern=COMPLETER_PATTERN
             )
@@ -140,6 +140,20 @@ class ChatCompleter(Completer):
             yield from self.file_completer.get_completions(document, complete_event)
         elif text.startswith("/drop "):
             yield from self.drop_completer.get_completions(document, complete_event)
+        elif text.startswith("/export_agent "):
+            remaining_text = text[14:]  # Remove "/export_agent "
+
+            if " " in remaining_text and not remaining_text.endswith(","):
+                # User has entered agent names and is now entering file path
+                yield from self.file_completer.get_completions(document, complete_event)
+            else:
+                # User is still entering agent names - suggest available agents
+                yield from self.agent_completer.get_completions(
+                    document, complete_event
+                )
+        elif text.startswith("/import_agent "):
+            # Use file completer for /import_agent command (supports both file paths and URLs)
+            yield from self.file_completer.get_completions(document, complete_event)
         elif text.startswith("/"):
             yield from self.get_command_completions(document)
 
@@ -181,6 +195,20 @@ class ChatCompleter(Completer):
             ),
             ("/file", "Process a file (usage: /file <path>)"),
             ("/drop", "Remove a queued file from processing (usage: /drop <file_id>)"),
+            (
+                "/export_agent",
+                "Export selected agents to TOML file (usage: /export_agent <agent_names> <output_file>)",
+            ),
+            (
+                "/import_agent",
+                "Import/replace agent configuration from file or URL (usage: /import_agent <file_or_url>)",
+            ),
+            ("/edit_agent", "Open agent configuration file in default editor"),
+            ("/edit_mcp", "Open MCP configuration file in default editor"),
+            (
+                "/edit_config",
+                "Open AgentCrew global configuration file in default editor",
+            ),
             ("/list", "List available conversations"),
             ("/load", "Load a conversation (usage: /load <conversation_id>)"),
             ("/help", "Show help message"),

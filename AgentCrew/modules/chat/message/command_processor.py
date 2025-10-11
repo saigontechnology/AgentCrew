@@ -331,7 +331,7 @@ class CommandProcessor:
                 self.message_handler.conversation_turns[: turn_number - 1]
             )
             self.message_handler.last_assisstant_response_idx = len(
-                self.message_handler.agent.history
+                self.message_handler.streamline_messages
             )
 
             self.message_handler._notify(

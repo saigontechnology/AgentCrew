@@ -13,7 +13,7 @@ definitions for the CommandExecutionService.
 MAX_CONCURRENT_COMMANDS = 3
 
 # Maximum lifetime for a single command execution (seconds)
-MAX_COMMAND_LIFETIME = 120
+MAX_COMMAND_LIFETIME = 600
 
 # Maximum output size per command (bytes)
 MAX_OUTPUT_SIZE = 1 * 1024 * 1024  # 1MB

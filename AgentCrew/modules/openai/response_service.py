@@ -91,6 +91,7 @@ class OpenAIResponseService(BaseLLMService):
                 tool_call_list[i] = msg.pop("tool_calls")
             if role == "tool":
                 msg.pop("role", None)
+                msg.pop("tool_name", None)
                 msg["type"] = "function_call_output"
                 msg["call_id"] = msg.pop("tool_call_id", None)
                 msg["output"] = json.dumps(msg.pop("content", []))

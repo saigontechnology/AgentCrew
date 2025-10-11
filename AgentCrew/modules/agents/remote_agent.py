@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Any, List, Optional, Tuple
+from typing import Callable, Dict, Any, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -48,6 +48,12 @@ class RemoteAgent(BaseAgent):
         """
         self.is_active = False
         return True
+
+    def append_message(self, messages: Union[Dict, List[Dict]]):
+        if isinstance(messages, Dict):
+            self.history.append(messages)
+        else:
+            self.history.extend(messages)
 
     @property
     def clean_history(self):

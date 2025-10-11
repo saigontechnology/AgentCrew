@@ -33,6 +33,7 @@ from .input_handler import InputHandler
 from .ui_effects import UIEffects
 from .confirmation_handler import ConfirmationHandler
 from .conversation_handler import ConversationHandler
+from .command_handlers import CommandHandlers
 
 
 class ConsoleUI(Observer):
@@ -70,6 +71,7 @@ class ConsoleUI(Observer):
         self.conversation_handler = ConversationHandler(
             self.console, self.display_handlers
         )
+        self.command_handlers = CommandHandlers(self.console, self.message_handler)
 
     def listen(self, event: str, data: Any = None):
         """
@@ -413,7 +415,6 @@ class ConsoleUI(Observer):
                             )
                         continue
 
-                    # Handle help command directly
                     if user_input.strip() == "/help":
                         self.console.print("\n")
                         self.print_welcome_message()
@@ -426,7 +427,7 @@ class ConsoleUI(Observer):
                             current_state = self.message_handler.tool_manager.get_effective_yolo_mode()
                             new_state = not current_state
                             self.message_handler.tool_manager.set_yolo_mode_session_override(new_state)
-                            
+
                             # Notify user about the state change
                             status = "enabled" if new_state else "disabled"
                             status_text = Text("🚀 YOLO mode is now ", style=RICH_STYLE_YELLOW)
@@ -436,6 +437,72 @@ class ConsoleUI(Observer):
                         except Exception as e:
                             error_text = Text(f"❌ Failed to toggle YOLO mode: {str(e)}", style=RICH_STYLE_YELLOW)
                             self.console.print(error_text)
+                        continue
+
+                    if user_input.strip().startswith("/export_agent "):
+                        # Extract arguments after "/export_agent "
+                        args = user_input.strip()[14:].strip()
+                        if args:
+                            # Split into agent names and output file
+                            # Expected format: /export_agent <agent1,agent2,...> <output_file>
+                            parts = args.rsplit(maxsplit=1)
+                            if len(parts) == 2:
+                                agent_names, output_file = parts
+                                self.command_handlers.handle_export_agent_command(
+                                    agent_names, output_file
+                                )
+                            else:
+                                self.console.print(
+                                    Text(
+                                        "Usage: /export_agent <agent_names> <output_file>\n"
+                                        "Export selected agents to a TOML file.\n"
+                                        "Agent names should be comma-separated.\n"
+                                        "Example: /export_agent Agent1,Agent2 ./my_agents.toml",
+                                        style=RICH_STYLE_YELLOW,
+                                    )
+                                )
+                        else:
+                            self.console.print(
+                                Text(
+                                    "Usage: /export_agent <agent_names> <output_file>\n"
+                                    "Export selected agents to a TOML file.\n"
+                                    "Agent names should be comma-separated.\n"
+                                    "Example: /export_agent Agent1,Agent2 ./my_agents.toml",
+                                    style=RICH_STYLE_YELLOW,
+                                )
+                            )
+                        continue
+
+                    if user_input.strip().startswith("/import_agent "):
+                        file_or_url = user_input.strip()[
+                            14:
+                        ].strip()  # Extract argument after "/import_agent "
+                        if file_or_url:
+                            self.command_handlers.handle_import_agent_command(
+                                file_or_url
+                            )
+                        else:
+                            self.console.print(
+                                Text(
+                                    "Usage: /import_agent <file_path_or_url>\nImport/replace agents from file or URL.\nExample: /import_agent ./agents.toml or /import_agent https://example.com/agents.toml",
+                                    style=RICH_STYLE_YELLOW,
+                                )
+                            )
+                        continue
+
+                    # Handle edit_agent command directly
+                    if user_input.strip() == "/edit_agent":
+                        self.command_handlers.handle_edit_agent_command()
+                        continue
+
+                    # Handle edit_mcp command directly
+                    if user_input.strip() == "/edit_mcp":
+                        self.command_handlers.handle_edit_mcp_command()
+                        continue
+
+                    # Handle edit_config command directly
+                    if user_input.strip() == "/edit_config":
+                        self.command_handlers.handle_edit_config_command()
                         continue
 
                     # Start loading animation while waiting for response

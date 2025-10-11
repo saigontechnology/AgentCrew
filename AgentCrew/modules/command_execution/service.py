@@ -717,6 +717,54 @@ class CommandExecutionService:
         except Exception as e:
             logger.error(f"Cleanup error for {command_id}: {e}")
 
+    def list_running_commands(self) -> Dict[str, Any]:
+        """
+        List all currently running commands.
+
+        Returns:
+            Dict with status and list of running commands with their details
+        """
+        with self._instance_lock:
+            running_commands = []
+
+            for cmd_id, cmd_process in self._instances.items():
+                elapsed = time.time() - cmd_process.start_time
+
+                command_info = {
+                    "command_id": cmd_id,
+                    "command": cmd_process.command,
+                    "state": cmd_process.state.value,
+                    "elapsed_seconds": round(elapsed, 3),
+                    "working_dir": cmd_process.working_dir or "./",
+                    "platform": cmd_process.platform,
+                }
+
+                # Add exit code if completed
+                if cmd_process.exit_code is not None:
+                    command_info["exit_code"] = cmd_process.exit_code
+
+                running_commands.append(command_info)
+
+        return {
+            "status": "success",
+            "count": len(running_commands),
+            "commands": running_commands,
+        }
+
+    def terminate_command(self, command_id: str) -> Dict[str, Any]:
+        """
+        Terminate a running command by its ID.
+
+        This is an alias for cleanup_command with clearer naming for external use.
+
+        Args:
+            command_id: Command identifier
+
+        Returns:
+            Dict with status and message
+        """
+        return self.cleanup_command(command_id)
+
     def get_metrics(self) -> Dict[str, Any]:
         """Get command execution metrics"""
         return self.metrics.get_report()

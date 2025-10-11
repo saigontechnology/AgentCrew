@@ -199,7 +199,6 @@ class ElevenLabsVoiceService(BaseVoiceService):
         try:
             # Clean text for speech
             cleaned_text = self.clean_text_for_speech(text)
-            print(cleaned_text)
 
             if not cleaned_text.strip():
                 logger.warning("No speakable text after cleaning")
@@ -248,10 +247,8 @@ class ElevenLabsVoiceService(BaseVoiceService):
 
             # Queue the TTS request
             try:
-                sentences = text.split(". ")
-                for sentence in sentences:
-                    tts_request = (sentence, voice_id, model_id)
-                    self.tts_queue.put(tts_request, block=False)
+                tts_request = (text, voice_id, model_id)
+                self.tts_queue.put(tts_request, block=False)
                 logger.debug(f"TTS request queued for text: {text[:50]}...")
             except queue.Full:
                 logger.warning(

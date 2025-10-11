@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, Tuple, Dict, List, Optional, Any, Callable
+from typing import AsyncGenerator, Tuple, Dict, List, Optional, Any, Callable, Union
 from enum import Enum
 
 
@@ -38,6 +38,11 @@ class BaseAgent(ABC):
         Returns:
             True if deactivation was successful, False otherwise
         """
+        pass
+
+    @abstractmethod
+    def append_message(self, messages: Union[Dict, List[Dict]]):
+        """Append a message or list of messages to the agent's history."""
         pass
 
     @property

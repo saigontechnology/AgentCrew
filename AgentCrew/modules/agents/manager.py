@@ -3,7 +3,6 @@ import json
 from typing import Dict, Any, Optional, List
 
 from AgentCrew.modules.agents import BaseAgent, LocalAgent
-# from AgentCrew.modules.llm.message import MessageTransformer
 
 
 class AgentManager:
@@ -178,11 +177,7 @@ class AgentManager:
             ]
 
             if agent_messages:
-                agent.history = agent_messages
-                # MessageTransformer.convert_messages(
-                #     agent_messages,
-                #     agent.get_provider(),
-                # )
+                agent.append_message(agent_messages)
 
     def get_current_agent(self) -> BaseAgent:
         """

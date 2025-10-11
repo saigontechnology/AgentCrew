@@ -289,6 +289,26 @@ class DisplayHandlers:
                 style=RICH_STYLE_YELLOW,
             ),
             Text(
+                "Use '/export_agent <agent_names> <output_file>' to export selected agents to a TOML file (comma-separated names).",
+                style=RICH_STYLE_YELLOW,
+            ),
+            Text(
+                "Use '/import_agent <file_or_url>' to import/replace agent configuration from a file or URL.",
+                style=RICH_STYLE_YELLOW,
+            ),
+            Text(
+                "Use '/edit_agent' to open agent configuration file in your default editor.",
+                style=RICH_STYLE_YELLOW,
+            ),
+            Text(
+                "Use '/edit_mcp' to open MCP configuration file in your default editor.",
+                style=RICH_STYLE_YELLOW,
+            ),
+            Text(
+                "Use '/edit_config' to open AgentCrew global configuration file in your default editor.",
+                style=RICH_STYLE_YELLOW,
+            ),
+            Text(
                 "Use '/toggle_transfer' to toggle agent transfer enforcement.",
                 style=RICH_STYLE_YELLOW,
             ),

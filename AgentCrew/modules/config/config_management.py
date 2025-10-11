@@ -612,3 +612,309 @@ class ConfigManagement:
             logger.warning(
                 f"Warning: Failed to {action} tool {tool_name} from auto-approval list: {e}"
             )
+
+    def export_agents(
+        self, agent_names: List[str], output_file: str, file_format: str = "toml"
+    ) -> Dict[str, Any]:
+        """
+        Export selected agents to a file.
+
+        Args:
+            agent_names: List of agent names to export
+            output_file: Path to output file
+            file_format: Output format ('toml' or 'json')
+
+        Returns:
+            Dictionary with export results:
+            {
+                "success": bool,
+                "exported_count": int,
+                "local_count": int,
+                "remote_count": int,
+                "missing_agents": List[str],
+                "output_file": str,
+                "error": str (only if success=False)
+            }
+        """
+        result = {
+            "success": False,
+            "exported_count": 0,
+            "local_count": 0,
+            "remote_count": 0,
+            "missing_agents": [],
+            "output_file": output_file,
+        }
+
+        try:
+            # Read current agents configuration
+            agents_config = self.read_agents_config()
+            local_agents = agents_config.get("agents", [])
+            remote_agents = agents_config.get("remote_agents", [])
+
+            # Filter agents by provided names
+            selected_local_agents = []
+            selected_remote_agents = []
+            found_names = set()
+
+            for agent in local_agents:
+                if agent.get("name") in agent_names:
+                    # Remove agent_type if present (not needed in export)
+                    export_data = {k: v for k, v in agent.items() if k != "agent_type"}
+                    selected_local_agents.append(export_data)
+                    found_names.add(agent.get("name"))
+
+            for agent in remote_agents:
+                if agent.get("name") in agent_names:
+                    # Remove agent_type if present (not needed in export)
+                    export_data = {k: v for k, v in agent.items() if k != "agent_type"}
+                    selected_remote_agents.append(export_data)
+                    found_names.add(agent.get("name"))
+
+            # Check for missing agents
+            missing_names = set(agent_names) - found_names
+            result["missing_agents"] = list(missing_names)
+
+            if not selected_local_agents and not selected_remote_agents:
+                result["error"] = "No matching agents found to export"
+                return result
+
+            # Prepare export configuration
+            export_config = {}
+            if selected_local_agents:
+                export_config["agents"] = selected_local_agents
+                result["local_count"] = len(selected_local_agents)
+            if selected_remote_agents:
+                export_config["remote_agents"] = selected_remote_agents
+                result["remote_count"] = len(selected_remote_agents)
+
+            result["exported_count"] = len(selected_local_agents) + len(
+                selected_remote_agents
+            )
+
+            # Ensure output file has correct extension
+            if file_format == "toml" and not output_file.endswith(".toml"):
+                output_file += ".toml"
+            elif file_format == "json" and not output_file.endswith(".json"):
+                output_file += ".json"
+
+            # Expand user path
+            output_file = os.path.expanduser(output_file)
+            result["output_file"] = output_file
+
+            # Create directory if it doesn't exist
+            output_dir = os.path.dirname(output_file)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+
+            # Write to file
+            with open(output_file, "w", encoding="utf-8") as f:
+                if file_format == "toml":
+                    toml.dump(export_config, f)
+                else:  # json
+                    json.dump(export_config, f, indent=2, ensure_ascii=False)
+
+            result["success"] = True
+            logger.info(f"Exported {result['exported_count']} agents to {output_file}")
+
+        except Exception as e:
+            result["error"] = str(e)
+            logger.error(f"Export agents error: {str(e)}", exc_info=True)
+
+        return result
+
+    def import_agents(
+        self,
+        import_file_path: str,
+        merge_strategy: str = "update",
+        skip_conflicts: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Import agents from a file and merge with existing configuration.
+
+        Args:
+            import_file_path: Path to file to import (local file or URL)
+            merge_strategy: How to handle existing agents:
+                           - "update": Update existing agents (default)
+                           - "skip": Skip existing agents
+                           - "add_only": Only add new agents
+            skip_conflicts: If True, skip conflicting agents; if False, update them
+
+        Returns:
+            Dictionary with import results:
+            {
+                "success": bool,
+                "added_count": int,
+                "updated_count": int,
+                "skipped_count": int,
+                "conflicts": List[str],
+                "imported_agents": List[str],
+                "error": str (only if success=False)
+            }
+        """
+        result = {
+            "success": False,
+            "added_count": 0,
+            "updated_count": 0,
+            "skipped_count": 0,
+            "conflicts": [],
+            "imported_agents": [],
+        }
+
+        temp_file = None
+
+        try:
+            # Handle URL downloads
+            if import_file_path.startswith(("http://", "https://")):
+                import requests
+                import tempfile
+
+                response = requests.get(import_file_path, timeout=30)
+                response.raise_for_status()
+
+                # Create temporary file
+                suffix = (
+                    ".toml"
+                    if "toml" in response.headers.get("content-type", "")
+                    else ".json"
+                )
+                temp_file = tempfile.NamedTemporaryFile(
+                    mode="w", suffix=suffix, delete=False, encoding="utf-8"
+                )
+                temp_file.write(response.text)
+                temp_file.close()
+                import_file_path = temp_file.name
+
+            # Expand user path for local files
+            import_file_path = os.path.expanduser(import_file_path)
+
+            # Validate file exists
+            if not os.path.exists(import_file_path):
+                result["error"] = f"File not found: {import_file_path}"
+                return result
+
+            # Load the configuration file
+            temp_config = ConfigManagement(import_file_path)
+            imported_config = temp_config.get_config()
+
+            # Validate the configuration structure
+            imported_local_agents = imported_config.get("agents", [])
+            imported_remote_agents = imported_config.get("remote_agents", [])
+
+            if not imported_local_agents and not imported_remote_agents:
+                result["error"] = "No agent configurations found in the file"
+                return result
+
+            # Read current agents configuration
+            current_config = self.read_agents_config()
+            current_local_agents = current_config.get("agents", [])
+            current_remote_agents = current_config.get("remote_agents", [])
+
+            # Create maps for quick lookup
+            local_agent_map = {
+                agent.get("name"): agent for agent in current_local_agents
+            }
+            remote_agent_map = {
+                agent.get("name"): agent for agent in current_remote_agents
+            }
+
+            # Track existing names for conflict detection
+            existing_names = set(local_agent_map.keys()) | set(remote_agent_map.keys())
+
+            # Process local agents
+            for agent in imported_local_agents:
+                agent_name = agent.get("name")
+                if not agent_name:
+                    continue
+
+                is_conflict = agent_name in existing_names
+
+                if is_conflict:
+                    result["conflicts"].append(agent_name)
+
+                    if skip_conflicts:
+                        result["skipped_count"] += 1
+                        continue
+
+                    if merge_strategy == "skip":
+                        result["skipped_count"] += 1
+                        continue
+
+                # Ensure enabled field exists
+                if "enabled" not in agent:
+                    agent["enabled"] = True
+
+                if is_conflict:
+                    # Update existing agent
+                    local_agent_map[agent_name] = agent
+                    result["updated_count"] += 1
+                else:
+                    # Add new agent
+                    local_agent_map[agent_name] = agent
+                    result["added_count"] += 1
+
+                result["imported_agents"].append(agent_name)
+
+            # Process remote agents
+            for agent in imported_remote_agents:
+                agent_name = agent.get("name")
+                if not agent_name:
+                    continue
+
+                is_conflict = agent_name in existing_names
+
+                if is_conflict:
+                    if agent_name not in result["conflicts"]:
+                        result["conflicts"].append(agent_name)
+
+                    if skip_conflicts:
+                        result["skipped_count"] += 1
+                        continue
+
+                    if merge_strategy == "skip":
+                        result["skipped_count"] += 1
+                        continue
+
+                # Ensure enabled field exists
+                if "enabled" not in agent:
+                    agent["enabled"] = True
+
+                if is_conflict:
+                    # Update existing agent
+                    remote_agent_map[agent_name] = agent
+                    result["updated_count"] += 1
+                else:
+                    # Add new agent
+                    remote_agent_map[agent_name] = agent
+                    result["added_count"] += 1
+
+                result["imported_agents"].append(agent_name)
+
+            # Prepare final configuration
+            final_config = {}
+            if local_agent_map:
+                final_config["agents"] = list(local_agent_map.values())
+            if remote_agent_map:
+                final_config["remote_agents"] = list(remote_agent_map.values())
+
+            # Save the configuration
+            self.write_agents_config(final_config)
+
+            result["success"] = True
+            logger.info(
+                f"Imported agents: added={result['added_count']}, "
+                f"updated={result['updated_count']}, skipped={result['skipped_count']}"
+            )
+
+        except Exception as e:
+            result["error"] = str(e)
+            logger.error(f"Import agents error: {str(e)}", exc_info=True)
+
+        finally:
+            # Clean up temporary file
+            if temp_file and os.path.exists(temp_file.name):
+                try:
+                    os.unlink(temp_file.name)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temporary file: {e}")
+
+        return result
