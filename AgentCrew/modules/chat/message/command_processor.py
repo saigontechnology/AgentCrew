@@ -95,7 +95,6 @@ class CommandProcessor:
             return await self._handle_end_voice_command(user_input)
         elif user_input.lower() == "/toggle_transfer":
             return self._handle_toggle_transfer_command(user_input)
-
         return CommandResult(handled=False)
 
     def _is_exit_command(self, user_input: str) -> bool:
@@ -716,13 +715,5 @@ class CommandProcessor:
         except Exception as e:
             self.message_handler._notify(
                 "error", f"Failed to toggle transfer enforcement: {str(e)}"
-            )
-            return CommandResult(handled=True, clear_flag=True)
-
-
-
-        except Exception as e:
-            self.message_handler._notify(
-                "error", f"Failed to toggle YOLO mode: {str(e)}"
             )
             return CommandResult(handled=True, clear_flag=True)
