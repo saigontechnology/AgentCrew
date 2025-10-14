@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/saigontechnology-agentcrew-badge.png)](https://mseep.ai/app/saigontechnology-agentcrew)
+
 <p align="center">
   <a href="https://github.com/daltonnyx/AgentCrew">
     <img src="https://saigontechnology.com/wp-content/uploads/2024/09/logo-black-1.svg" alt="AgentCrew Logo" width="300">
