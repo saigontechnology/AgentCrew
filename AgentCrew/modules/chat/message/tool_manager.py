@@ -21,9 +21,7 @@ class ToolManager:
 
         self._pending_confirmations = {}  # Store futures for confirmation requests
         self._next_confirmation_id = 0  # ID counter for confirmation requests
-
-        # Initialize yolo_mode from config
-        self.yolo_mode = False
+        self.yolo_mode = False  # Enable/disable auto-approval mode
 
     def _load_persistent_auto_approved_tools(self):
         """Load persistent auto-approved tools from config."""
