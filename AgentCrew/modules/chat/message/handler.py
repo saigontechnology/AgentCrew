@@ -10,6 +10,7 @@ from AgentCrew.modules.chat.history import ChatHistoryManager
 from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.chat.file_handler import FileHandler
 
+from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.memory import (
     BaseMemoryService,
     ContextPersistenceService,
@@ -350,6 +351,14 @@ class MessageHandler(Observable):
                     )
                     self._messages_append(assistant_message)
                 self._notify("assistant_message_added", assistant_response)
+
+                # This should allows YOLO can be configured on-the-fly without recalled to config too many times
+                config_management = ConfigManagement()
+                global_config = config_management.read_global_config_data()
+
+                self.tool_manager.yolo_mode = global_config.get(
+                    "global_settings", {}
+                ).get("yolo_mode", False)
 
                 # Process each tool use
                 for tool_use in tool_uses:

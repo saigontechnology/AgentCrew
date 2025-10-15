@@ -18,6 +18,7 @@ except ImportError:
 import AgentCrew
 from AgentCrew.modules.chat.message_handler import MessageHandler, Observer
 from AgentCrew.modules import logger
+from AgentCrew.modules.config import ConfigManagement
 from .utils import agent_evaluation_remove
 
 from .constants import (
@@ -72,6 +73,10 @@ class ConsoleUI(Observer):
             self.console, self.display_handlers
         )
         self.command_handlers = CommandHandlers(self.console, self.message_handler)
+
+        config_manager = ConfigManagement()
+        global_config = config_manager.read_global_config_data()
+        self.message_handler.tool_manager.yolo_mode = global_config.get("global_settings", {}).get("yolo_mode", False)
 
     def listen(self, event: str, data: Any = None):
         """

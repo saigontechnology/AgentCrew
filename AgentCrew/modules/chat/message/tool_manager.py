@@ -23,9 +23,7 @@ class ToolManager:
         self._next_confirmation_id = 0  # ID counter for confirmation requests
 
         # Initialize yolo_mode from config
-        config_manager = ConfigManagement()
-        global_config = config_manager.read_global_config_data()
-        self.yolo_mode = global_config.get("global_settings", {}).get("yolo_mode", False)
+        self.yolo_mode = False
 
     def _load_persistent_auto_approved_tools(self):
         """Load persistent auto-approved tools from config."""
