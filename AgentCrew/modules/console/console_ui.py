@@ -74,10 +74,6 @@ class ConsoleUI(Observer):
         )
         self.command_handlers = CommandHandlers(self.console, self.message_handler)
 
-        config_manager = ConfigManagement()
-        global_config = config_manager.read_global_config_data()
-        self.message_handler.tool_manager.yolo_mode = global_config.get("global_settings", {}).get("yolo_mode", False)
-
     def listen(self, event: str, data: Any = None):
         """
         Update method required by the Observer interface. Handles events from the MessageHandler.
