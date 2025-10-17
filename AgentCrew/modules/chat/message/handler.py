@@ -357,6 +357,7 @@ class MessageHandler(Observable):
                 # This should allows YOLO can be configured on-the-fly without recalled to config too many times
                 config_management = ConfigManagement()
                 global_config = config_management.read_global_config_data()
+
                 self.tool_manager.yolo_mode = global_config.get(
                     "global_settings", {}
                 ).get("yolo_mode", False)
