@@ -1,9 +1,8 @@
-import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 from typing import Optional
-from logging import Logger
+from AgentCrew.modules import logger
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -12,13 +11,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
     Validates Bearer token in Authorization header.
     """
 
-    def __init__(
-        self, app, api_key: Optional[str] = None, logger: Optional[Logger] = None
-    ):
+    def __init__(self, app, api_key: Optional[str] = None):
         super().__init__(app)
         self.api_key = api_key or "default-api-key"  # You can configure this
-        self.logger = logger or logging.getLogger(__name__)
-        self.logger.debug("AuthMiddleware initialized.")
+        logger.debug("AuthMiddleware initialized.")
 
     async def dispatch(self, request: Request, call_next):
         """
@@ -75,7 +71,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 status_code=401,
             )
 
-        self.logger.debug("Authentication successful")
+        logger.debug("Authentication successful")
         # Authentication successful, proceed to next handler
         response = await call_next(request)
         return response

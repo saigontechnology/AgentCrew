@@ -348,7 +348,11 @@ class DisplayHandlers:
         title.append(":")
         title.append(f"{model_name}]", style=RICH_STYLE_BLUE)
         title.append(
-            "\n(Press Enter for new line, Ctrl+S/Alt+Enter to submit, Up/Down for history)\n",
+            f"            [{datetime.now().strftime('%H:%M:%S')}]",
+            style=RICH_STYLE_GRAY,
+        )
+        title.append(
+            "\n(Press Enter for new line, Ctrl+S/Alt+Enter to Send, Ctrl+V to paste)\n",
             style=RICH_STYLE_YELLOW,
         )
         self.console.print(title)

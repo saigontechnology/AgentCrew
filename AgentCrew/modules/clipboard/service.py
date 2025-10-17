@@ -5,9 +5,8 @@ import os
 import tempfile
 from PIL import ImageGrab, Image
 from typing import Dict, Any, Optional
-import logging
 
-logger = logging.getLogger(__name__)
+from AgentCrew.modules import logger
 
 
 class ClipboardService:

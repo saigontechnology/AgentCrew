@@ -5,9 +5,9 @@ Service for generating images using OpenAI's DALL-E.
 import os
 import base64
 from typing import Literal, Optional, Dict, Any, List
-import logging
 from datetime import datetime
 from openai import AsyncOpenAI
+from AgentCrew.modules import logger
 
 
 class ImageGenerationService:
@@ -22,7 +22,6 @@ class ImageGenerationService:
         """
         self.api_key = api_key or self._get_api_key()
         self.client = AsyncOpenAI(api_key=self.api_key)
-        self.logger = logging.getLogger("ImageGenerationService")
 
     def _get_api_key(self) -> str:
         """
@@ -72,7 +71,7 @@ class ImageGenerationService:
                 prompt, output_path, size, quality, model, image_paths
             )
         except Exception as e:
-            self.logger.error(f"Image generation failed: {str(e)}")
+            logger.error(f"Image generation failed: {str(e)}")
             return {"error": str(e), "success": False}
 
     async def _generate_image_internal(
@@ -116,7 +115,7 @@ class ImageGenerationService:
                 if os.path.exists(path):
                     images.append(open(path, "rb"))
                 else:
-                    self.logger.warning(f"Image file not found: {path}")
+                    logger.warning(f"Image file not found: {path}")
 
             # Only proceed if we have at least one valid image
             if images:
@@ -127,7 +126,7 @@ class ImageGenerationService:
                         prompt=prompt,
                     )
                 except Exception as e:
-                    self.logger.error(f"Image editing failed: {str(e)}")
+                    logger.error(f"Image editing failed: {str(e)}")
                     return {"error": str(e), "success": False}
             else:
                 return {

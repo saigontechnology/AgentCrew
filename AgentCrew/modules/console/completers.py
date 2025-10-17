@@ -76,7 +76,7 @@ class AgentCompleter(Completer):
     """Completer that shows available agents when typing /agent command."""
 
     def __init__(self):
-        from AgentCrew.modules.agents.manager import AgentManager
+        from AgentCrew.modules.agents import AgentManager
 
         self.agent_manager = AgentManager.get_instance()
 
@@ -212,6 +212,7 @@ class ChatCompleter(Completer):
             ("/list", "List available conversations"),
             ("/load", "Load a conversation (usage: /load <conversation_id>)"),
             ("/help", "Show help message"),
+            ("/retry", "Retry the last assistant response"),
             ("/toggle_transfer", "Toggle agent transfer enforcement on/off"),
             ("/toggle_yolo", "Toggle Auto-Approve Mode for Tool Calls (this session only)"),
             ("/exit", "Exit the application"),

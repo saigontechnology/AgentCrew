@@ -3,10 +3,9 @@
 import os
 import mimetypes
 from typing import Optional, Dict, Any
-import logging
 import sys
+from AgentCrew.modules import logger
 
-logger = logging.getLogger(__name__)
 
 # Docling Configuration
 DOCLING_ENABLED = True  # Toggle to enable/disable Docling integration

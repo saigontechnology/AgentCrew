@@ -1,6 +1,6 @@
 import os
-import logging
 from typing import Optional
+from AgentCrew.modules import logger
 
 # Default constants
 DEFAULT_HISTORY_FILE = os.path.abspath(".chat_histories")
@@ -88,7 +88,7 @@ class ChatHistoryManager:
                             self.history = self.history[-self.history_limit :]
             self.position = len(self.history)
         except Exception as e:
-            logging.error(f"Failed to load chat history: {str(e)}")
+            logger.error(f"Failed to load chat history: {str(e)}")
             self.history = []
             self.position = 0
 
@@ -100,7 +100,7 @@ class ChatHistoryManager:
             with open(self.history_file, "w", encoding="utf-8") as f:
                 f.write(ENTRY_DELIMITER.join(self.history))
         except Exception as e:
-            logging.error(f"Failed to save chat history: {str(e)}")
+            logger.error(f"Failed to save chat history: {str(e)}")
 
     def add_entry(self, entry: str) -> None:
         """

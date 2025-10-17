@@ -13,9 +13,8 @@ import threading
 import time
 import platform
 from typing import Optional
-import logging
 
-logger = logging.getLogger(__name__)
+from AgentCrew.modules import logger
 
 
 class ChromeManager:
@@ -207,7 +206,7 @@ class ChromeManager:
                     chrome_args,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,  # type: ignore
                 )
             else:
                 # Unix: Use process session for process group management

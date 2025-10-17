@@ -1,6 +1,6 @@
 from typing import Optional
 from .config import MCPConfigManager
-from AgentCrew.modules.mcpclient import MCPService
+from .service import MCPService
 from AgentCrew.modules import logger
 
 

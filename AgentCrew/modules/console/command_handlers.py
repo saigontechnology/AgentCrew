@@ -8,20 +8,17 @@ Extracted from ConsoleUI for better code maintainability and separation of conce
 import os
 import subprocess
 import sys
-import logging
 
 from rich.console import Console
 from rich.text import Text
 
-from AgentCrew.modules.console.constants import (
+from .constants import (
     RICH_STYLE_YELLOW,
     RICH_STYLE_YELLOW_BOLD,
 )
 from AgentCrew.modules.chat.message.handler import MessageHandler
 from AgentCrew.modules.config.config_management import ConfigManagement
-
-
-logger = logging.getLogger(__name__)
+from AgentCrew.modules import logger
 
 
 class CommandHandlers:
@@ -129,6 +126,8 @@ class CommandHandlers:
         )
 
         self.open_file_in_editor(config_path)
+        config_mgmt = ConfigManagement()
+        config_mgmt.reload_agents_from_config()
 
     def handle_toggle_yolo_command(self) -> None:
         """

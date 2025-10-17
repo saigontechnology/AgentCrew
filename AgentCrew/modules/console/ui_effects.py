@@ -22,7 +22,6 @@ class UIEffects:
         """Initialize UI effects with a console instance."""
         self.console = console
         self.live = None
-        self._live_text_data = ""
         self._loading_stop_event = None
         self._loading_thread = None
         self.message_handler = message_handler
@@ -75,10 +74,10 @@ class UIEffects:
         """Stop the loading animation."""
         if self._loading_stop_event:
             self._loading_stop_event.set()
+            self._loading_stop_event = None
         if self._loading_thread and self._loading_thread.is_alive():
             self._loading_thread.join(timeout=0.5)
-        self._loading_stop_event = None
-        self._loading_thread = None
+            self._loading_thread = None
 
     def start_streaming_response(self, agent_name: str):
         """Start streaming the assistant's response."""
@@ -88,9 +87,7 @@ class UIEffects:
         self.console.print(
             Text(f"🤖 {agent_name.upper()}:", style=RICH_STYLE_GREEN_BOLD)
         )
-        self.live = Live(
-            "", console=self.console, refresh_per_second=24, vertical_overflow="crop"
-        )
+        self.live = Live("", console=self.console, vertical_overflow="crop")
         self.live.start()
 
     def update_live_display(self, chunk: str):
@@ -99,10 +96,6 @@ class UIEffects:
             self.start_streaming_response(self.message_handler.agent.name)
 
         updated_text = chunk
-        if self._live_text_data == updated_text:
-            # Skip if no change
-            return
-        self._live_text_data = updated_text
 
         # Only show the last part that fits in the console
         lines = updated_text.split("\n")

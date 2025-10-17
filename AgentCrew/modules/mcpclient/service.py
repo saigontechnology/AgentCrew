@@ -4,9 +4,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.types import Prompt, ContentBlock, TextContent, ImageContent, Tool
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.sse import sse_client
 from AgentCrew.modules.agents import AgentManager, LocalAgent
 from AgentCrew.modules.tools.registry import ToolRegistry
 from .config import MCPServerConfig
+from .auth import get_oauth_client_provider, FileTokenStorage
 import asyncio
 import threading
 from AgentCrew.modules import FileLogIO
@@ -27,6 +29,7 @@ class MCPService:
         self._server_connection_tasks: Dict[str, asyncio.Task] = {}
         self._server_shutdown_events: Dict[str, asyncio.Event] = {}
         self.server_prompts: Dict[str, List[Prompt]] = {}
+        self.tokens_storage_cache: Dict[str, FileTokenStorage] = {}
 
     async def _manage_single_connection(
         self, server_config: MCPServerConfig, agent_name: Optional[str] = None
@@ -45,20 +48,36 @@ class MCPService:
                 logger.info(
                     f"MCPService: Using streaming HTTP client for {server_name}"
                 )
-
                 # Prepare headers for the streamable HTTP client
                 headers = server_config.headers if server_config.headers else {}
 
-                async with streamablehttp_client(
-                    server_config.url, headers=headers
-                ) as (
-                    read_stream,
-                    write_stream,
-                    _,
-                ):
+                # Backward compatible with SSE
+                # Get or create token storage for this specific server
+                token_storage = self._get_or_create_token_storage(server_name)
+
+                if server_config.url.endswith("/sse"):
+                    session_contenxt = sse_client(
+                        server_config.url,
+                        headers=headers,
+                        auth=get_oauth_client_provider(
+                            server_config.url, token_storage
+                        ),
+                    )
+                else:
+                    session_contenxt = streamablehttp_client(
+                        server_config.url,
+                        headers=headers,
+                        auth=get_oauth_client_provider(
+                            server_config.url, token_storage
+                        ),
+                    )
+
+                async with session_contenxt as stream_context:
                     logger.info(
                         f"MCPService: streamablehttp_client established for {server_name}"
                     )
+                    read_stream = stream_context[0]
+                    write_stream = stream_context[1]
                     async with ClientSession(read_stream, write_stream) as session:
                         logger.info(
                             f"MCPService: ClientSession established for {server_name}"
@@ -176,6 +195,23 @@ class MCPService:
     ) -> str:
         """Format server ID with optional agent name prefix."""
         return f"{agent_name}__{server_name}" if agent_name else server_name
+
+    def _get_or_create_token_storage(self, server_name: str) -> FileTokenStorage:
+        """
+        Get or create a FileTokenStorage instance for a specific server.
+
+        Args:
+            server_name: Name of the MCP server
+
+        Returns:
+            FileTokenStorage instance for the server
+        """
+        if server_name not in self.tokens_storage_cache:
+            self.tokens_storage_cache[server_name] = FileTokenStorage(server_name)
+            logger.info(
+                f"MCPService: Created new FileTokenStorage for server '{server_name}'"
+            )
+        return self.tokens_storage_cache[server_name]
 
     async def start_server_connection_management(
         self, server_config: MCPServerConfig, agent_name: Optional[str] = None

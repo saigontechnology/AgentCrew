@@ -1,10 +1,9 @@
 import asyncio
-import logging
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable
 
-from AgentCrew.modules.a2a.common.server.utils import new_not_implemented_error
+from .utils import new_not_implemented_error
 from a2a.types import (
     Artifact,
     CancelTaskRequest,
@@ -42,7 +41,7 @@ from a2a.types import (
 )
 
 
-logger = logging.getLogger(__name__)
+from AgentCrew.modules import logger
 
 
 class TaskManager(ABC):
@@ -114,7 +113,7 @@ class InMemoryTaskManager(TaskManager):
                 )
 
             task_result = self.append_task_history(
-                task, task_query_params.historyLength
+                task, task_query_params.history_length
             )
 
         return GetTaskResponse(
@@ -171,13 +170,13 @@ class InMemoryTaskManager(TaskManager):
     async def on_set_task_push_notification(
         self, request: SetTaskPushNotificationConfigRequest
     ) -> SetTaskPushNotificationConfigResponse:
-        logger.info(f"Setting task push notification {request.params.taskId}")
+        logger.info(f"Setting task push notification {request.params.task_id}")
         task_notification_params: TaskPushNotificationConfig = request.params
 
         try:
             await self.set_push_notification_info(
-                task_notification_params.taskId,
-                task_notification_params.pushNotificationConfig,
+                task_notification_params.task_id,
+                task_notification_params.push_notification_config,
             )
         except Exception as e:
             logger.error(f"Error while setting push notification info: {e}")
@@ -227,13 +226,13 @@ class InMemoryTaskManager(TaskManager):
 
     async def upsert_task(self, message_send_params: MessageSendParams) -> Task:
         logger.info(
-            f"Upserting task from message {message_send_params.message.messageId}"
+            f"Upserting task from message {message_send_params.message.message_id}"
         )
         async with self.lock:
             # Use taskId from message or generate one
             task_id = (
-                message_send_params.message.taskId
-                or f"task_{message_send_params.message.messageId}"
+                message_send_params.message.task_id
+                or f"task_{message_send_params.message.message_id}"
             )
 
             task = self.tasks.get(task_id)

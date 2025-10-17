@@ -50,14 +50,34 @@ PROVIDER_LIST = [
 @click.group()
 def cli():
     """Agentcrew - AI Assistant and Agent Framework"""
-    pass
+    from AgentCrew.modules import logger
+    import tempfile
+    import logging
+
+    formatter = "{time} - {name} - {level} - {message}"
+    log_level = os.getenv("AGENTCREW_LOG_LEVEL", "ERROR").upper()
+
+    httpx_logger = logging.getLogger("httpx")
+    httpx_logger.setLevel(logging.ERROR)
+
+    if os.getenv("AGENTCREW_ENV", "development") == "production":
+        log_dir_path = os.getenv("AGENTCREW_LOG_PATH", tempfile.gettempdir())
+        os.makedirs(log_dir_path, exist_ok=True)
+        log_path = log_dir_path + "/agentcrew_log_{time}.log"
+
+        formatter = "{time} - {name} - {level} - {message}"
+        logger.add(log_path, level=log_level, format=formatter, rotation="10 MB")
+
+    else:
+        print(log_level)
+        logger.add(
+            sys.stderr,
+            level=log_level,
+            format=formatter,
+        )
 
 
 def cli_prod():
-    from AgentCrew.modules import FileLogIO
-
-    sys.stderr = FileLogIO()
-
     os.environ["AGENTCREW_LOG_PATH"] = os.path.expanduser("~/.AgentCrew/logs")
     os.environ["MEMORYDB_PATH"] = os.path.expanduser("~/.AgentCrew/memorydb")
     os.environ["MCP_CONFIG_PATH"] = os.path.expanduser("~/.AgentCrew/mcp_servers.json")
@@ -66,8 +86,9 @@ def cli_prod():
         "~/.AgentCrew/persistents"
     )
     os.environ["AGENTCREW_CONFIG_PATH"] = os.path.expanduser("~/.AgentCrew/config.json")
-
-    cli()  # Delegate to main CLI function
+    os.environ["AGENTCREW_ENV"] = "production"
+    os.environ["AGENTCREW_LOG_LEVEL"] = "ERROR"
+    cli()
 
 
 def load_api_keys_from_config():
@@ -136,15 +157,22 @@ def check_and_update():
         click.echo(f"Latest version: {latest_version}")
 
         if version_is_older(current_version, latest_version):
-            # Add user confirmation prompt
-            if click.confirm(
-                "🔄 New version available! Do you want to update now?", default=False
-            ):
-                click.echo("🔄 Starting update...")
-                run_update_command()
-                sys.exit(0)  # Exit after update command
+            system = platform.system().lower()
+
+            if system == "linux" or system == "darwin":
+                if click.confirm(
+                    "🔄 New version available! Do you want to update now?",
+                    default=False,
+                ):
+                    click.echo("🔄 Starting update...")
+                    run_update_command()
+                    sys.exit(0)
+                else:
+                    click.echo("⏭️ Skipping update. Starting application...")
+            # Disable auto-update for Windows for now due to issues
             else:
-                click.echo("⏭️ Skipping update. Starting application...")
+                command = "uv tool install --python=3.12 --reinstall agentcrew-ai[cpu]@latest --index https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match"
+                click.echo(f"🔄 New version available!\nRun {command} to update.")
         else:
             click.echo("✅ You are running the latest version")
 
@@ -244,11 +272,6 @@ def run_update_command():
             # Linux/macOS update command
             command = "uv tool install --python=3.12 --reinstall agentcrew-ai[cpu]@latest --index https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match"
             click.echo("🐧 Running Linux/macOS update command...")
-
-        elif system == "windows":
-            # Windows update command
-            command = "uv tool install --python=3.12 --reinstall agentcrew-ai[cpu]@latest --index https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match"
-            click.echo("🪟 Running Windows update command...")
 
         else:
             click.echo(f"❌ Unsupported operating system: {system}", err=True)

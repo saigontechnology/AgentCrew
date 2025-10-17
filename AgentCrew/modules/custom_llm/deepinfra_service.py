@@ -1,4 +1,4 @@
-from AgentCrew.modules.custom_llm import CustomLLMService
+from .service import CustomLLMService
 import os
 from dotenv import load_dotenv
 from AgentCrew.modules import logger
@@ -96,10 +96,8 @@ class DeepInfraService(CustomLLMService):
             if delta_tool_calls:
                 # Process each tool call in the delta
                 for tool_call_delta in delta_tool_calls:
-                    tool_call_index = tool_call_delta.index or 0
-
                     # Check if this is a new tool call
-                    if tool_call_index >= len(tool_uses):
+                    if getattr(tool_call_delta, "id"):
                         # Create a new tool call entry
                         tool_uses.append(
                             {
@@ -115,9 +113,11 @@ class DeepInfraService(CustomLLMService):
                             }
                         )
 
-                    # Update existing tool call with new data
-                    if hasattr(tool_call_delta, "id") and tool_call_delta.id:
-                        tool_uses[tool_call_index]["id"] = tool_call_delta.id
+                    tool_call_index = len(tool_uses) - 1
+
+                    # # Update existing tool call with new data
+                    # if hasattr(tool_call_delta, "id") and tool_call_delta.id:
+                    #     tool_uses[tool_call_index]["id"] = tool_call_delta.id
 
                     if hasattr(tool_call_delta, "function"):
                         if (

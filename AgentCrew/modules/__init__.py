@@ -1,35 +1,12 @@
-import logging
-import sys
 import tempfile
 from datetime import datetime
 import os
+from loguru import logger
+
 
 from typing import TextIO, AnyStr
 
-LOG_LEVEL = logging.ERROR
-# Create a logger
-logger = logging.getLogger("AgentCrew")
-logger.setLevel(LOG_LEVEL)  # Set default level to DEBUG
-
-httpx_logger = logging.getLogger("httpx")
-httpx_logger.setLevel(LOG_LEVEL)
-
-# Create a console handler
-ch = logging.StreamHandler(sys.stdout)
-ch.setLevel(LOG_LEVEL)  # Set handler level
-
-# Create a formatter and set it for the handler
-formatter = logging.Formatter(
-    "%(asctime)s - %(name)s - %(levelname)s - %(module)s.%(funcName)s:%(lineno)d - %(message)s"
-)
-ch.setFormatter(formatter)
-
-# Add the handler to the logger
-if not logger.handlers:
-    logger.addHandler(ch)
-
-# Optional: Prevent duplicate logging if this module is imported multiple times
-logger.propagate = False
+logger.remove(0)  # Remove default logger
 
 
 class FileLogIO(TextIO):

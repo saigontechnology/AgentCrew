@@ -81,6 +81,8 @@ class CommandExecutionService:
         if self._is_windows:
             # Windows PowerShell with UTF-8 encoding and text output
             return "powershell.exe", [
+                "-ExecutionPolicy",
+                "RemoteSigned",
                 "-NoProfile",  # Skip profile loading (faster + safer)
                 "-OutputFormat",
                 "Text",  # Force text output

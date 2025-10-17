@@ -6,13 +6,12 @@ for browser automation operations.
 """
 
 import re
-import logging
 import uuid
 from typing import Dict
 
 from .js_loader import js_loader
 
-logger = logging.getLogger(__name__)
+from AgentCrew.modules import logger
 
 
 def remove_duplicate_lines(content: str) -> str:

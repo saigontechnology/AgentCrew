@@ -6,7 +6,6 @@ scroll content, and extract page information using Chrome DevTools Protocol.
 """
 
 import time
-import logging
 from typing import Dict, Any, Optional, List
 from html_to_markdown import convert_to_markdown
 import urllib.parse
@@ -26,8 +25,7 @@ from .element_extractor import (
 from .js_loader import js_loader, key_codes
 
 import PyChromeDevTools
-
-logger = logging.getLogger(__name__)
+from AgentCrew.modules import logger
 
 
 class BrowserAutomationService:

@@ -2,7 +2,8 @@ import toml
 import json
 from typing import Dict, Any, Optional, List
 
-from AgentCrew.modules.agents import BaseAgent, LocalAgent
+from .base import BaseAgent
+from .local_agent import LocalAgent
 
 
 class AgentManager:
@@ -65,6 +66,7 @@ class AgentManager:
             self.one_turn_process: bool = False
             self.context_shrink_enabled: bool = True
             self.shrink_excluded_list: List[str] = []
+            self._defered_transfer: str = ""
             self._initialized = True
 
     @classmethod
@@ -135,6 +137,14 @@ class AgentManager:
         else:
             return None
 
+    @property
+    def defered_transfer(self):
+        return self._defered_transfer
+
+    @defered_transfer.setter
+    def defered_transfer(self, value: str):
+        self._defered_transfer = value
+
     def clean_agents_messages(self):
         for _, agent in self.agents.items():
             agent.history = []
@@ -202,6 +212,7 @@ class AgentManager:
         Returns:
             A dictionary with the result of the transfer
         """
+        self._defered_transfer = ""
         if target_agent_name not in self.agents:
             raise ValueError(
                 f"Agent '{target_agent_name}' not found. Available_agents: {list(self.agents.keys())}"

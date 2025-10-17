@@ -35,16 +35,6 @@ class AudioHandler(BaseAudioHandler):
         self.silero_vad_model = None
         self._silent_chunk_count = 0
         self._vad_chunk_count = 0
-        try:
-            self.silero_vad_model, _ = torch.hub.load(
-                repo_or_dir="snakers4/silero-vad",
-                model="silero_vad",
-                verbose=False,
-            )  # type: ignore
-        except Exception as e:
-            logger.exception(
-                f"Error initializing Silero VAD voice activity detection engine: {e}"
-            )
 
     def start_recording(
         self, sample_rate: int = 44100, voice_completed_cb: Optional[Callable] = None
@@ -58,6 +48,18 @@ class AudioHandler(BaseAudioHandler):
         if self.recording:
             logger.warning("Recording already in progress")
             return
+
+        if self.silero_vad_model is None:
+            try:
+                self.silero_vad_model, _ = torch.hub.load(
+                    repo_or_dir="snakers4/silero-vad",
+                    model="silero_vad",
+                    verbose=False,
+                )  # type: ignore
+            except Exception as e:
+                logger.exception(
+                    f"Error initializing Silero VAD voice activity detection engine: {e}"
+                )
 
         self.recording = True
         self.current_sample_rate = sample_rate

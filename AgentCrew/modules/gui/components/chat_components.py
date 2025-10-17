@@ -13,7 +13,6 @@ from AgentCrew.modules.gui.widgets import (
     SystemMessageWidget,
     MessageBubble,
 )
-import AgentCrew
 
 
 class ChatComponents:
@@ -67,6 +66,8 @@ class ChatComponents:
         )
 
         # Add version label
+        import AgentCrew
+
         version_text = f"AgentCrew v{getattr(AgentCrew, '__version__', 'Unknown')}"
         self.chat_window.version_label = QLabel(version_text)
         self.chat_window.version_label.setStyleSheet(

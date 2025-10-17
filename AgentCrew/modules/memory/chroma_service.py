@@ -95,7 +95,8 @@ class ChromaMemoryService(BaseMemoryService):
             self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
 
         self.collection = self.client.get_or_create_collection(
-            name=collection_name, embedding_function=self.embedding_function
+            name=collection_name,
+            embedding_function=self.embedding_function,  # type:ignore
         )
         # Configuration for chunking
         self.chunk_size = DEFAULT_CHUNK_SIZE
@@ -424,7 +425,7 @@ class ChromaMemoryService(BaseMemoryService):
         # Group chunks by conversation_id
         conversation_chunks = {}
         for i, (doc, metadata) in enumerate(
-            zip(results["documents"][0], results["metadatas"][0])
+            zip(results["documents"][0], results["metadatas"][0])  # type:ignore
         ):
             conv_id = metadata.get("conversation_id", "unknown")
             if conv_id not in conversation_chunks:

@@ -93,15 +93,15 @@ class CustomLLMService(OpenAIService):
                     )
             if msg.get("role") == "tool":
                 msg.pop("tool_name", None)
-                cleaned_tool_content = []
                 if isinstance(msg.get("content", ""), List):
+                    cleaned_tool_content = []
                     for tool_content in msg["content"]:
                         if isinstance(tool_content, dict):
                             if tool_content.get("type", "text") == "text":
                                 cleaned_tool_content.append(
                                     tool_content.get("text", "")
                                 )
-                msg["content"] = "\n".join(cleaned_tool_content)
+                    msg["content"] = "\n".join(cleaned_tool_content)
 
         return messages
 
@@ -372,10 +372,8 @@ class CustomLLMService(OpenAIService):
             if delta_tool_calls:
                 # Process each tool call in the delta
                 for tool_call_delta in delta_tool_calls:
-                    tool_call_index = tool_call_delta.index or 0
-
                     # Check if this is a new tool call
-                    if tool_call_index >= len(tool_uses):
+                    if getattr(tool_call_delta, "id"):
                         # Create a new tool call entry
                         tool_uses.append(
                             {
@@ -390,10 +388,11 @@ class CustomLLMService(OpenAIService):
                                 "response": "",
                             }
                         )
+                    tool_call_index = len(tool_uses) - 1
 
-                    # Update existing tool call with new data
-                    if hasattr(tool_call_delta, "id") and tool_call_delta.id:
-                        tool_uses[tool_call_index]["id"] = tool_call_delta.id
+                    # # Update existing tool call with new data
+                    # if hasattr(tool_call_delta, "id") and tool_call_delta.id:
+                    #     tool_uses[tool_call_index]["id"] = tool_call_delta.id
 
                     if hasattr(tool_call_delta, "function"):
                         if (

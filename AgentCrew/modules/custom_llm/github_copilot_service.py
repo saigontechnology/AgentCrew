@@ -1,5 +1,5 @@
 from AgentCrew.modules.llm.model_registry import ModelRegistry
-from AgentCrew.modules.custom_llm import CustomLLMService
+from .service import CustomLLMService
 import os
 from dotenv import load_dotenv
 from AgentCrew.modules import logger

@@ -5,7 +5,7 @@ import copy
 from typing import Dict, Any, List, Optional, Callable, Literal, Union
 from AgentCrew.modules.llm import BaseLLMService
 
-from AgentCrew.modules.agents.base import BaseAgent, MessageType
+from .base import BaseAgent, MessageType
 from AgentCrew.modules import logger
 
 SHRINK_CONTEXT_THRESHOLD = 90_000
@@ -260,7 +260,7 @@ class LocalAgent(BaseAgent):
 
         # Reinitialize MCP session manager for the current agent
         if not self.is_remoting_mode:
-            from AgentCrew.modules.mcpclient.manager import MCPSessionManager
+            from AgentCrew.modules.mcpclient import MCPSessionManager
 
             mcp_manager = MCPSessionManager.get_instance()
             if mcp_manager.initialized:
@@ -297,7 +297,7 @@ class LocalAgent(BaseAgent):
         self.mcps_loading = []
         # Reinitialize MCP session manager for the current agent
         if not self.is_remoting_mode:
-            from AgentCrew.modules.mcpclient.manager import MCPSessionManager
+            from AgentCrew.modules.mcpclient import MCPSessionManager
 
             mcp_manager = MCPSessionManager.get_instance()
             if mcp_manager.initialized:
@@ -602,6 +602,29 @@ If `when` conditions in <Behavior> match, update your responses with behaviors i
                 )
         if len(adaptive_messages["content"]) > 0:
             final_messages.insert(last_user_index, adaptive_messages)
+
+        agent_manager = self.services.get("agent_manager", None)
+        if agent_manager and agent_manager.defered_transfer:
+            last_assistant_index = next(
+                (
+                    i
+                    for i, msg in enumerate(reversed(final_messages))
+                    if msg.get("role") == "assistant"
+                ),
+                -1,
+            )
+            final_messages.insert(
+                last_assistant_index,
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"""<Transfer_Reminder>Make sure to transfer after the task is completed: {agent_manager.defered_transfer}</Transfer_Reminder>""",
+                        }
+                    ],
+                },
+            )
 
     def _clean_shrinkable_tool_result(self, final_messages: List[Dict[str, Any]]):
         """

@@ -405,7 +405,7 @@ class ConsoleUI(Observer):
                         continue
 
                     # Handle load command directly
-                    if user_input.strip().startswith("/load "):
+                    elif user_input.strip().startswith("/load "):
                         load_arg = user_input.strip()[
                             6:
                         ].strip()  # Extract argument after "/load "
@@ -422,17 +422,17 @@ class ConsoleUI(Observer):
                             )
                         continue
 
-                    if user_input.strip() == "/help":
+                    elif user_input.strip() == "/help":
                         self.console.print("\n")
                         self.print_welcome_message()
                         continue
 
                     # Handle toggle_yolo command directly (console only, session-based)
-                    if user_input.strip() == "/toggle_yolo":
+                    elif user_input.strip() == "/toggle_yolo":
                         self.command_handlers.handle_toggle_yolo_command()
                         continue
 
-                    if user_input.strip().startswith("/export_agent "):
+                    elif user_input.strip().startswith("/export_agent "):
                         # Extract arguments after "/export_agent "
                         args = user_input.strip()[14:].strip()
                         if args:
@@ -466,7 +466,7 @@ class ConsoleUI(Observer):
                             )
                         continue
 
-                    if user_input.strip().startswith("/import_agent "):
+                    elif user_input.strip().startswith("/import_agent "):
                         file_or_url = user_input.strip()[
                             14:
                         ].strip()  # Extract argument after "/import_agent "
@@ -484,17 +484,17 @@ class ConsoleUI(Observer):
                         continue
 
                     # Handle edit_agent command directly
-                    if user_input.strip() == "/edit_agent":
+                    elif user_input.strip() == "/edit_agent":
                         self.command_handlers.handle_edit_agent_command()
                         continue
 
                     # Handle edit_mcp command directly
-                    if user_input.strip() == "/edit_mcp":
+                    elif user_input.strip() == "/edit_mcp":
                         self.command_handlers.handle_edit_mcp_command()
                         continue
 
                     # Handle edit_config command directly
-                    if user_input.strip() == "/edit_config":
+                    elif user_input.strip() == "/edit_config":
                         self.command_handlers.handle_edit_config_command()
                         continue
 

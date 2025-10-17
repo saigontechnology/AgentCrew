@@ -333,9 +333,9 @@ _DEEPINFRA_MODELS = [
 ]
 _GITHUB_COPILOT_MODELS = [
     Model(
-        id="claude-3.7-sonnet",
+        id="claude-haiku-4.5",
         provider="github_copilot",
-        name="Claude 3.7 Sonnet",
+        name="Claude 4.5 Haiku",
         description="",
         capabilities=["tool_use", "vision", "stream"],
         default=False,

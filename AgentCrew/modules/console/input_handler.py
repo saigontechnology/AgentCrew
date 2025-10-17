@@ -295,18 +295,9 @@ class InputHandler:
         """
         # Start input thread if not already running
         if self._input_thread is None or not self._input_thread.is_alive():
-            title = Text(f"\n[{self.message_handler.agent.name}", style=RICH_STYLE_RED)
-            title.append(":")
-            title.append(
-                f"{self.message_handler.agent.get_model()}]",
-                style=RICH_STYLE_BLUE,
+            self.display_handlers.print_prompt_prefix(
+                self.message_handler.agent.name, self.message_handler.agent.get_model()
             )
-            title.append(
-                "\n(Press Enter for new line, Ctrl+S/Alt+Enter to submit, Up/Down for history, Ctrl+V to paste)\n",
-                style=RICH_STYLE_YELLOW,
-            )
-            self.console.print(title)
-            self.display_handlers.display_added_files()
             self._start_input_thread()
         else:
             self.display_handlers.print_prompt_prefix(
