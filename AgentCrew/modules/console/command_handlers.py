@@ -14,7 +14,6 @@ from rich.text import Text
 
 from .constants import (
     RICH_STYLE_YELLOW,
-    RICH_STYLE_YELLOW_BOLD,
 )
 from AgentCrew.modules.chat.message.handler import MessageHandler
 from AgentCrew.modules.config.config_management import ConfigManagement
@@ -132,7 +131,6 @@ class CommandHandlers:
     def handle_enable_yolo_command(self) -> None:
         """
         Handle the /enable_yolo command to enable YOLO mode for auto-approval of tool calls.
-        This toggles the effective YOLO state via session override.
         """
         # Check if YOLO mode is already enabled in config
         if self.message_handler.tool_manager.yolo_mode:
