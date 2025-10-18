@@ -427,9 +427,9 @@ class ConsoleUI(Observer):
                         self.print_welcome_message()
                         continue
 
-                    # Handle enable_yolo command directly (console only, session-based)
-                    elif user_input.strip() == "/enable_yolo":
-                        self.command_handlers.handle_enable_yolo_command()
+                    # Handle toggle_session_yolo command directly (console only, session-based)
+                    elif user_input.strip() == "/toggle_session_yolo":
+                        self.command_handlers.handle_toggle_session_yolo_command()
                         continue
 
                     elif user_input.strip().startswith("/export_agent "):
