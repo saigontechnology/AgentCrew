@@ -214,7 +214,7 @@ class ChatCompleter(Completer):
             ("/help", "Show help message"),
             ("/retry", "Retry the last assistant response"),
             ("/toggle_transfer", "Toggle agent transfer enforcement on/off"),
-            ("/toggle_yolo", "Toggle Auto-Approve Mode for Tool Calls (this session only)"),
+            ("/enable_yolo", "Enable Auto-Approve Mode for Tool Calls (this session only)"),
             ("/exit", "Exit the application"),
             ("/quit", "Exit the application"),
         ]

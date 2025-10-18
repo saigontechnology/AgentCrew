@@ -129,9 +129,9 @@ class CommandHandlers:
         config_mgmt = ConfigManagement()
         config_mgmt.reload_agents_from_config()
 
-    def handle_toggle_yolo_command(self) -> None:
+    def handle_enable_yolo_command(self) -> None:
         """
-        Handle the /toggle_yolo command to toggle YOLO mode for auto-approval of tool calls.
+        Handle the /enable_yolo command to enable YOLO mode for auto-approval of tool calls.
         This toggles the effective YOLO state via session override.
         """
         # Check if YOLO mode is already enabled in config

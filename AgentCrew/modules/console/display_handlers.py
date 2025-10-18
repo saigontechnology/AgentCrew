@@ -313,7 +313,7 @@ class DisplayHandlers:
                 style=RICH_STYLE_YELLOW,
             ),
             Text(
-                "Use '/toggle_yolo' to toggle YOLO mode (auto-approval of tool calls).",
+                "Use '/enable_yolo' to enable YOLO mode (auto-approval of tool calls).",
                 style=RICH_STYLE_YELLOW,
             ),
             Text("Use '/list' to list saved conversations.", style=RICH_STYLE_YELLOW),
