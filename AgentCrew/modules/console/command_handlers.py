@@ -141,7 +141,7 @@ class CommandHandlers:
             )
             return
 
-        self.message_handler.tool_manager.enable_session_overrided_yolo_mode = True
+        self.message_handler.tool_manager.session_overrided_yolo_mode = True
 
         status_text = Text("🚀 YOLO mode is now enabled (auto-approval of tool calls).", style=RICH_STYLE_YELLOW)
         self.console.print(status_text)
