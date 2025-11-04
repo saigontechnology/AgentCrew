@@ -22,13 +22,13 @@ class ToolManager:
         self._pending_confirmations = {}  # Store futures for confirmation requests
         self._next_confirmation_id = 0  # ID counter for confirmation requests
         self.yolo_mode = False  # Enable/disable auto-approval mode
-        self.session_overrided_yolo_mode: bool | None = None # Session-level override for yolo mode
+        self.session_overrided_yolo_mode: bool = (
+            False  # Session level YOLO mode override
+        )
 
     def get_effective_yolo_mode(self) -> bool:
         """Determine the effective YOLO mode considering session override."""
-        if self.session_overrided_yolo_mode is not None:
-            return self.session_overrided_yolo_mode
-        return self.yolo_mode
+        return self.session_overrided_yolo_mode or self.yolo_mode
 
     def _load_persistent_auto_approved_tools(self):
         """Load persistent auto-approved tools from config."""
