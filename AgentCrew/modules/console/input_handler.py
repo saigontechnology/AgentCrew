@@ -358,7 +358,9 @@ class InputHandler:
 
         # Display YOLO mode indicator if enabled
         if self.message_handler.tool_manager.get_effective_yolo_mode():
-            yolo_indicator = Text("🔥 YOLO MODE ENABLED 🔥", style=RICH_STYLE_YELLOW_BOLD)
+            yolo_indicator = Text(
+                "🔥 YOLO MODE ENABLED 🔥", style=RICH_STYLE_YELLOW_BOLD
+            )
             self.console.print(yolo_indicator)
 
         # Wait for input while allowing events to be processed
