@@ -13,6 +13,8 @@ from rich.text import Text
 import AgentCrew
 from AgentCrew.modules.chat.message_handler import MessageHandler, Observer
 from loguru import logger
+
+from AgentCrew.modules.config.config_management import ConfigManagement
 from .utils import agent_evaluation_remove
 
 from .constants import (
@@ -71,6 +73,14 @@ class ConsoleUI(Observer):
             self.console, self.display_handlers
         )
         self.command_handlers = CommandHandlers(self.console, self.message_handler)
+
+        config_manager = ConfigManagement()
+        global_config = config_manager.read_global_config_data()
+        yolo_mode_config = global_config.get("global_settings", {}).get(
+            "yolo_mode", False
+        )
+        self.message_handler.tool_manager.yolo_mode = yolo_mode_config
+        self.message_handler.tool_manager.session_overrided_yolo_mode = yolo_mode_config
 
     def listen(self, event: str, data: Any = None):
         """

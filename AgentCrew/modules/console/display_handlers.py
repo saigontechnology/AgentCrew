@@ -359,13 +359,19 @@ class DisplayHandlers:
         self.console.print(Panel(welcome_messages))
         self.display_divider()
 
-    def print_prompt_prefix(self, agent_name: str, model_name: str):
+    def print_prompt_prefix(
+        self, agent_name: str, model_name: str, yolo_mode_enabled: bool
+    ):
         """Print the prompt prefix with agent and model information."""
         title = Text(f"\n[{agent_name}", style=RICH_STYLE_RED)
         title.append(":")
         title.append(f"{model_name}]", style=RICH_STYLE_BLUE)
+        # Display YOLO mode indicator if enabled
+        if yolo_mode_enabled:
+            title.append(" [🔥]", style=RICH_STYLE_YELLOW_BOLD)
+
         title.append(
-            f"            [{datetime.now().strftime('%H:%M:%S')}]",
+            f" [{datetime.now().strftime('%H:%M:%S')}]",
             style=RICH_STYLE_GRAY,
         )
         title.append(

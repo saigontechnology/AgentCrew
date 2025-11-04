@@ -157,6 +157,7 @@ class InputHandler:
                     self.display_handlers.print_prompt_prefix(
                         self.message_handler.agent.name,
                         self.message_handler.agent.get_model(),
+                        self.message_handler.tool_manager.get_effective_yolo_mode()
                     )
                     prompt = Text("👤 YOU: ", style=RICH_STYLE_BLUE)
                     self.console.print(prompt, end="")
@@ -347,21 +348,18 @@ class InputHandler:
         # Start input thread if not already running
         if self._input_thread is None or not self._input_thread.is_alive():
             self.display_handlers.print_prompt_prefix(
-                self.message_handler.agent.name, self.message_handler.agent.get_model()
+                self.message_handler.agent.name,
+                self.message_handler.agent.get_model(),
+                self.message_handler.tool_manager.get_effective_yolo_mode()
             )
             self._start_input_thread()
         else:
             self.display_handlers.print_prompt_prefix(
-                self.message_handler.agent.name, self.message_handler.agent.get_model()
+                self.message_handler.agent.name,
+                self.message_handler.agent.get_model(),
+                self.message_handler.tool_manager.get_effective_yolo_mode()
             )
             self.clear_buffer()
-
-        # Display YOLO mode indicator if enabled
-        if self.message_handler.tool_manager.get_effective_yolo_mode():
-            yolo_indicator = Text(
-                "🔥 YOLO MODE ENABLED 🔥", style=RICH_STYLE_YELLOW_BOLD
-            )
-            self.console.print(yolo_indicator)
 
         # Wait for input while allowing events to be processed
         while True:
