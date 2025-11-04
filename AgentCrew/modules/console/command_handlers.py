@@ -133,14 +133,17 @@ class CommandHandlers:
         config_mgmt.reload_agents_from_config()
 
     def handle_toggle_session_yolo_command(self) -> None:
-        """
-        Toggle session-level YOLO mode override for auto-approval of tool calls.
-        """
-        new_status = not self.message_handler.tool_manager.get_effective_yolo_mode()
-        self.message_handler.tool_manager.session_overrided_yolo_mode = new_status
+        """Toggle session-level YOLO mode override for auto-approval of tool calls."""
+        self.message_handler.tool_manager.session_overrided_yolo_mode ^= True
 
-        status_text = Text(f"🚀 YOLO mode is now {'enabled' if new_status else 'disabled'} for this session", style=RICH_STYLE_YELLOW)
-        self.console.print(status_text)
+        state = (
+            "🚀 Enabled"
+            if self.message_handler.tool_manager.session_overrided_yolo_mode
+            else "🔒 Disabled"
+        )
+        self.console.print(
+            Text(f"{state} session overrided YOLO mode", style=RICH_STYLE_YELLOW)
+        )
 
     def handle_export_agent_command(
         self, agent_names_str: str, output_file: str
