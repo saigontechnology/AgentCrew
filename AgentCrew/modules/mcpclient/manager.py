@@ -1,7 +1,7 @@
 from typing import Optional
 from .config import MCPConfigManager
 from .service import MCPService
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class MCPSessionManager:

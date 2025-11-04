@@ -1,14 +1,14 @@
-"""
-Universal syntax checker using tree-sitter.
+from __future__ import annotations
 
-Provides syntax validation for 30+ programming languages using tree-sitter parsers.
-"""
-
-from typing import List, Optional, Literal, Dict
+from typing import TYPE_CHECKING
 from dataclasses import dataclass
 from pathlib import Path
 
-from tree_sitter_language_pack import SupportedLanguage, get_parser
+from tree_sitter_language_pack import get_parser
+
+if TYPE_CHECKING:
+    from tree_sitter_language_pack import SupportedLanguage
+    from typing import List, Optional, Literal, Dict
 
 
 @dataclass

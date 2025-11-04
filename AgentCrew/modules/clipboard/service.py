@@ -6,7 +6,7 @@ import tempfile
 from PIL import ImageGrab, Image
 from typing import Dict, Any, Optional
 
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class ClipboardService:

@@ -11,7 +11,7 @@ from pydantic import AnyUrl
 from mcp.client.auth import OAuthClientProvider, TokenStorage
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class FileTokenStorage(TokenStorage):
@@ -354,84 +354,89 @@ class OAuthCallbackServer:
         return code, state
 
 
-async def handle_redirect(auth_url: str) -> None:
-    """
-    Handle OAuth redirect by opening the authorization URL in the user's browser.
+class OAuthClientResolver:
+    def __init__(self, port: Optional[int] = 14142):
+        self.port = port if port else 14142
 
-    Args:
-        auth_url: The OAuth authorization URL to open
-    """
-    logger.info(f"Opening OAuth authorization URL: {auth_url}")
-    print(
-        f"🔐 Opening browser for OAuth authorization...\nIf the browser doesn't open automatically, visit: {auth_url}\n"
-    )
+    async def handle_redirect(self, auth_url: str) -> None:
+        """
+        Handle OAuth redirect by opening the authorization URL in the user's browser.
 
-    # Open URL in the default browser
-    try:
-        webbrowser.open(auth_url)
-    except Exception as e:
-        logger.error(f"Failed to open browser: {e}")
-        print("⚠️ Failed to open browser automatically. Please visit the URL manually.")
+        Args:
+            auth_url: The OAuth authorization URL to open
+        """
+        logger.info(f"Opening OAuth authorization URL: {auth_url}")
+        print(
+            f"🔐 Opening browser for OAuth authorization...\nIf the browser doesn't open automatically, visit: {auth_url}\n"
+        )
 
+        # Open URL in the default browser
+        try:
+            webbrowser.open(auth_url)
+        except Exception as e:
+            logger.error(f"Failed to open browser: {e}")
+            print(
+                "⚠️ Failed to open browser automatically. Please visit the URL manually."
+            )
 
-async def handle_callback() -> tuple[str, str | None]:
-    """
-    Handle OAuth callback by starting a temporary local HTTP server.
+    async def handle_callback(self) -> tuple[str, str | None]:
+        """
+        Handle OAuth callback by starting a temporary local HTTP server.
 
-    This function creates a callback server, waits for the OAuth callback,
-    and returns the authorization code and state.
+        This function creates a callback server, waits for the OAuth callback,
+        and returns the authorization code and state.
 
-    Returns:
-        tuple: (authorization_code, state)
+        Returns:
+            tuple: (authorization_code, state)
 
-    Raises:
-        Exception: If the callback fails or times out
-    """
-    # Create callback server instance
-    callback_server = OAuthCallbackServer(host="localhost", port=14142)
+        Raises:
+            Exception: If the callback fails or times out
+        """
+        # Create callback server instance
+        callback_server = OAuthCallbackServer(host="localhost", port=self.port)
 
-    logger.info(
-        f"⏳ Waiting for OAuth callback on {callback_server.get_callback_url()}..."
-    )
+        logger.info(
+            f"⏳ Waiting for OAuth callback on {callback_server.get_callback_url()}..."
+        )
 
-    try:
-        callback_server.start()
+        try:
+            callback_server.start()
 
-        code, state = await callback_server.wait_for_callback(timeout=300)
+            code, state = await callback_server.wait_for_callback(timeout=600)
 
-        print("✅ Authorization successful!\n")
-        return code, state
+            print("✅ Authorization successful!\n")
+            return code, state
 
-    except Exception as e:
-        logger.error(f"OAuth callback failed: {e}")
-        raise
-    finally:
-        callback_server.stop()
+        except Exception as e:
+            logger.error(f"OAuth callback failed: {e}")
+            raise
+        finally:
+            callback_server.stop()
 
+    def get_oauth_client_provider(
+        self, mcp_url: str, tokens_storage: TokenStorage
+    ) -> OAuthClientProvider:
+        """
+        Create and configure an OAuth client provider for MCP.
 
-def get_oauth_client_provider(
-    mcp_url: str, tokens_storage: TokenStorage
-) -> OAuthClientProvider:
-    """
-    Create and configure an OAuth client provider for MCP.
+        Args:
+            mcp_url: The MCP server URL
 
-    Args:
-        mcp_url: The MCP server URL
-
-    Returns:
-        OAuthClientProvider: Configured OAuth provider
-    """
-    oauth_auth = OAuthClientProvider(
-        server_url=mcp_url,
-        client_metadata=OAuthClientMetadata(
-            client_name="AgentCrew MCP Client",
-            redirect_uris=[AnyUrl("http://localhost:14142/callback")],
-            grant_types=["authorization_code", "refresh_token"],
-            response_types=["code"],
-            scope="user",
-        ),
-        storage=tokens_storage,
-        redirect_handler=handle_redirect,
-        callback_handler=handle_callback,
-    )
-    return oauth_auth
+        Returns:
+            OAuthClientProvider: Configured OAuth provider
+        """
+        oauth_auth = OAuthClientProvider(
+            server_url=mcp_url,
+            client_metadata=OAuthClientMetadata(
+                client_name="AgentCrew MCP Client",
+                redirect_uris=[AnyUrl(f"http://localhost:{self.port}/callback")],
+                token_endpoint_auth_method="client_secret_post",
+                grant_types=["authorization_code", "refresh_token"],
+                response_types=["code"],
+                scope="user",
+            ),
+            storage=tokens_storage,
+            redirect_handler=self.handle_redirect,
+            callback_handler=self.handle_callback,
+        )
+        return oauth_auth

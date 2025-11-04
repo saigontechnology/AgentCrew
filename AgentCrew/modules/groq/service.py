@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import json
 import mimetypes
@@ -6,7 +8,7 @@ import itertools
 import rich
 import re
 from rich.live import Live
-from typing import Dict, Any, List, Optional, Tuple
+from typing import TYPE_CHECKING
 from groq import AsyncGroq
 from dotenv import load_dotenv
 from AgentCrew.modules.llm.base import (
@@ -16,7 +18,10 @@ from AgentCrew.modules.llm.base import (
     AsyncIterator,
 )
 from AgentCrew.modules.llm.model_registry import ModelRegistry
-from AgentCrew.modules import logger
+from loguru import logger
+
+if TYPE_CHECKING:
+    from typing import Dict, Any, List, Optional, Tuple
 
 
 class GroqService(BaseLLMService):
@@ -65,33 +70,30 @@ class GroqService(BaseLLMService):
         return 0.0
 
     async def process_message(self, prompt: str, temperature: float = 0) -> str:
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=3000,
-                temperature=temperature,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-            )
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=3000,
+            temperature=temperature,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+        )
 
-            # Calculate and log token usage and cost
-            input_tokens = response.usage.prompt_tokens if response.usage else 0
-            output_tokens = response.usage.completion_tokens if response.usage else 0
-            total_cost = self.calculate_cost(input_tokens, output_tokens)
+        # Calculate and log token usage and cost
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        total_cost = self.calculate_cost(input_tokens, output_tokens)
 
-            logger.info("\nToken Usage Statistics:")
-            logger.info(f"Input tokens: {input_tokens:,}")
-            logger.info(f"Output tokens: {output_tokens:,}")
-            logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
-            logger.info(f"Estimated cost: ${total_cost:.4f}")
+        logger.info("\nToken Usage Statistics:")
+        logger.info(f"Input tokens: {input_tokens:,}")
+        logger.info(f"Output tokens: {output_tokens:,}")
+        logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
+        logger.info(f"Estimated cost: ${total_cost:.4f}")
 
-            return response.choices[0].message.content or ""
-        except Exception as e:
-            raise Exception(f"Failed to process content: {str(e)}")
+        return response.choices[0].message.content or ""
 
     def _process_file(self, file_path):
         mime_type, _ = mimetypes.guess_type(file_path)
@@ -219,6 +221,7 @@ class GroqService(BaseLLMService):
             "temperature": 0.4,
             "top_p": 0.95,
         }
+        full_model_id = f"{self._provider_name}/{self.model}"
 
         # Add system message if provided
         if self.system_prompt:
@@ -234,9 +237,7 @@ class GroqService(BaseLLMService):
                 + messages
             )
 
-        if "thinking" in ModelRegistry.get_model_capabilities(
-            f"{self._provider_name}/{self.model}"
-        ):
+        if "thinking" in ModelRegistry.get_model_capabilities(full_model_id):
             stream_params["reasoning_format"] = "parsed"
             # stream_params["messages"].append(
             #     {"role": "assistant", "content": "<think>\n"}
@@ -244,7 +245,7 @@ class GroqService(BaseLLMService):
 
         # Add tools if available
         if self.tools and "tool_use" in ModelRegistry.get_model_capabilities(
-            f"{self._provider_name}/{self.model}"
+            full_model_id
         ):
             stream_params["tools"] = self.tools
 
@@ -480,53 +481,47 @@ class GroqService(BaseLLMService):
             Validation result as a JSON string
         """
 
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                max_completion_tokens=8192,
-                temperature=0.6,
-                top_p=0.95,
-                reasoning_format="parsed",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    },
-                ],
-                # Groq doesn't support response_format, so we rely on the prompt
-            )
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            max_completion_tokens=8192,
+            temperature=0.6,
+            top_p=0.95,
+            reasoning_format="parsed",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            # Groq doesn't support response_format, so we rely on the prompt
+        )
 
-            # Calculate and log token usage and cost
-            input_tokens = response.usage.prompt_tokens if response.usage else 0
-            output_tokens = response.usage.completion_tokens if response.usage else 0
-            total_cost = self.calculate_cost(input_tokens, output_tokens)
+        # Calculate and log token usage and cost
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        total_cost = self.calculate_cost(input_tokens, output_tokens)
 
-            logger.info("\nSpec Validation Token Usage:")
-            logger.info(f"Input tokens: {input_tokens:,}")
-            logger.info(f"Output tokens: {output_tokens:,}")
-            logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
-            logger.info(f"Estimated cost: ${total_cost:.4f}")
+        logger.info("\nSpec Validation Token Usage:")
+        logger.info(f"Input tokens: {input_tokens:,}")
+        logger.info(f"Output tokens: {output_tokens:,}")
+        logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
+        logger.info(f"Estimated cost: ${total_cost:.4f}")
 
-            text = response.choices[0].message.content
-            if text is None:
-                raise ValueError("Cannot validate this spec")
-            think_tag = "<think>"
-            end_think_tag = "</think>"
-            think_start_idx = text.find(think_tag)
-            think_end_idx = text.rfind(end_think_tag)
-            if think_start_idx > -1 and think_end_idx > -1:
-                text = (
-                    text[:think_start_idx] + text[think_end_idx + len(end_think_tag) :]
-                )
-            start_tag = "<SpecificationReview>"
-            end_tag = "</SpecificationReview>"
-            start_idx = text.rindex(start_tag)
-            end_idx = text.rindex(end_tag) + len(end_tag)
-            result = text[start_idx:end_idx].strip()
-            return result
-
-        except Exception as e:
-            raise Exception(f"Failed to validate specification: {str(e)}")
+        text = response.choices[0].message.content
+        if text is None:
+            raise ValueError("Cannot validate this spec")
+        think_tag = "<think>"
+        end_think_tag = "</think>"
+        think_start_idx = text.find(think_tag)
+        think_end_idx = text.rfind(end_think_tag)
+        if think_start_idx > -1 and think_end_idx > -1:
+            text = text[:think_start_idx] + text[think_end_idx + len(end_think_tag) :]
+        start_tag = "<SpecificationReview>"
+        end_tag = "</SpecificationReview>"
+        start_idx = text.rindex(start_tag)
+        end_idx = text.rindex(end_tag) + len(end_tag)
+        result = text[start_idx:end_idx].strip()
+        return result
 
     def set_system_prompt(self, system_prompt: str):
         """

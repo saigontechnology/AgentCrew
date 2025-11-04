@@ -14,7 +14,7 @@ import time
 import platform
 from typing import Optional
 
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class ChromeManager:

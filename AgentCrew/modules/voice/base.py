@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, Any, Optional, List
+from typing import TYPE_CHECKING
 import threading
 import queue
+
+if TYPE_CHECKING:
+    from typing import Callable, Dict, Any, Optional, List
 
 
 class BaseVoiceService(ABC):

@@ -1,16 +1,15 @@
+from __future__ import annotations
+
 import asyncio
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable
+from typing import TYPE_CHECKING
 
 from .utils import new_not_implemented_error
 from a2a.types import (
-    Artifact,
-    CancelTaskRequest,
     CancelTaskResponse,
-    GetTaskPushNotificationConfigRequest,
     GetTaskPushNotificationConfigResponse,
-    GetTaskRequest,
     GetTaskResponse,
     SetTaskPushNotificationConfigSuccessResponse,
     GetTaskPushNotificationConfigSuccessResponse,
@@ -20,28 +19,36 @@ from a2a.types import (
     GetTaskSuccessResponse,
     JSONRPCErrorResponse,
     JSONRPCResponse,
-    PushNotificationConfig,
-    SendMessageRequest,
     SendMessageResponse,
-    SendStreamingMessageRequest,
     SendStreamingMessageResponse,
-    SetTaskPushNotificationConfigRequest,
     SetTaskPushNotificationConfigResponse,
     Task,
-    TaskIdParams,
     TaskNotCancelableError,
     TaskNotFoundError,
     TaskPushNotificationConfig,
-    TaskQueryParams,
-    TaskResubscriptionRequest,
-    MessageSendParams,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
 )
 
 
-from AgentCrew.modules import logger
+from loguru import logger
+
+if TYPE_CHECKING:
+    from a2a.types import (
+        Artifact,
+        CancelTaskRequest,
+        GetTaskPushNotificationConfigRequest,
+        GetTaskRequest,
+        MessageSendParams,
+        PushNotificationConfig,
+        SendMessageRequest,
+        SendStreamingMessageRequest,
+        SetTaskPushNotificationConfigRequest,
+        TaskIdParams,
+        TaskQueryParams,
+        TaskResubscriptionRequest,
+    )
 
 
 class TaskManager(ABC):

@@ -4,7 +4,7 @@ import shlex
 import traceback
 import time
 
-from AgentCrew.modules import logger
+from loguru import logger
 from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.chat.history import ChatHistoryManager
 from AgentCrew.modules.agents import AgentManager
@@ -31,8 +31,9 @@ class MessageHandler(Observable):
 
     def __init__(
         self,
-        memory_service: BaseMemoryService,
-        context_persistent_service: ContextPersistenceService,
+        memory_service: Optional[BaseMemoryService] = None,
+        context_persistent_service: Optional[ContextPersistenceService] = None,
+        with_voice: bool = False,
     ):
         """
         Initializes the MessageHandler.
@@ -72,15 +73,18 @@ class MessageHandler(Observable):
         # Check if voice service is available
         from AgentCrew.modules.voice import AUDIO_AVAILABLE
 
-        if AUDIO_AVAILABLE:
-            from AgentCrew.modules.voice import (
-                DeepInfraVoiceService,
-                ElevenLabsVoiceService,
-            )
-
+        if AUDIO_AVAILABLE and with_voice:
             if os.getenv("ELEVENLABS_API_KEY"):
+                from AgentCrew.modules.voice.elevenlabs_service import (
+                    ElevenLabsVoiceService,
+                )
+
                 self.voice_service = ElevenLabsVoiceService()
             elif os.getenv("DEEPINFRA_API_KEY"):
+                from AgentCrew.modules.voice.deepinfra_service import (
+                    DeepInfraVoiceService,
+                )
+
                 self.voice_service = DeepInfraVoiceService()
 
     def _messages_append(self, message):
@@ -239,7 +243,7 @@ class MessageHandler(Observable):
                     self.stop_streaming = False  # Reset flag
                     has_stop_interupted = True
                     self._notify("streaming_stopped", assistant_response)
-                    break
+                    await self.stream_generator.aclose()
 
                 # Accumulate thinking content if available
                 if thinking_chunk:
@@ -405,7 +409,7 @@ class MessageHandler(Observable):
                 try:
                     messages_for_this_turn = self.get_recent_agent_responses()
                     if (
-                        messages_for_this_turn
+                        messages_for_this_turn and self.persistent_service
                     ):  # Only save if there are messages for the turn
                         self.persistent_service.append_conversation_messages(
                             self.current_conversation_id,
@@ -465,7 +469,7 @@ class MessageHandler(Observable):
             if self.current_conversation_id and self.last_assisstant_response_idx >= 0:
                 messages_for_this_turn = self.get_recent_agent_responses()
                 if (
-                    messages_for_this_turn
+                    messages_for_this_turn and self.persistent_service
                 ):  # Only save if there are messages for the turn
                     self.persistent_service.append_conversation_messages(
                         self.current_conversation_id,

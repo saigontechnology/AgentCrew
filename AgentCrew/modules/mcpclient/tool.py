@@ -1,5 +1,5 @@
 from AgentCrew.modules.mcpclient import MCPSessionManager
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 def register(

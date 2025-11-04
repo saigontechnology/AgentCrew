@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Optional, List
 from dataclasses import dataclass, field
 
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class CommandState(Enum):

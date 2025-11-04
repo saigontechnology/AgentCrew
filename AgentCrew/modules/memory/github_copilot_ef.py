@@ -1,10 +1,15 @@
+from __future__ import annotations
+
 from chromadb.api.types import Embeddings, Documents, EmbeddingFunction, Space
-from typing import List, Dict, Any, Optional
+from typing import TYPE_CHECKING
 import os
 import numpy as np
 from chromadb.utils.embedding_functions.schemas import validate_config_schema
 import warnings
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from typing import List, Dict, Any, Optional
 
 
 class GithubCopilotEmbeddingFunction(EmbeddingFunction[Documents]):

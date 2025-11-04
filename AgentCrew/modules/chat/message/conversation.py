@@ -1,18 +1,21 @@
+from __future__ import annotations
 from typing import List, Dict, Any, Optional
 
-from AgentCrew.modules import logger
+from loguru import logger
 from AgentCrew.modules.chat.history import ConversationTurn
 from AgentCrew.modules.agents import RemoteAgent
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from AgentCrew.modules.chat.message import MessageHandler
 
 
 class ConversationManager:
     """Manages conversation state and operations."""
 
-    def __init__(self, message_handler):
-        from AgentCrew.modules.chat.message import MessageHandler
-
-        if isinstance(message_handler, MessageHandler):
-            self.message_handler = message_handler
+    def __init__(self, message_handler: MessageHandler):
+        self.message_handler = message_handler
 
     def start_new_conversation(self):
         """Starts a new persistent conversation, clears history, and gets a new ID."""
@@ -30,14 +33,15 @@ class ConversationManager:
             self.message_handler.current_conversation_id = (
                 self.message_handler.persistent_service.start_conversation()
             )
-            self.message_handler.memory_service.session_id = (
-                self.message_handler.current_conversation_id
-            )
-            self.message_handler.memory_service.loaded_conversation = False
+            if self.message_handler.memory_service:
+                self.message_handler.memory_service.session_id = (
+                    self.message_handler.current_conversation_id
+                )
+                self.message_handler.memory_service.loaded_conversation = False
+                self.message_handler.memory_service.clear_conversation_context()
             self.message_handler.agent_manager.clean_agents_messages()
             self.message_handler.streamline_messages = []
             self.message_handler.conversation_turns = []  # Clear jump history
-            self.message_handler.memory_service.clear_conversation_context()
             self.message_handler.last_assisstant_response_idx = 0
             self.message_handler.current_user_input = None
             self.message_handler.current_user_input_idx = -1
@@ -57,7 +61,7 @@ class ConversationManager:
             )
         except Exception as e:
             error_message = f"Failed to start new persistent conversation: {str(e)}"
-            logger.error(f"ERROR: {error_message}")
+            logger.warning(f"Warning: {error_message}")
             self.message_handler._notify("error", {"message": error_message})
             self.message_handler.current_conversation_id = None
 
@@ -72,7 +76,9 @@ class ConversationManager:
     def list_conversations(self) -> List[Dict[str, Any]]:
         """Lists available conversations from the persistence service."""
         try:
-            return self.message_handler.persistent_service.list_conversations()
+            if self.message_handler.persistent_service:
+                return self.message_handler.persistent_service.list_conversations()
+            return []
         except Exception as e:
             logger.error(f"Error listing conversations: {e}")
             self.message_handler._notify("error", f"Failed to list conversations: {e}")
@@ -82,9 +88,14 @@ class ConversationManager:
         """Loads a specific conversation history and sets it as active."""
         try:
             self.message_handler.agent_manager.clean_agents_messages()
-            history = self.message_handler.persistent_service.get_conversation_history(
-                conversation_id
-            )
+            if self.message_handler.persistent_service:
+                history = (
+                    self.message_handler.persistent_service.get_conversation_history(
+                        conversation_id
+                    )
+                )
+            else:
+                history = []
             if history:
                 # Backward compatibility: Convert tool messages
                 for msg in history:
@@ -95,10 +106,14 @@ class ConversationManager:
                             msg["tool_call_id"] = tool_result.get("tool_use_id", "")
 
                 self.message_handler.current_conversation_id = conversation_id
-                self.message_handler.memory_service.session_id = (
-                    self.message_handler.current_conversation_id
-                )
-                self.message_handler.memory_service.loaded_conversation = True
+                if self.message_handler.memory_service:
+                    self.message_handler.memory_service.session_id = (
+                        self.message_handler.current_conversation_id
+                    )
+                    self.message_handler.memory_service.loaded_conversation = True
+                    self.message_handler.memory_service.load_conversation_context(
+                        self.message_handler.current_conversation_id
+                    )
                 last_agent_name = history[-1].get("agent", "")
                 if last_agent_name and self.message_handler.agent_manager.select_agent(
                     last_agent_name
@@ -179,7 +194,12 @@ class ConversationManager:
             True if deletion was successful, False otherwise.
         """
         logger.info(f"INFO: Attempting to delete conversation: {conversation_id}")
-        if self.message_handler.persistent_service.delete_conversation(conversation_id):
+        if (
+            self.message_handler.persistent_service
+            and self.message_handler.persistent_service.delete_conversation(
+                conversation_id
+            )
+        ):
             logger.info(
                 f"INFO: Successfully deleted conversation file for ID: {conversation_id}"
             )

@@ -11,7 +11,7 @@ from typing import Dict
 
 from .js_loader import js_loader
 
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 def remove_duplicate_lines(content: str) -> str:

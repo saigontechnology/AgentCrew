@@ -50,6 +50,10 @@ class BaseMemoryService(ABC):
         pass
 
     @abstractmethod
+    def load_conversation_context(self, session_id: str):
+        pass
+
+    @abstractmethod
     def generate_user_context(self, user_input: str, agent_name: str = "None") -> str:
         """
         Generate context based on user input by retrieving relevant memories.

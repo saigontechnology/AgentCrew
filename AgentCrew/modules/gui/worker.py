@@ -6,7 +6,7 @@ from PySide6.QtCore import (
     QObject,
     Signal,
 )
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class LLMWorker(QObject):

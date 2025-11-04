@@ -4,7 +4,7 @@ import os
 import mimetypes
 from typing import Optional, Dict, Any
 import sys
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 # Docling Configuration

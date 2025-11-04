@@ -67,7 +67,7 @@ wheels = [
 
 [[package]]
 name = "agentcrew-ai"
-version = "0.6.21.post1"
+version = "0.7.2"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },
@@ -79,6 +79,7 @@ dependencies = [
     { name = "groq" },
     { name = "html-to-markdown" },
     { name = "jsonref" },
+    { name = "jsonschema" },
     { name = "loguru" },
     { name = "markdown" },
     { name = "mcp" },
@@ -147,6 +148,7 @@ requires-dist = [
     { name = "groq", specifier = ">=0.18.0" },
     { name = "html-to-markdown", specifier = ">=1.14.0" },
     { name = "jsonref", specifier = ">=1.1.0" },
+    { name = "jsonschema", specifier = ">=4.25.1" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "markdown", specifier = ">=3.7" },
     { name = "mcp", specifier = ">=1.3.0" },
@@ -155,7 +157,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.65.2" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "pip-system-certs", specifier = ">=5.2" },
-    { name = "prompt-toolkit", specifier = ">=3.0.50" },
+    { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "pychromedevtools", specifier = ">=0.3.3" },
     { name = "pyobjc", marker = "sys_platform == 'darwin'" },
     { name = "pyperclip", specifier = ">=1.9.0" },

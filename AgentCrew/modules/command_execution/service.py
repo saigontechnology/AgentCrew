@@ -23,7 +23,7 @@ from .constants import (
     USER_SENSITIVE_PATHS,
     PROTECTED_ENV_VARS,
 )
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class CommandExecutionService:

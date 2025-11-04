@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic import ValidationError
 from .common.server.auth_middleware import AuthMiddleware
 
-from AgentCrew.modules import logger
+from loguru import logger
 from AgentCrew.modules.agents import AgentManager
 from .registry import AgentRegistry
 from .task_manager import MultiAgentTaskManager

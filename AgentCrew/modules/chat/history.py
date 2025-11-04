@@ -1,6 +1,6 @@
 import os
 from typing import Optional
-from AgentCrew.modules import logger
+from loguru import logger
 
 # Default constants
 DEFAULT_HISTORY_FILE = os.path.abspath(".chat_histories")

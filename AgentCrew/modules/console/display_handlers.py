@@ -16,12 +16,12 @@ from .constants import (
     RICH_STYLE_YELLOW,
     RICH_STYLE_BLUE,
     RICH_STYLE_RED,
+    RICH_STYLE_GREEN,
     RICH_STYLE_GRAY,
     RICH_STYLE_YELLOW_BOLD,
     RICH_STYLE_GREEN_BOLD,
-    RICH_STYLE_BLUE_BOLD,
     RICH_STYLE_FILE_ACCENT_BOLD,
-    RICH_STYLE_FILE_PATH,
+    RICH_STYLE_WHITE,
     CODE_THEME,
 )
 
@@ -63,6 +63,32 @@ class DisplayHandlers:
     def display_message(self, message: Text):
         """Display a generic message."""
         self.console.print(message)
+
+    def display_user_message(self, message: str):
+        header = Text(
+            "👤 YOU:",
+            style=RICH_STYLE_GREEN_BOLD,
+        )
+        user_panel = Panel(
+            Text(message),
+            title=header,
+            title_align="left",
+            border_style=RICH_STYLE_BLUE,
+        )
+        self.console.print(user_panel)
+
+    def display_assistant_message(self, agent_name: str, message: str):
+        header = Text(
+            f"🤖 {agent_name.upper()}:",
+            style=RICH_STYLE_GREEN_BOLD,
+        )
+        assistant_panel = Panel(
+            Markdown(message, code_theme=CODE_THEME),
+            title=header,
+            title_align="left",
+            border_style=RICH_STYLE_GREEN,
+        )
+        self.console.print(assistant_panel)
 
     def display_divider(self):
         """Display a divider line."""
@@ -163,19 +189,13 @@ class DisplayHandlers:
         for msg in messages[last_consolidated_idx:]:
             role = msg.get("role")
             if role == "user":
-                self.console.print(Text("\n👤 YOU:", style=RICH_STYLE_BLUE_BOLD))
                 content = self._extract_message_content(msg)
-                self.console.print(content)
-                self.display_divider()
+                self.display_user_message(content)
             elif role == "assistant":
-                agent_name = message_handler.agent.name
-                self.console.print(
-                    Text(f"\n🤖 {agent_name.upper()}:", style=RICH_STYLE_GREEN_BOLD)
-                )
+                agent_name = msg.get("agent") or message_handler.agent.name
                 content = self._extract_message_content(msg)
                 # Format as markdown for better display
-                self.console.print(Markdown(content, code_theme=CODE_THEME))
-                self.display_divider()
+                self.display_assistant_message(agent_name, content)
                 if "tool_calls" in msg:
                     from .tool_display import ToolDisplayHandlers
 
@@ -221,7 +241,6 @@ class DisplayHandlers:
         session_cost: float,
     ):
         """Display token usage and cost information."""
-        self.console.print("\n")
         self.display_divider()
         token_info = Text("📊 Token Usage: ", style=RICH_STYLE_YELLOW)
         token_info.append(
@@ -241,9 +260,7 @@ class DisplayHandlers:
             return
 
         file_display = Text("📎 Added files: ", style=RICH_STYLE_FILE_ACCENT_BOLD)
-        file_display.append(
-            f"{', '.join(self._added_files)}", style=RICH_STYLE_FILE_PATH
-        )
+        file_display.append(f"{', '.join(self._added_files)}", style=RICH_STYLE_WHITE)
         self.console.print(file_display)
 
     def print_welcome_message(self, version: str):

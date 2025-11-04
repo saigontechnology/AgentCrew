@@ -13,6 +13,6 @@ RICH_STYLE_BLUE_BOLD = Style(color="blue", bold=True)
 RICH_STYLE_RED_BOLD = Style(color="red", bold=True)
 
 RICH_STYLE_FILE_ACCENT_BOLD = Style(color="bright_cyan", bold=True)
-RICH_STYLE_FILE_PATH = Style(color="bright_white", bold=False)
+RICH_STYLE_WHITE = Style(color="#ffffff", bold=False)
 
 CODE_THEME = "lightbulb"

@@ -1,7 +1,7 @@
 from .service import CustomLLMService
 import os
 from dotenv import load_dotenv
-from AgentCrew.modules import logger
+from loguru import logger
 from typing import Dict, List, Optional, Tuple
 import ast
 import json

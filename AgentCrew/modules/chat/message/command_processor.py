@@ -1,15 +1,20 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict, Any
 import os
 
-from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.chat.file_handler import FileHandler
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.service_manager import ServiceManager
 from AgentCrew.modules.chat.consolidation import ConversationConsolidator
 from AgentCrew.modules.config import ConfigManagement
-from AgentCrew.modules.mcpclient import MCPService
+from AgentCrew.modules.agents.local_agent import LocalAgent
 import shlex
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from AgentCrew.modules.mcpclient import MCPService
+    from AgentCrew.modules.chat.message import MessageHandler
 
 
 @dataclass
@@ -25,11 +30,8 @@ class CommandResult:
 class CommandProcessor:
     """Handles command processing for the message handler."""
 
-    def __init__(self, message_handler):
-        from AgentCrew.modules.chat.message import MessageHandler
-
-        if isinstance(message_handler, MessageHandler):
-            self.message_handler = message_handler
+    def __init__(self, message_handler: MessageHandler):
+        self.message_handler = message_handler
 
     async def process_command(self, user_input: str) -> CommandResult:
         """Process a command and return the result."""
@@ -123,7 +125,10 @@ class CommandProcessor:
 
                     self.message_handler._notify("consolidation_completed", result)
 
-                    if self.message_handler.current_conversation_id:
+                    if (
+                        self.message_handler.current_conversation_id
+                        and self.message_handler.persistent_service
+                    ):
                         try:
                             self.message_handler.persistent_service.append_conversation_messages(
                                 self.message_handler.current_conversation_id,
@@ -184,7 +189,10 @@ class CommandProcessor:
 
                     self.message_handler._notify("unconsolidation_completed", result)
 
-                    if self.message_handler.current_conversation_id:
+                    if (
+                        self.message_handler.current_conversation_id
+                        and self.message_handler.persistent_service
+                    ):
                         try:
                             self.message_handler.persistent_service.append_conversation_messages(
                                 self.message_handler.current_conversation_id,
@@ -307,7 +315,10 @@ class CommandProcessor:
             self.message_handler.streamline_messages = (
                 self.message_handler.streamline_messages[: selected_turn.message_index]
             )
-            if self.message_handler.current_conversation_id:
+            if (
+                self.message_handler.current_conversation_id
+                and self.message_handler.persistent_service
+            ):
                 self.message_handler.persistent_service.append_conversation_messages(
                     self.message_handler.current_conversation_id,
                     self.message_handler.streamline_messages,
@@ -332,6 +343,21 @@ class CommandProcessor:
             self.message_handler.last_assisstant_response_idx = len(
                 self.message_handler.streamline_messages
             )
+            if last_message and last_message.get("role", "") == "assistant":
+                last_message_content = last_message.get("content", "")
+                if isinstance(last_message_content, list):
+                    self.message_handler.latest_assistant_response = next(
+                        (
+                            c.get("text", "")
+                            for c in last_message_content
+                            if isinstance(c, dict) and c.get("type", "") == "text"
+                        ),
+                        "",
+                    )
+                else:
+                    self.message_handler.latest_assistant_response = (
+                        last_message_content
+                    )
 
             self.message_handler._notify(
                 "jump_performed",

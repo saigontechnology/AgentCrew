@@ -1,5 +1,14 @@
-from typing import Any, Dict
-from PySide6.QtWidgets import QMessageBox, QTextEdit, QGridLayout
+from typing import Any, Dict, Optional
+from PySide6.QtWidgets import (
+    QMessageBox,
+    QTextEdit,
+    QGridLayout,
+    QDialog,
+    QVBoxLayout,
+    QPushButton,
+    QLabel,
+)
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtCore import Qt
 from AgentCrew.modules.gui.widgets.tool_widget import ToolWidget
 
@@ -12,6 +21,60 @@ class ToolEventHandler:
 
         if isinstance(chat_window, ChatWindow):
             self.chat_window = chat_window
+
+    def show_denial_reason_dialog(self, tool_name: str) -> Optional[str]:
+        """
+        Show a dialog to collect the reason for denying a tool execution.
+
+        Args:
+            tool_name: Name of the tool being denied
+
+        Returns:
+            The denial reason if submitted, None if cancelled
+        """
+        dialog = QDialog(self.chat_window)
+        dialog.setWindowTitle("Tool Execution Denied")
+        dialog.setMinimumWidth(500)
+        dialog.setMinimumHeight(300)
+
+        # Create layout
+        layout = QVBoxLayout()
+
+        # Add label
+        label = QLabel(f"Please explain why you are denying the '{tool_name}' tool:")
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        # Add multiline text edit
+        reason_edit = QTextEdit()
+        reason_edit.setPlaceholderText("Enter your reason here...")
+        reason_edit.setMinimumHeight(100)
+
+        # Apply theme styling
+        reason_edit.setStyleSheet(
+            self.chat_window.style_provider.get_tool_dialog_text_edit_style()
+        )
+        layout.addWidget(reason_edit)
+
+        # Add submit button
+        submit_button = QPushButton("Submit (Ctrl+Enter)")
+        submit_button.setStyleSheet(
+            self.chat_window.style_provider.get_tool_dialog_yes_button_style()
+        )
+        submit_button.clicked.connect(dialog.accept)
+        submit_shortcut = QShortcut(QKeySequence("Ctrl+Return"), dialog)
+        submit_shortcut.activated.connect(submit_button.click)
+        layout.addWidget(submit_button)
+
+        dialog.setLayout(layout)
+
+        # Apply dialog styling
+        dialog.setStyleSheet(self.chat_window.style_provider.get_config_window_style())
+
+        # Show dialog and get result
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            return reason_edit.toPlainText().strip()
+        return None
 
     def handle_event(self, event: str, data: Any):
         """Handle a tool-related event."""
@@ -94,6 +157,11 @@ class ToolEventHandler:
         """Display a dialog for tool confirmation request."""
         tool_use = tool_info.copy()
         confirmation_id = tool_use.pop("confirmation_id")
+
+        # Special handling for 'ask' tool
+        if tool_use["name"] == "ask":
+            self._handle_ask_tool_confirmation(tool_use, confirmation_id)
+            return
 
         # Create dialog
         dialog = QMessageBox(self.chat_window)
@@ -191,20 +259,153 @@ class ToolEventHandler:
                 f"Tool '{tool_use['name']}' will be auto-approved forever"
             )
         else:  # No or dialog closed
-            self.chat_window.message_handler.resolve_tool_confirmation(
-                confirmation_id, {"action": "deny"}
-            )
-            self.chat_window.display_status_message(f"Denied tool: {tool_use['name']}")
+            # Show dialog to collect denial reason
+            denial_reason = self.show_denial_reason_dialog(tool_use["name"])
+
+            if denial_reason:
+                # User provided a reason
+                self.chat_window.message_handler.resolve_tool_confirmation(
+                    confirmation_id, {"action": "deny", "reason": denial_reason}
+                )
+                self.chat_window.display_status_message(
+                    f"Denied tool: {tool_use['name']} - Reason: {denial_reason[:50]}..."
+                    if len(denial_reason) > 50
+                    else f"Denied tool: {tool_use['name']} - Reason: {denial_reason}"
+                )
+            else:
+                # User cancelled the reason dialog, just deny without reason
+                self.chat_window.message_handler.resolve_tool_confirmation(
+                    confirmation_id, {"action": "deny"}
+                )
+                self.chat_window.display_status_message(
+                    f"Denied tool: {tool_use['name']}"
+                )
 
     def handle_tool_denied(self, data):
         """Display a message about a denied tool execution."""
-        tool_use = data["tool_use"]
         self.chat_window.chat_components.add_system_message(
-            f"❌ Tool execution rejected: {tool_use['name']}"
+            f"❌ Tool execution rejected: {data['message']}"
         )
         self.chat_window.display_status_message(
-            f"Tool execution rejected: {tool_use['name']}"
+            f"Tool execution rejected: {data['message']}"
         )
 
         self.chat_window.current_response_bubble = None
         self.chat_window.current_response_container = None
+
+    def _handle_ask_tool_confirmation(self, tool_use, confirmation_id):
+        """Handle the ask tool - display question and guided answers in GUI."""
+        question = tool_use["input"].get("question", "")
+        guided_answers = tool_use["input"].get("guided_answers", [])
+        if isinstance(guided_answers, str):
+            guided_answers = guided_answers.strip("\n ").splitlines()
+
+        # Create dialog
+        dialog = QDialog(self.chat_window)
+        dialog.setWindowTitle("Agent Question")
+        dialog.setMinimumWidth(600)
+        dialog.setMinimumHeight(400)
+
+        # Create layout
+        layout = QVBoxLayout()
+
+        # Add question label
+        question_label = QLabel(f"❓ {question}")
+        question_label.setWordWrap(True)
+        question_label.setStyleSheet(
+            "font-size: 14px; font-weight: bold; padding: 10px;"
+        )
+        layout.addWidget(question_label)
+
+        # Add instruction label
+        instruction_label = QLabel(
+            "Select one or more options (hold Ctrl/Cmd for multiple), or provide a custom answer below:"
+        )
+        instruction_label.setWordWrap(True)
+        instruction_label.setStyleSheet("font-size: 12px; color: #888; padding: 5px;")
+        layout.addWidget(instruction_label)
+
+        # Add guided answers as checkable buttons
+        from PySide6.QtWidgets import QCheckBox, QScrollArea, QWidget
+
+        answers_container = QWidget()
+        answers_layout = QVBoxLayout()
+        checkboxes = []
+
+        for idx, answer in enumerate(guided_answers, 1):
+            checkbox = QCheckBox(f"{idx}. {answer}")
+            checkbox.setStyleSheet("font-size: 12px; padding: 5px;")
+            checkboxes.append(checkbox)
+            answers_layout.addWidget(checkbox)
+
+        answers_container.setLayout(answers_layout)
+
+        # Add scroll area for answers
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(answers_container)
+        scroll_area.setMinimumHeight(150)
+        layout.addWidget(scroll_area)
+
+        # Add custom answer section
+        custom_label = QLabel("Or provide a custom answer:")
+        custom_label.setStyleSheet("font-size: 12px; padding: 5px; margin-top: 10px;")
+        layout.addWidget(custom_label)
+
+        custom_input = QTextEdit()
+        custom_input.setPlaceholderText("Type your custom answer here...")
+        custom_input.setMinimumHeight(80)
+        custom_input.setStyleSheet(
+            self.chat_window.style_provider.get_tool_dialog_text_edit_style()
+        )
+        layout.addWidget(custom_input)
+
+        # Add submit button
+        submit_button = QPushButton("Submit Answer")
+        submit_button.setStyleSheet(
+            self.chat_window.style_provider.get_tool_dialog_yes_button_style()
+        )
+        layout.addWidget(submit_button)
+
+        dialog.setLayout(layout)
+        dialog.setStyleSheet(self.chat_window.style_provider.get_config_window_style())
+
+        submit_shortcut = QShortcut(QKeySequence("Ctrl+Return"), dialog)
+        submit_shortcut.activated.connect(submit_button.click)
+
+        submit_button.clicked.connect(dialog.accept)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            custom_text = custom_input.toPlainText().strip()
+
+            if custom_text:
+                # User provided custom answer
+                final_answer = custom_text
+            else:
+                # Collect selected checkboxes
+                selected = [
+                    guided_answers[i]
+                    for i, cb in enumerate(checkboxes)
+                    if cb.isChecked()
+                ]
+
+                if not selected:
+                    final_answer = "Cancelled by user"
+
+                else:
+                    final_answer = ", ".join(selected)
+
+            # Resolve the confirmation with the answer
+            self.chat_window.message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "answer", "answer": final_answer}
+            )
+
+            self.chat_window.display_status_message(
+                f"Answered agent question: {final_answer[:50]}..."
+                if len(final_answer) > 50
+                else f"Answered agent question: {final_answer}"
+            )
+        else:
+            # Resolve the confirmation with the answer
+            self.chat_window.message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "answer", "answer": "Cancelled by user"}
+            )

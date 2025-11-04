@@ -1,34 +1,41 @@
+from __future__ import annotations
+
 import json
 
 from collections.abc import AsyncGenerator
-from typing import Any, Optional, Dict
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import httpx
 
-from httpx._types import TimeoutTypes
 from httpx_sse import aconnect_sse
 
 from a2a.types import (
     A2ARequest,
-    AgentCard,
-    CancelTaskRequest,
     CancelTaskResponse,
-    GetTaskPushNotificationConfigRequest,
     GetTaskPushNotificationConfigResponse,
-    GetTaskRequest,
     GetTaskResponse,
-    TaskQueryParams,
-    SendMessageRequest,
     SendMessageResponse,
-    SendStreamingMessageRequest,
     TaskPushNotificationConfig,
     SendStreamingMessageResponse,
-    SetTaskPushNotificationConfigRequest,
     SetTaskPushNotificationConfigResponse,
-    TaskIdParams,
-    MessageSendParams,
 )
+
+if TYPE_CHECKING:
+    from typing import Any, Dict, Optional
+    from httpx._types import TimeoutTypes
+    from a2a.types import (
+        AgentCard,
+        CancelTaskRequest,
+        GetTaskPushNotificationConfigRequest,
+        GetTaskRequest,
+        MessageSendParams,
+        SendMessageRequest,
+        SendStreamingMessageRequest,
+        SetTaskPushNotificationConfigRequest,
+        TaskIdParams,
+        TaskQueryParams,
+    )
 
 
 class A2AClient:

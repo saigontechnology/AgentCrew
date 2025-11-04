@@ -32,7 +32,7 @@ function focusAndClearElement(xpath) {
   const tagName = element.tagName.toLowerCase();
 
   // Scroll element into view and focus
-  element.scrollIntoView({ behavior: "smooth", block: "center" });
+  element.scrollIntoView({ behavior: "instant", block: "center" });
   element.focus();
 
   if (

@@ -3,22 +3,17 @@ Main console UI class that orchestrates all console functionality.
 Refactored to use separate modules for different responsibilities.
 """
 
+from __future__ import annotations
 import asyncio
-import sys
 import time
 from typing import Any
 from rich.console import Console
 from rich.text import Text
 
-try:
-    import pyperclip
-except ImportError:
-    pyperclip = None
-
 import AgentCrew
 from AgentCrew.modules.chat.message_handler import MessageHandler, Observer
-from AgentCrew.modules import logger
 from AgentCrew.modules.config import ConfigManagement
+from loguru import logger
 from .utils import agent_evaluation_remove
 
 from .constants import (
@@ -28,13 +23,10 @@ from .constants import (
     RICH_STYLE_YELLOW_BOLD,
 )
 
-from .display_handlers import DisplayHandlers
-from .tool_display import ToolDisplayHandlers
-from .input_handler import InputHandler
-from .ui_effects import UIEffects
-from .confirmation_handler import ConfirmationHandler
-from .conversation_handler import ConversationHandler
-from .command_handlers import CommandHandlers
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from AgentCrew.modules.chat.message_handler import MessageHandler
 
 
 class ConsoleUI(Observer):
@@ -50,6 +42,15 @@ class ConsoleUI(Observer):
         Args:
             message_handler: The MessageHandler instance that this UI will observe.
         """
+
+        from .display_handlers import DisplayHandlers
+        from .tool_display import ToolDisplayHandlers
+        from .input_handler import InputHandler
+        from .ui_effects import UIEffects
+        from .confirmation_handler import ConfirmationHandler
+        from .conversation_handler import ConversationHandler
+        from .command_handlers import CommandHandlers
+
         self.message_handler = message_handler
         self.voice_recording = False
         self.message_handler.attach(self)
@@ -66,9 +67,7 @@ class ConsoleUI(Observer):
             self.console, self.message_handler, self.display_handlers
         )
         self.ui_effects = UIEffects(self.console, self.message_handler)
-        self.confirmation_handler = ConfirmationHandler(
-            self.console, self.input_handler
-        )
+        self.confirmation_handler = ConfirmationHandler(self, self.input_handler)
         self.conversation_handler = ConversationHandler(
             self.console, self.display_handlers
         )
@@ -155,7 +154,7 @@ class ConsoleUI(Observer):
             self.display_handlers.display_message(
                 Text("🎮 Ending chat session. Goodbye!", style=RICH_STYLE_YELLOW_BOLD)
             )
-            sys.exit(0)
+            raise SystemExit(0)
         elif event == "copy_requested":
             self.copy_to_clipboard(data)  # data is the text to copy
         elif event == "debug_requested":
@@ -272,6 +271,10 @@ class ConsoleUI(Observer):
 
     def copy_to_clipboard(self, text: str):
         """Copy text to clipboard and show confirmation."""
+        try:
+            import pyperclip
+        except ImportError:
+            pyperclip = None
         if text:
             if pyperclip:
                 pyperclip.copy(text)
@@ -331,7 +334,7 @@ class ConsoleUI(Observer):
                 )
             )
             self.input_handler.stop()
-            sys.exit(0)
+            raise SystemExit(0)
         else:
             self._last_ctrl_c_time = current_time
             self.console.print(
@@ -355,7 +358,7 @@ class ConsoleUI(Observer):
  ███████║ ██║  ███╗ █████╗   ██╔██╗ ██║    ██║    ██║      ██████╔╝ █████╗   ██║ █╗ ██║
  ██╔══██║ ██║   ██║ ██╔══╝   ██║╚██╗██║    ██║    ██║      ██╔══██╗ ██╔══╝   ██║███╗██║
  ██║  ██║ ╚██████╔╝ ███████╗ ██║ ╚████║    ██║    ╚██████╗ ██║  ██║ ███████╗ ╚███╔███╔╝
- ╚═╝  ╚═╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═══╝    ╚═╝     ╚═════╝ ╚═╝  ╚═╝ ╚══════╝  ╚══╝╚══╝ 
+ ╚═╝  ╚═╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═══╝    ╚═╝     ╚═════╝ ╚═╝  ╚═╝ ╚══════╝  ╚══╝╚══╝
         """,
                 RICH_STYLE_GREEN,
             )
@@ -505,6 +508,7 @@ class ConsoleUI(Observer):
                         or user_input.startswith("/consolidate ")
                         or user_input.startswith("/agent ")
                         or user_input.startswith("/model ")
+                        or user_input.startswith("/retry")
                     ):
                         self.start_loading_animation()
 

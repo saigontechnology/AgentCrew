@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, Tuple, Dict, List, Optional, Any, Callable, Union
+from typing import TYPE_CHECKING
 from enum import Enum
+
+if TYPE_CHECKING:
+    from typing import AsyncGenerator, Tuple, Dict, List, Optional, Any, Callable, Union
 
 
 class MessageType(Enum):

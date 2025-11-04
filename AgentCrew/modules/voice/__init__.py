@@ -6,17 +6,18 @@ built on a flexible abstract base class architecture.
 """
 
 try:
-    from .elevenlabs_service import ElevenLabsVoiceService
-    from .deepinfra_service import DeepInfraVoiceService
+    import sounddevice as sd
+
+    _ = sd
 
     AUDIO_AVAILABLE = True
 
-    __all__ = [
-        "ElevenLabsVoiceService",
-        "DeepInfraVoiceService",
-    ]
 except Exception as e:
     print(f"Failed to import voice module components: {e}")
     print("Please install PyAudio and other dependencies to enable voice features.")
 
     AUDIO_AVAILABLE = False
+
+__all__ = [
+    "AUDIO_AVAILABLE",
+]

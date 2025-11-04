@@ -6,7 +6,7 @@ import torch
 from scipy import signal
 import sounddevice as sd
 import asyncio
-from AgentCrew.modules import logger
+from loguru import logger
 from .base import BaseAudioHandler
 
 INT16_MAX_ABS_VALUE = 32768.0

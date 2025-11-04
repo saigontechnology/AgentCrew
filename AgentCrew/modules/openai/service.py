@@ -6,7 +6,7 @@ from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from AgentCrew.modules.llm.base import BaseLLMService, read_binary_file, read_text_file
 from AgentCrew.modules.llm.model_registry import ModelRegistry
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class OpenAIService(BaseLLMService):
@@ -79,33 +79,30 @@ class OpenAIService(BaseLLMService):
         return messages
 
     async def process_message(self, prompt: str, temperature: float = 0) -> str:
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=3000,
-                temperature=temperature,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-            )
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=3000,
+            temperature=temperature,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+        )
 
-            # Calculate and log token usage and cost
-            input_tokens = response.usage.prompt_tokens if response.usage else 0
-            output_tokens = response.usage.completion_tokens if response.usage else 0
-            total_cost = self.calculate_cost(input_tokens, output_tokens)
+        # Calculate and log token usage and cost
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        total_cost = self.calculate_cost(input_tokens, output_tokens)
 
-            logger.info("\nToken Usage Statistics:")
-            logger.info(f"Input tokens: {input_tokens:,}")
-            logger.info(f"Output tokens: {output_tokens:,}")
-            logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
-            logger.info(f"Estimated cost: ${total_cost:.4f}")
+        logger.info("\nToken Usage Statistics:")
+        logger.info(f"Input tokens: {input_tokens:,}")
+        logger.info(f"Output tokens: {output_tokens:,}")
+        logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
+        logger.info(f"Estimated cost: ${total_cost:.4f}")
 
-            return response.choices[0].message.content or ""
-        except Exception as e:
-            raise Exception(f"Failed to process content: {str(e)}")
+        return response.choices[0].message.content or ""
 
     def _process_file(self, file_path):
         mime_type, _ = mimetypes.guess_type(file_path)
@@ -191,6 +188,7 @@ class OpenAIService(BaseLLMService):
 
     async def stream_assistant_response(self, messages) -> Any:
         """Stream the assistant's response with tool support."""
+        full_model_id = f"{self._provider_name}/{self.model}"
         stream_params = {
             "model": self.model,
             "messages": messages,
@@ -198,9 +196,7 @@ class OpenAIService(BaseLLMService):
             "stream_options": {"include_usage": True},
             "max_tokens": 20000,
         }
-        if "thinking" in ModelRegistry.get_model_capabilities(
-            f"{self._provider_name}/{self.model}"
-        ):
+        if "thinking" in ModelRegistry.get_model_capabilities(full_model_id):
             stream_params.pop("max_tokens", None)
             if self.reasoning_effort:
                 stream_params["reasoning_effort"] = self.reasoning_effort
@@ -216,7 +212,7 @@ class OpenAIService(BaseLLMService):
 
         # Add tools if available
         if self.tools and "tool_use" in ModelRegistry.get_model_capabilities(
-            f"{self._provider_name}/{self.model}"
+            full_model_id
         ):
             stream_params["tools"] = self.tools
 
@@ -354,32 +350,29 @@ class OpenAIService(BaseLLMService):
             Validation result as a JSON string
         """
 
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                response_format={"type": "json_object"},
-            )
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            response_format={"type": "json_object"},
+        )
 
-            # Calculate and log token usage and cost
-            input_tokens = response.usage.prompt_tokens if response.usage else 0
-            output_tokens = response.usage.completion_tokens if response.usage else 0
-            total_cost = self.calculate_cost(input_tokens, output_tokens)
+        # Calculate and log token usage and cost
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        total_cost = self.calculate_cost(input_tokens, output_tokens)
 
-            logger.info("\nSpec Validation Token Usage:")
-            logger.info(f"Input tokens: {input_tokens:,}")
-            logger.info(f"Output tokens: {output_tokens:,}")
-            logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
-            logger.info(f"Estimated cost: ${total_cost:.4f}")
+        logger.info("\nSpec Validation Token Usage:")
+        logger.info(f"Input tokens: {input_tokens:,}")
+        logger.info(f"Output tokens: {output_tokens:,}")
+        logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
+        logger.info(f"Estimated cost: ${total_cost:.4f}")
 
-            return response.choices[0].message.content or ""
-        except Exception as e:
-            raise Exception(f"Failed to validate specification: {str(e)}")
+        return response.choices[0].message.content or ""
 
     def set_system_prompt(self, system_prompt: str):
         """

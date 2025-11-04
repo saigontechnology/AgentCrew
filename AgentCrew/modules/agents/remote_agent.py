@@ -1,4 +1,6 @@
-from typing import Callable, Dict, Any, List, Optional, Tuple, Union
+from __future__ import annotations
+
+from typing import Dict, TYPE_CHECKING
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -6,7 +8,6 @@ from AgentCrew.modules.a2a.adapters import (
     convert_agent_message_to_a2a,
 )
 
-# from AgentCrew.modules.llm.message import MessageTransformer
 from .base import BaseAgent, MessageType
 from AgentCrew.modules.a2a.common.client import A2ACardResolver, A2AClient
 from a2a.types import (
@@ -16,6 +17,9 @@ from a2a.types import (
     TaskArtifactUpdateEvent,
     TextPart,
 )
+
+if TYPE_CHECKING:
+    from typing import Callable, Any, List, Optional, Tuple, Union
 
 
 class RemoteAgent(BaseAgent):

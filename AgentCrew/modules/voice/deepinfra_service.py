@@ -12,7 +12,7 @@ from .text_cleaner import TextCleaner
 from .audio_handler import AudioHandler
 from .base import BaseVoiceService
 
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class DeepInfraVoiceService(BaseVoiceService):

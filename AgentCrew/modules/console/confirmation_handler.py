@@ -3,23 +3,36 @@ Confirmation handlers for console UI.
 Handles tool confirmation requests and MCP prompt confirmations.
 """
 
-from rich.console import Console
+from __future__ import annotations
+
 from rich.text import Text
+from rich.panel import Panel
+from rich.console import Group
+import time
 
 from .constants import (
+    RICH_STYLE_BLUE,
+    RICH_STYLE_BLUE_BOLD,
     RICH_STYLE_YELLOW,
     RICH_STYLE_GREEN,
     RICH_STYLE_RED,
     RICH_STYLE_GRAY,
+    RICH_STYLE_WHITE,
 )
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .console_ui import ConsoleUI
+    from .input_handler import InputHandler
 
 
 class ConfirmationHandler:
     """Handles confirmation dialogs for tools and MCP prompts."""
 
-    def __init__(self, console: Console, input_handler):
+    def __init__(self, console_ui: ConsoleUI, input_handler: InputHandler):
         """Initialize the confirmation handler."""
-        self.console = console
+        self.console = console_ui.console
+        self.ui = console_ui
         self.input_handler = input_handler
 
     def display_tool_confirmation_request(self, tool_info, message_handler):
@@ -27,82 +40,122 @@ class ConfirmationHandler:
         tool_use = tool_info.copy()
         confirmation_id = tool_use.pop("confirmation_id")
 
-        self.console.print(
-            Text(
-                "\n🔧 Tool execution requires your permission:", style=RICH_STYLE_YELLOW
-            )
-        )
-        tool_name = Text("Tool: ", style=RICH_STYLE_YELLOW)
-        tool_name.append(tool_use["name"])
-        self.console.print(tool_name)
+        # Special handling for 'ask' tool
+        if tool_use["name"] == "ask":
+            self._handle_ask_tool(tool_use, confirmation_id, message_handler)
+            return
+
+        tool_texts_group = []
+        header = Text("🔧 Tool ", style=RICH_STYLE_YELLOW)
+        header.append(tool_use["name"], style=RICH_STYLE_BLUE_BOLD)
+        header.append(" execution requires your permission:", style=RICH_STYLE_YELLOW)
 
         # Display tool parameters
         if isinstance(tool_use["input"], dict):
-            self.console.print(Text("Parameters:", style=RICH_STYLE_YELLOW))
+            tool_texts_group.append(Text("Parameters:", style=RICH_STYLE_BLUE))
             for key, value in tool_use["input"].items():
                 param_text = Text(f"  - {key}: ", style=RICH_STYLE_YELLOW)
-                param_text.append(str(value))
-                self.console.print(param_text)
+                param_text.append(str(value), style=RICH_STYLE_WHITE)
+                tool_texts_group.append(param_text)
         else:
             input_text = Text("Input: ", style=RICH_STYLE_YELLOW)
             input_text.append(str(tool_use["input"]))
-            self.console.print(input_text)
+            tool_texts_group.append(input_text)
+
+        self.console.print(
+            Panel(
+                Group(*tool_texts_group),
+                title=header,
+                title_align="left",
+                border_style=RICH_STYLE_YELLOW,
+            )
+        )
 
         # Get user response
         self.input_handler._stop_input_thread()
-        while True:
-            # Use Rich to print the prompt but still need to use input() for user interaction
-            self.console.print(
-                Text(
-                    "\nAllow this tool to run? [y]es/[n]o/[a]ll in this session/[f]orever (this and future sessions): ",
-                    style=RICH_STYLE_YELLOW,
-                ),
-                end="",
+        choices = [
+            "yes",
+            "no",
+            "all in this session",
+            "forever (this and future sessions)",
+        ]
+        response = self.input_handler.get_choice_input(
+            "Allow this tool to run?", choices
+        )
+        if not response:
+            response = "no"
+
+        if response == choices[0]:
+            message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "approve"}
             )
-            try:
-                response = input().lower()
-            except KeyboardInterrupt:
-                response = "no"
+        elif response == choices[1]:
+            response = self.input_handler.get_prompt_input(
+                "Please tell me why you are denying this tool: "
+            )
+            message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "deny", "reason": response}
+            )
+        elif response == choices[2]:
+            message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "approve_all"}
+            )
+            approved_text = Text(
+                f"✓ Approved all future calls to '{tool_use['name']}' for this session.",
+                style=RICH_STYLE_GREEN,
+            )
+            self.console.print(approved_text)
+        elif response == choices[3]:
+            from AgentCrew.modules.config import ConfigManagement
 
-            if response in ["y", "yes"]:
-                message_handler.resolve_tool_confirmation(
-                    confirmation_id, {"action": "approve"}
-                )
-                break
-            elif response in ["n", "no"]:
-                message_handler.resolve_tool_confirmation(
-                    confirmation_id, {"action": "deny"}
-                )
-                break
-            elif response in ["a", "all"]:
-                message_handler.resolve_tool_confirmation(
-                    confirmation_id, {"action": "approve_all"}
-                )
-                approved_text = Text(
-                    f"✓ Approved all future calls to '{tool_use['name']}' for this session.",
-                    style=RICH_STYLE_GREEN,
-                )
-                self.console.print(approved_text)
-                break
-            elif response in ["f", "forever"]:
-                from AgentCrew.modules.config import ConfigManagement
+            config_manager = ConfigManagement()
+            config_manager.write_auto_approval_tools(tool_use["name"], add=True)
 
-                config_manager = ConfigManagement()
-                config_manager.write_auto_approval_tools(tool_use["name"], add=True)
+            message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "approve_all"}
+            )
+            saved_text = Text(
+                f"✓ Tool '{tool_use['name']}' will be auto-approved forever.",
+                style=RICH_STYLE_YELLOW,
+            )
+            self.console.print(saved_text)
+        self.ui.start_loading_animation()
+        self.input_handler._start_input_thread()
+        time.sleep(0.2)  # Small delay to between tool calls
 
-                message_handler.resolve_tool_confirmation(
-                    confirmation_id, {"action": "approve_all"}
-                )
-                saved_text = Text(
-                    f"✓ Tool '{tool_use['name']}' will be auto-approved forever.",
-                    style=RICH_STYLE_YELLOW,
-                )
-                self.console.print(saved_text)
-                break
-            else:
-                self.console.print(
-                    Text("Please enter 'y', 'n', 'a', or 'f'.", style=RICH_STYLE_YELLOW)
-                )
+    def _handle_ask_tool(self, tool_use, confirmation_id, message_handler):
+        """Handle the ask tool - display question and guided answers."""
+        question = tool_use["input"].get("question", "")
+        guided_answers = tool_use["input"].get("guided_answers", [])
+        if isinstance(guided_answers, str):
+            guided_answers = guided_answers.strip("\n ").splitlines()
+
+        guided_answers.append("Custom your answer")
+
+        self.input_handler._stop_input_thread()
+        # Display the question
+        self.console.print(
+            Text("\n❓ Agent is asking for clarification:", style=RICH_STYLE_BLUE_BOLD)
+        )
+        response = self.input_handler.get_choice_input(f"{question}", guided_answers)
+
+        if response == "Custom your answer":
+            custom_answer = self.input_handler.get_prompt_input("Input your answer:")
+            message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "answer", "answer": custom_answer}
+            )
+        elif response:
+            message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "answer", "answer": response}
+            )
+
+        else:
+            message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "answer", "answer": "Cancelled by user"}
+            )
+
+        self.ui.start_loading_animation()
+
         self.input_handler._start_input_thread()
 
     def display_mcp_prompt_confirmation(self, prompt_data, input_queue):

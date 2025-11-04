@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from chromadb.api.types import Space
-from typing import Optional, List, cast, Dict, Any
+from typing import cast, TYPE_CHECKING
 from google.genai import types
 from chromadb.utils.embedding_functions.schemas import validate_config_schema
 import numpy as np
 import numpy.typing as npt
 import os
+
+if TYPE_CHECKING:
+    from typing import Optional, List, Dict, Any
 
 
 class GoogleGenAiEmbeddingFunction(EmbeddingFunction[Documents]):

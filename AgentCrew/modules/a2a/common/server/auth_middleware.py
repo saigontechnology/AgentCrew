@@ -2,7 +2,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 from typing import Optional
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class AuthMiddleware(BaseHTTPMiddleware):

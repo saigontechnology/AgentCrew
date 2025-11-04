@@ -17,7 +17,7 @@ from .constants import (
 )
 from AgentCrew.modules.chat.message.handler import MessageHandler
 from AgentCrew.modules.config.config_management import ConfigManagement
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class CommandHandlers:
@@ -95,6 +95,8 @@ class CommandHandlers:
         )
 
         self.open_file_in_editor(agents_config_path)
+        config_mgmt = ConfigManagement()
+        config_mgmt.reload_agents_from_config()
 
     def handle_edit_mcp_command(self) -> None:
         """Handle the /edit_mcp command to open MCP configuration in default editor."""
@@ -110,6 +112,8 @@ class CommandHandlers:
         )
 
         self.open_file_in_editor(mcp_config_path)
+        config_mgmt = ConfigManagement()
+        config_mgmt.reload_agents_from_config()
 
     def handle_edit_config_command(self) -> None:
         """Handle the /edit_config command to open AgentCrew global configuration in default editor."""

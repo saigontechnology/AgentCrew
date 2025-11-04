@@ -10,8 +10,9 @@ import random
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.panel import Panel
 
-from .constants import CODE_THEME
+from .constants import CODE_THEME, RICH_STYLE_GREEN
 from AgentCrew.modules.chat import MessageHandler
 
 
@@ -84,10 +85,11 @@ class UIEffects:
         from .constants import RICH_STYLE_GREEN_BOLD
         from rich.text import Text
 
-        self.console.print(
-            Text(f"🤖 {agent_name.upper()}:", style=RICH_STYLE_GREEN_BOLD)
-        )
-        self.live = Live("", console=self.console, vertical_overflow="crop")
+        header = Text(f"🤖 {agent_name.upper()}:", style=RICH_STYLE_GREEN_BOLD)
+
+        live_panel = Panel("", title=header, border_style=RICH_STYLE_GREEN)
+
+        self.live = Live(live_panel, console=self.console, vertical_overflow="crop")
         self.live.start()
 
     def update_live_display(self, chunk: str):
@@ -106,7 +108,20 @@ class UIEffects:
             lines = lines[-height_limit:]
 
         if self.live:
-            self.live.update(Markdown("\n".join(lines), code_theme=CODE_THEME))
+            from .constants import RICH_STYLE_GREEN_BOLD
+            from rich.text import Text
+
+            header = Text(
+                f"🤖 {self.message_handler.agent.name.upper()}:",
+                style=RICH_STYLE_GREEN_BOLD,
+            )
+            live_panel = Panel(
+                Markdown("\n".join(lines), code_theme=CODE_THEME),
+                title=header,
+                title_align="left",
+                border_style=RICH_STYLE_GREEN,
+            )
+            self.live.update(live_panel)
 
     def finish_live_update(self):
         """Stop the live update display."""
@@ -118,14 +133,31 @@ class UIEffects:
 
     def finish_response(self, response: str):
         """Finalize and display the complete response."""
+        from .constants import RICH_STYLE_GREEN_BOLD
+        from rich.text import Text
+
         if self.live:
-            self.live.update("")
+            self.live.update(Text("", end=""))
             self.live.stop()
             self.live = None
 
         # Replace \n with two spaces followed by \n for proper Markdown line breaks
         markdown_formatted_response = response.replace("\n", "  \n")
-        self.console.print(Markdown(markdown_formatted_response, code_theme=CODE_THEME))
+
+        if not markdown_formatted_response.strip():
+            return
+
+        header = Text(
+            f"🤖 {self.message_handler.agent.name.upper()}:",
+            style=RICH_STYLE_GREEN_BOLD,
+        )
+        assistant_panel = Panel(
+            Markdown(markdown_formatted_response, code_theme=CODE_THEME),
+            title=header,
+            title_align="left",
+            border_style=RICH_STYLE_GREEN,
+        )
+        self.console.print(assistant_panel)
 
     def cleanup(self):
         """Clean up all running effects."""

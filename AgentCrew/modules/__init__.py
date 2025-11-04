@@ -1,12 +1,9 @@
 import tempfile
 from datetime import datetime
 import os
-from loguru import logger
 
 
 from typing import TextIO, AnyStr
-
-logger.remove(0)  # Remove default logger
 
 
 class FileLogIO(TextIO):

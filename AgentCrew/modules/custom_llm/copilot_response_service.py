@@ -1,7 +1,7 @@
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 import os
 from dotenv import load_dotenv
-from AgentCrew.modules import logger
+from loguru import logger
 from typing import Optional
 from datetime import datetime
 from uuid import uuid4

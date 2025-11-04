@@ -1,51 +1,56 @@
-"""
-Task management for A2A protocol implementation.
-"""
+from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Dict, AsyncIterable, Optional, Any, Union
-from AgentCrew.modules.agents import AgentManager, LocalAgent
+from typing import TYPE_CHECKING
 from AgentCrew.modules.agents.base import MessageType
-from AgentCrew.modules import logger
+from loguru import logger
 import tempfile
 import os
 
 from a2a.types import (
     CancelTaskResponse,
+    JSONRPCError,
     GetTaskResponse,
     GetTaskSuccessResponse,
-    JSONRPCError,
     JSONRPCErrorResponse,
     SendMessageResponse,
-    SendStreamingMessageRequest,
     SendStreamingMessageResponse,
     SendStreamingMessageSuccessResponse,
     CancelTaskSuccessResponse,
-    SetTaskPushNotificationConfigRequest,
     SetTaskPushNotificationConfigResponse,
-    GetTaskPushNotificationConfigRequest,
     GetTaskPushNotificationConfigResponse,
     SendMessageSuccessResponse,
-    TaskResubscriptionRequest,
     Task,
     TaskStatus,
     TaskState,
-    SendMessageRequest,
-    GetTaskRequest,
-    CancelTaskRequest,
-    JSONRPCResponse,
     TaskStatusUpdateEvent,
     TaskArtifactUpdateEvent,
     TaskNotFoundError,
     TaskNotCancelableError,
 )
+
+from AgentCrew.modules.agents import LocalAgent
 from .adapters import (
     convert_a2a_message_to_agent,
     convert_agent_response_to_a2a_artifact,
     convert_agent_message_to_a2a,
 )
 from .common.server.task_manager import TaskManager
+
+if TYPE_CHECKING:
+    from typing import Any, AsyncIterable, Dict, Optional, Union
+    from AgentCrew.modules.agents import AgentManager
+    from a2a.types import (
+        CancelTaskRequest,
+        GetTaskPushNotificationConfigRequest,
+        GetTaskRequest,
+        SendMessageRequest,
+        SendStreamingMessageRequest,
+        SetTaskPushNotificationConfigRequest,
+        TaskResubscriptionRequest,
+        JSONRPCResponse,
+    )
 
 
 class AgentTaskManager(TaskManager):
@@ -126,8 +131,6 @@ class AgentTaskManager(TaskManager):
                         f.write(part["file_data"])
                     file_part = self.file_handler.process_file(temp_file)
                     if not file_part:
-                        from AgentCrew.modules.agents.base import MessageType
-
                         file_part = self.agent.format_message(
                             MessageType.FileContent, {"file_uri": temp_file}
                         )

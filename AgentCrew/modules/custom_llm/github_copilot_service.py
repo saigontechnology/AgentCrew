@@ -2,7 +2,7 @@ from AgentCrew.modules.llm.model_registry import ModelRegistry
 from .service import CustomLLMService
 import os
 from dotenv import load_dotenv
-from AgentCrew.modules import logger
+from loguru import logger
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import json

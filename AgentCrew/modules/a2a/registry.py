@@ -1,12 +1,15 @@
-"""
-Registry for managing A2A agents and their capabilities.
-"""
+from __future__ import annotations
 
-from typing import Dict, List, Optional, Any
+from typing import TYPE_CHECKING
 from pydantic import BaseModel
-from AgentCrew.modules.agents import AgentManager, LocalAgent
-from a2a.types import AgentCard
 from .agent_cards import create_agent_card
+from AgentCrew.modules.agents import LocalAgent
+
+
+if TYPE_CHECKING:
+    from typing import Any, Dict, List, Optional
+    from AgentCrew.modules.agents import AgentManager
+    from a2a.types import AgentCard
 
 
 class AgentInfo(BaseModel):

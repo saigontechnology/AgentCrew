@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from chromadb.api.types import Space
-from typing import Optional, List, cast, Dict, Any
+from typing import cast, TYPE_CHECKING
 from chromadb.utils.embedding_functions.schemas import validate_config_schema
 import os
+
+if TYPE_CHECKING:
+    from typing import Optional, List, Dict, Any
 
 
 class VoyageEmbeddingFunction(EmbeddingFunction[Documents]):

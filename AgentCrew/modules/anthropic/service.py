@@ -7,7 +7,7 @@ from anthropic.types import TextBlock
 from dotenv import load_dotenv
 from AgentCrew.modules.llm.base import BaseLLMService, read_binary_file, read_text_file
 from AgentCrew.modules.llm.model_registry import ModelRegistry
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class AnthropicService(BaseLLMService):
@@ -44,39 +44,36 @@ class AnthropicService(BaseLLMService):
 
     async def process_message(self, prompt: str, temperature: float = 0) -> str:
         """Summarize the provided content using Claude."""
-        try:
-            message = await self.client.messages.create(
-                model=self.model,
-                temperature=temperature,
-                max_tokens=3000,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    },
-                ],
+        message = await self.client.messages.create(
+            model=self.model,
+            temperature=temperature,
+            max_tokens=3000,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+        )
+
+        content_block = message.content[0]
+        if not isinstance(content_block, TextBlock):
+            raise ValueError(
+                "Unexpected response type: message content is not a TextBlock"
             )
 
-            content_block = message.content[0]
-            if not isinstance(content_block, TextBlock):
-                raise ValueError(
-                    "Unexpected response type: message content is not a TextBlock"
-                )
+        # Calculate and log token usage and cost
+        input_tokens = message.usage.input_tokens
+        output_tokens = message.usage.output_tokens
+        total_cost = self.calculate_cost(input_tokens, output_tokens)
 
-            # Calculate and log token usage and cost
-            input_tokens = message.usage.input_tokens
-            output_tokens = message.usage.output_tokens
-            total_cost = self.calculate_cost(input_tokens, output_tokens)
+        logger.info("\nToken Usage Statistics:")
+        logger.info(f"Input tokens: {input_tokens:,}")
+        logger.info(f"Output tokens: {output_tokens:,}")
+        logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
+        logger.info(f"Estimated cost: ${total_cost:.4f}")
 
-            logger.info("\nToken Usage Statistics:")
-            logger.info(f"Input tokens: {input_tokens:,}")
-            logger.info(f"Output tokens: {output_tokens:,}")
-            logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
-            logger.info(f"Estimated cost: ${total_cost:.4f}")
-
-            return content_block.text
-        except Exception as e:
-            raise Exception(f"Failed to process content: {str(e)}")
+        return content_block.text
 
     def _process_file(self, file_path, for_command=False):
         """
@@ -379,38 +376,35 @@ class AnthropicService(BaseLLMService):
             Validation result as a JSON string
         """
 
-        try:
-            message = await self.client.messages.create(
-                model=self.model,
-                max_tokens=4096,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
+        message = await self.client.messages.create(
+            model=self.model,
+            max_tokens=4096,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+        )
+
+        content_block = message.content[0]
+        if not isinstance(content_block, TextBlock):
+            raise ValueError(
+                "Unexpected response type: message content is not a TextBlock"
             )
 
-            content_block = message.content[0]
-            if not isinstance(content_block, TextBlock):
-                raise ValueError(
-                    "Unexpected response type: message content is not a TextBlock"
-                )
+        # Calculate and log token usage and cost
+        input_tokens = message.usage.input_tokens
+        output_tokens = message.usage.output_tokens
+        total_cost = self.calculate_cost(input_tokens, output_tokens)
 
-            # Calculate and log token usage and cost
-            input_tokens = message.usage.input_tokens
-            output_tokens = message.usage.output_tokens
-            total_cost = self.calculate_cost(input_tokens, output_tokens)
+        logger.info("\nSpec Validation Token Usage:")
+        logger.info(f"Input tokens: {input_tokens:,}")
+        logger.info(f"Output tokens: {output_tokens:,}")
+        logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
+        logger.info(f"Estimated cost: ${total_cost:.4f}")
 
-            logger.info("\nSpec Validation Token Usage:")
-            logger.info(f"Input tokens: {input_tokens:,}")
-            logger.info(f"Output tokens: {output_tokens:,}")
-            logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
-            logger.info(f"Estimated cost: ${total_cost:.4f}")
-
-            return content_block.text
-        except Exception as e:
-            raise Exception(f"Failed to validate specification: {str(e)}")
+        return content_block.text
 
     def set_system_prompt(self, system_prompt: str):
         """

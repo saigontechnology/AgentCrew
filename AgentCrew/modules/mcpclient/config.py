@@ -2,7 +2,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 @dataclass

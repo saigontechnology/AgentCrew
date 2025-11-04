@@ -3,7 +3,7 @@ import os
 import uuid
 import datetime
 from typing import Dict, Any, List, Optional
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class ContextPersistenceService:

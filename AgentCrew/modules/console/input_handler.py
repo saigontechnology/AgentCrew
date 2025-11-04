@@ -3,8 +3,8 @@ User input handling for console UI.
 Manages user input threads, key bindings, and prompt sessions.
 """
 
-import asyncio
-import sys
+from __future__ import annotations
+
 import time
 import threading
 import queue
@@ -13,20 +13,24 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.formatted_text import HTML
-from rich.console import Console
 from rich.text import Text
 
-from AgentCrew.modules import logger
-from AgentCrew.modules.chat import MessageHandler
+from loguru import logger
 from AgentCrew.modules.clipboard.service import ClipboardService
 from .completers import ChatCompleter
-from .display_handlers import DisplayHandlers
 from .constants import (
     RICH_STYLE_YELLOW,
     RICH_STYLE_YELLOW_BOLD,
     RICH_STYLE_RED,
     RICH_STYLE_BLUE,
 )
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from AgentCrew.modules.chat import MessageHandler
+    from rich.console import Console
+    from .display_handlers import DisplayHandlers
 
 
 class InputHandler:
@@ -63,8 +67,14 @@ class InputHandler:
         @kb.add("escape", "enter")
         def _(event):
             """Submit on Ctrl+S."""
-            if event.current_buffer.text.strip() and not self.is_message_processing:
-                event.current_buffer.validate_and_handle()
+            if event.current_buffer.text.strip():
+                # Allow exit commands to be submitted anytime
+                if (
+                    event.current_buffer.text == "/exit"
+                    or event.current_buffer.text == "/quit"
+                    or not self.is_message_processing
+                ):
+                    event.current_buffer.validate_and_handle()
 
         @kb.add(Keys.Enter)
         def _(event):
@@ -125,21 +135,19 @@ class InputHandler:
                 # Don't try to join from within the same thread - just exit
                 event.app.exit("__EXIT__")
             else:
-                self._last_ctrl_c_time = current_time
                 if (
                     hasattr(self.message_handler, "stream_generator")
                     and self.message_handler.stream_generator
                 ):
                     try:
-                        asyncio.run(self.message_handler.stream_generator.aclose())
+                        self.message_handler.stop_streaming = True
+                        # asyncio.run(self.message_handler.stream_generator.aclose())
                     except RuntimeError as e:
                         logger.warning(f"Error closing stream generator: {e}")
                     except Exception as e:
                         logger.warning(f"Exception closing stream generator: {e}")
-                    finally:
-                        self.message_handler.stop_streaming = True
-                        self.message_handler.stream_generator = None
                 else:
+                    self._last_ctrl_c_time = current_time
                     self.console.print(
                         Text(
                             "\nPress Ctrl+C again within 1 second to exit.",
@@ -180,7 +188,10 @@ class InputHandler:
         @kb.add(Keys.Backspace)
         def _(event):
             if not event.current_buffer.text:
-                prompt = Text("👤 YOU: ", style=RICH_STYLE_BLUE)
+                prompt = Text(
+                    "👤 YOU: " if not self.is_message_processing else "",
+                    style=RICH_STYLE_BLUE,
+                )
                 self.console.print("", end="\r")
                 self.console.print(prompt, end="")
             else:
@@ -213,6 +224,49 @@ class InputHandler:
             self._current_prompt_session.message = HTML("<ansiblue>👤 YOU:</ansiblue> ")
             self._current_prompt_session.app.invalidate()
 
+    def get_choice_input(self, message: str, values: list[str], default=None) -> str:
+        from prompt_toolkit.shortcuts import choice
+        from prompt_toolkit.styles import Style
+
+        style = Style.from_dict(
+            {
+                "frame.border": "#884444",
+                "selected-option": "bold",
+            }
+        )
+        kb = KeyBindings()
+
+        @kb.add(Keys.ControlC)
+        @kb.add("escape")
+        def _(event):
+            event.app.exit(result="", style="class:accepted")
+
+        return choice(
+            message=HTML(f"<ansiyellow>{message}</ansiyellow> "),
+            options=[(v, v) for v in values],
+            default=default,
+            style=style,
+            key_bindings=kb,
+            show_frame=True,
+        )
+
+    def get_prompt_input(self, prompt_message: str) -> str:
+        from prompt_toolkit import prompt
+
+        kb = KeyBindings()
+
+        @kb.add(Keys.ControlC)
+        @kb.add("escape")
+        def _(event):
+            event.current_buffer.text = ""
+            event.current_buffer.validate_and_handle()
+
+        return prompt(
+            HTML(f"<ansiblue>{prompt_message}</ansiblue> "),
+            key_bindings=kb,
+            completer=ChatCompleter(self.message_handler),
+        )
+
     def _input_thread_worker(self):
         """Worker thread for handling user input."""
         while not self._input_stop_event.is_set():
@@ -224,7 +278,6 @@ class InputHandler:
                 )
                 self._current_prompt_session = session
 
-                # Create a dynamic prompt that includes agent and model info using HTML formatting
                 prompt_text = (
                     HTML("<ansiblue>👤 YOU:</ansiblue> ")
                     if not self.is_message_processing
@@ -232,10 +285,8 @@ class InputHandler:
                 )
                 user_input = session.prompt(prompt_text)
 
-                # Reset history position after submission
                 self.message_handler.history_manager.reset_position()
 
-                # Put the input in the queue
                 self._input_queue.put(user_input)
                 time.sleep(0.4)  # Allow time for input processing
 
@@ -328,7 +379,7 @@ class InputHandler:
                         )
                     )
                     self._stop_input_thread()
-                    sys.exit(0)
+                    raise SystemExit(0)
                 elif user_input == "__INTERRUPT__":
                     self.console.print(
                         Text(
@@ -358,7 +409,8 @@ class InputHandler:
                         style=RICH_STYLE_YELLOW_BOLD,
                     )
                 )
-                sys.exit(0)
+                self._stop_input_thread()
+                raise SystemExit(0)
 
     def stop(self):
         """Stop the input handler and clean up."""

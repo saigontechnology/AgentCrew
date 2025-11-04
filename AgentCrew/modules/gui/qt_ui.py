@@ -1,20 +1,16 @@
+from __future__ import annotations
 import os
 from typing import Any, Optional
 
 from PySide6.QtWidgets import (
     QApplication,
-    QCompleter,
-    QLabel,
-    QPushButton,
     QWidget,
     QVBoxLayout,
     QMessageBox,
     QMainWindow,
     QStatusBar,
-    QScrollArea,
     QMenu,
     QSplitter,
-    QTextEdit,
 )
 from PySide6.QtCore import (
     Qt,
@@ -23,26 +19,23 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import QIcon
-from AgentCrew.modules.chat.message_handler import MessageHandler, Observer
-from .widgets import ConversationSidebar, TokenUsageWidget
-from .widgets import MessageBubble
-import asyncio
-from AgentCrew.modules import logger
-
+from AgentCrew.modules.chat.message_handler import Observer
+from loguru import logger
 
 from .worker import LLMWorker
-from .components import (
-    MenuBuilder,
-    KeyboardHandler,
-    MessageEventHandler,
-    ToolEventHandler,
-    ChatComponents,
-    UIStateManager,
-    InputComponents,
-    ConversationComponents,
-    CommandHandler,
-)
-from .themes import StyleProvider
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .widgets import MessageBubble
+    from AgentCrew.modules.chat.message_handler import MessageHandler
+    from PySide6.QtWidgets import (
+        QPushButton,
+        QLabel,
+        QCompleter,
+        QScrollArea,
+        QTextEdit,
+    )
+    from .widgets import TokenUsageWidget
 
 
 class ChatWindow(QMainWindow, Observer):
@@ -69,6 +62,8 @@ class ChatWindow(QMainWindow, Observer):
     current_thinking_bubble: Optional[MessageBubble]
 
     def __init__(self, message_handler: MessageHandler):
+        from .widgets import ConversationSidebar
+
         super().__init__()
         self.setWindowTitle("AgentCrew - Interactive Chat")
         self.setGeometry(100, 100, 1000, 700)  # Adjust size for sidebar
@@ -217,6 +212,21 @@ class ChatWindow(QMainWindow, Observer):
 
     def _setup_components(self):
         """Initialize all component handlers."""
+
+        from .components import (
+            MenuBuilder,
+            KeyboardHandler,
+            MessageEventHandler,
+            ToolEventHandler,
+            ChatComponents,
+            UIStateManager,
+            InputComponents,
+            ConversationComponents,
+            CommandHandler,
+        )
+
+        from .themes import StyleProvider
+
         self.style_provider = StyleProvider()
         self.menu_builder = MenuBuilder(self)
         self.keyboard_handler = KeyboardHandler(self)
@@ -341,15 +351,11 @@ class ChatWindow(QMainWindow, Observer):
             self.ui_state_manager.stop_button_stopping_state()
             if self.message_handler.stream_generator:
                 try:
-                    asyncio.run(self.message_handler.stream_generator.aclose())
+                    self.message_handler.stop_streaming = True
                 except RuntimeError as e:
                     logger.warning(f"Error closing stream generator: {e}")
                 except Exception as e:
                     logger.warning(f"Exception closing stream generator: {e}")
-                finally:
-                    self.message_handler.stop_streaming = True
-                    self.message_handler.stream_generator = None
-            # Also stop UI streaming
         self.ui_state_manager.set_input_controls_enabled(True)
         if self.current_response_bubble:
             self.current_response_bubble.stop_streaming()

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal
-from AgentCrew.modules import logger
+from loguru import logger
 
 from AgentCrew.modules.config import ConfigManagement
 from typing import List, Optional, Dict, Any

@@ -1,10 +1,11 @@
-"""
-Tool for generating images with AI.
-"""
+from __future__ import annotations
 
-from typing import Dict, Any, Callable, Literal, List, Optional
+from typing import TYPE_CHECKING
 from .service import ImageGenerationService
 import asyncio
+
+if TYPE_CHECKING:
+    from typing import Dict, Any, Callable, Literal, List, Optional
 
 
 def get_generate_image_tool_definition(provider="claude") -> Dict[str, Any]:

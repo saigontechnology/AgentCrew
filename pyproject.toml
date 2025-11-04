@@ -1,6 +1,6 @@
 [project]
 name = "agentcrew-ai"
-version = "0.6.21-1"
+version = "0.7.2"
 requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -23,7 +23,7 @@ dependencies = [
   "python-dotenv",
   "anthropic",
   "pytest",
-  "prompt-toolkit>=3.0.50",
+  "prompt-toolkit>=3.0.52",
   "rich>=13.9.4",
   "pyperclip>=1.9.0",
   "tavily-python>=0.5.1",
@@ -54,6 +54,7 @@ dependencies = [
   "html-to-markdown>=1.14.0",
   "pip-system-certs>=5.2",
   "loguru>=0.7.3",
+  "jsonschema>=4.25.1",
 ]
 
 [project.optional-dependencies]

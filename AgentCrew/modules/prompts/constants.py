@@ -1,47 +1,102 @@
 PRE_ANALYZE_PROMPT = """
-Extract this conversation for AI memory storage. Create a comprehensive xml record that includes ALL of the following sections:
-
-    1. ID: keywords from user_message written as snake_case, use same id from existing_ids if it exists, otherwise create a new one.
+<MEMORY_PROCESSING_REQUEST>
+    Extract this conversation for AI memory storage. Create a comprehensive xml record that includes all fields in <OUTPUT_FORMAT> below.
+    <OUTPUT_FORMAT>
+    1. ID: meaningful id from summary written as snake_case.
     2. DATE: {current_date}
-    3. SUMMARY: Brief summary of the conversation (1-2 sentences)
+    3. SUMMARY: Brief summary of the conversation (3-6 sentences)
     4. CONTEXT: Background information relevant to understanding this exchange
     5. ENTITIES: Important people, organizations, products, or concepts mentioned including essential facts, concepts, or data points discussed about that entity
     6. DOMAINS: The subject domain(s) this conversation relates to
-    7. USER_REQUEST: shortened version of the user's message (max 50 words)
-    8. ASSISTANT_RESPONSE: shortened version of the assistant's response (max 50 words)
+    8. CONVERSATION_NOTES: The key extracted information from conversation.
+    </OUTPUT_FORMAT>
 
-    <CURRENT_CONVERSATION_CONTEXT>
-        {current_conversation_context}
-    </CURRENT_CONVERSATION_CONTEXT>
-    
-    USER: {user_message}
-    ASSISTANT: {assistant_response}
-    EXISTING IDS: {existing_ids}
+    <CONVERSATION_TURN>
+        <USER>
+        {user_message}
+        </USER>
+        <ASSISTANT>
+        {assistant_response}
+        </ASSISTANT>
+    </CONVERSATION_TURN>
 
-    Format each section with its heading in ALL CAPS as a tag wrapped around the content.
-    If a section would be empty, include the heading with "None detected" as the content.
-    Focus on extracting factual information rather than making assumptions.
-    No explanations or additional text.
+    <PROCESSING_INSTRUCTIONS>
+    1. Format each section with its heading in ALL CAPS as a tag wrapped around the content.
+    2. If a section would be empty, include the heading with "None detected" as the content.
+    3. Focus on extracting factual information rather than making assumptions.
+    4. <CONVERSATION_NOTES> should capture all the key points and the direction of flow of the whole conversation in concise.
+    5. No explanations or additional text.
+    </PROCESSING_INSTRUCTIONS>
 
-    Examples:
-    <MEMORY>
-        <ID>donald_trump</ID>
-        <DATE>2025-01-03</DATE>
-        <SUMMARY>A summary about Donald Trump</SUMMARY>
-        <CONTEXT>Contact information, background, and other relevant details about Donald Trump</CONTEXT>
-        <ENTITIES>
-            <ENTITY>
-                <NAME>DONALP TRUMP</NAME>
-                <DESC>President of United States</DESC>
-            </ENTITY>
-        </ENTITIES>
-        <DOMAINS>
-            <DOMAIN>Politics</DOMAIN>
-        </DOMAINS>
-        <USER_REQUEST>Shortened user message about Donald Trump</USER_REQUEST>
-        <ASSISTANT_RESPONSE>Shortened assistant response about Donald Trump</ASSISTANT_RESPONSE>
-    </MEMORY>
-    Enhanced memory text:
+    <EXAMPLES>
+        <MEMORY>
+            <ID>donald_trump</ID>
+            <DATE>2025-01-03</DATE>
+            <SUMMARY>A summary about Donald Trump</SUMMARY>
+            <CONTEXT>Contact information, background, and other relevant details about Donald Trump</CONTEXT>
+            <ENTITIES>
+                <ENTITY>
+                    <NAME>DONALP TRUMP</NAME>
+                    <DESC>President of United States</DESC>
+                </ENTITY>
+            </ENTITIES>
+            <DOMAINS>
+                <DOMAIN>Politics</DOMAIN>
+            </DOMAINS>
+            <CONVERSATION_NOTES>
+                <NOTE>User asked about Donald Trump's background. Assistant provided details on his presidency and key events.</NOTE>
+            </CONVERSATION_NOTES>
+        </MEMORY>
+    </EXAMPLES>
+</MEMORY_PROCESSING_REQUEST>
+"""
+
+PRE_ANALYZE_WITH_CONTEXT_PROMPT = """
+<MEMORY_PROCESSING_REQUEST>
+    Extract this conversation for AI memory storage. Create a comprehensive xml record following INSTRUCTIONS that includes all fields in <OUTPUT_FORMAT> below. No explanations or additional text.
+
+    <INSTRUCTIONS>
+    1. ID: use existed id from <PREVIOUS_CONVERSATION_CONTEXT> if available or create one.
+    2. DATE: {current_date}
+    3. SUMMARY: Merge the SUMMARY of <PREVIOUS_CONVERSATION_CONTEXT> with new CONVERSATION_TURN (3-6 sentences)
+    4. CONTEXT: Merge the CONTEXT of <PREVIOUS_CONVERSATION_CONTEXT> with new context in CONVERSATION_TURN
+    5. ENTITIES: Add to the ENTITIES of <PREVIOUS_CONVERSATION_CONTEXT> for new important people, organizations, products, or concepts mentioned in CONVERSATION_TURN including essential facts, concepts, or data points discussed about that entity
+    6. DOMAINS: Add to the DOMAINS of <PREVIOUS_CONVERSATION_CONTEXT> for new subject domain(s) in CONVERSATION_TURN related
+    7. CONVERSATION_NOTES: Add the CONVERSATION_NOTES of <PREVIOUS_CONVERSATION_CONTEXT> for new key notes extracted information from CONVERSATION_TURN. PREVIOUS_CONVERSATION_CONTEXT CONVERSATION_NOTES must be keep intact.
+    </INSTRUCTIONS>
+
+    {conversation_context}
+
+    <CONVERSATION_TURN>
+        <USER>
+        {user_message}
+        </USER>
+        <ASSISTANT>
+        {assistant_response}
+        </ASSISTANT>
+    </CONVERSATION_TURN>
+
+    <OUTPUT_FORMAT>
+        <MEMORY>
+            <ID>[existed_id]</ID>
+            <DATE>[current_date]</DATE>
+            <SUMMARY>[merged_summary]</SUMMARY>
+            <CONTEXT>[merged_context]</CONTEXT>
+            <ENTITIES>
+                <ENTITY>
+                    <NAME>[added_entity_name]</NAME>
+                    <DESC>[added_entity_description]</DESC>
+                </ENTITY>
+            </ENTITIES>
+            <DOMAINS>
+                <DOMAIN>[added_domain]</DOMAIN>
+            </DOMAINS>
+            <CONVERSATION_NOTES>
+                <NOTE>[added_notes]</NOTE>
+            </CONVERSATION_NOTES>
+        </MEMORY>
+    </OUTPUT_FORMAT>
+</MEMORY_PROCESSING_REQUEST>
 """
 
 POST_RETRIEVE_MEMORY = """
@@ -155,4 +210,26 @@ I'll provide you with raw HTML or text content from a web page. Your task is to 
 Return ONLY the processed content without explanations about your extraction process. Focus on maximizing information retention while minimizing token usage.
 
 WEB CONTENT: {content}
+"""
+
+SCHEMA_ENFORCEMENT_PROMPT = """
+<OUTPUT_SCHEMA_ENFORCEMENT>
+<Instruction>
+You MUST format your response STRICTLY according to the following JSON schema.
+Do NOT include any text before or after the JSON output.
+Your entire response should be valid JSON that conforms to this schema:
+</Instruction>
+
+<schema>
+{schema_json}
+</schema>
+
+<Requirements>
+1. Output ONLY valid JSON - no markdown, no explanations, no additional text
+2. Follow the exact structure defined in the schema above
+3. Respect all required fields, types, and constraints
+4. Ensure all property names match exactly (case-sensitive)
+5. Do not add extra fields not defined in the schema
+</Requirements>
+</OUTPUT_SCHEMA_ENFORCEMENT>
 """

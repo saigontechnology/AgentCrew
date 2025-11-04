@@ -3,9 +3,7 @@ import json
 import toml
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-from AgentCrew.modules import logger
-
-from AgentCrew.modules.agents import AgentManager
+from loguru import logger
 
 
 class ConfigManagement:
@@ -270,6 +268,8 @@ class ConfigManagement:
 
     def write_global_config_data(self, config_data: Dict[str, Any]) -> None:
         """Writes data to the global config.json file."""
+        from AgentCrew.modules.agents import AgentManager
+
         config_path = self._get_global_config_file_path()
         try:
             os.makedirs(os.path.dirname(config_path), exist_ok=True)
@@ -350,7 +350,7 @@ class ConfigManagement:
                 toml.dump(config_data, f)
 
     def reload_agents_from_config(self):
-        from AgentCrew.modules.agents import RemoteAgent, LocalAgent
+        from AgentCrew.modules.agents import RemoteAgent, LocalAgent, AgentManager
 
         agent_manager = AgentManager.get_instance()
         agents_config_path = os.getenv(

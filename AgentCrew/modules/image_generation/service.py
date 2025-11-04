@@ -6,8 +6,7 @@ import os
 import base64
 from typing import Literal, Optional, Dict, Any, List
 from datetime import datetime
-from openai import AsyncOpenAI
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class ImageGenerationService:
@@ -20,6 +19,9 @@ class ImageGenerationService:
         Args:
             api_key: The OpenAI API key (optional, will use environment variable if not provided)
         """
+
+        from openai import AsyncOpenAI
+
         self.api_key = api_key or self._get_api_key()
         self.client = AsyncOpenAI(api_key=self.api_key)
 

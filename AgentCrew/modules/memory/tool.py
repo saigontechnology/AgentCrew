@@ -158,26 +158,27 @@ def memory_instruction_prompt():
     """Concise memory system instructions for system prompt."""
     return """<Memory_System>
   <Purpose>
-    Maintain conversation continuity and context through intelligent storage and retrieval of relevant information.
+    Extremely useful for gathering context through intelligent storage and retrieval of relevant information.
+    Call retrieve_memory when on of retrieval triggers occur to provide better responses.
   </Purpose>
   <Usage_Guidelines>
     <Retrieval_Triggers>
-      • Start of new conversations - gather relevant context
-      • Topic changes - search for background information  
-      • Complex queries - collect comprehensive context
-      • User references to past interactions
+      - When start a new conversation - gather relevant context from user request
+      - When current topic changes - Get new topic-related memories context for better responses
+      - When User references to past interactions
     </Retrieval_Triggers>
     <Search_Strategy>
-      • Use specific, descriptive phrases
-      • Combine related concepts with spaces
-      • Include temporal indicators when relevant
-      • Balance specificity with breadth based on need
+      - Use specific, descriptive phrases
+      - Combine related concepts with spaces
+      - Include temporal indicators when relevant
+      - Include time filters when applicable
+      - Balance specificity with breadth based on need
     </Search_Strategy>
     <Memory_Management>
-      • Remove outdated/conflicting information when corrected
-      • Clear sensitive data when requested
-      • Use precise topic phrases to avoid over-deletion
-      • Prefer ID-based removal for surgical precision
+      - Remove outdated/conflicting information when corrected
+      - Clear sensitive data when requested
+      - Use precise topic phrases to avoid over-deletion
+      - Prefer ID-based removal for surgical precision
     </Memory_Management>
   </Usage_Guidelines>
 </Memory_System>"""

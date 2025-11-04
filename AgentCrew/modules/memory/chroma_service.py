@@ -1,27 +1,25 @@
+from __future__ import annotations
 import os
-import chromadb
 import uuid
-from chromadb.config import Settings
-import numpy as np
 import queue
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import TYPE_CHECKING
 from datetime import datetime, timedelta
 from threading import Thread, Event
-from AgentCrew.modules import logger
+from loguru import logger
 import xmltodict
 
-from AgentCrew.modules.llm.base import BaseLLMService
-
 from .base_service import BaseMemoryService
-from .voyageai_ef import VoyageEmbeddingFunction
 from AgentCrew.modules.prompts.constants import (
+    PRE_ANALYZE_WITH_CONTEXT_PROMPT,
     SEMANTIC_EXTRACTING,
     PRE_ANALYZE_PROMPT,
-    # POST_RETRIEVE_MEMORY,
 )
-from .github_copilot_ef import GithubCopilotEmbeddingFunction
-import chromadb.utils.embedding_functions as embedding_functions
+
+if TYPE_CHECKING:
+    from typing import List, Dict, Any, Optional
+    from chromadb import Collection
+    from AgentCrew.modules.llm.base import BaseLLMService
 
 # Configuration constants
 DEFAULT_CHUNK_SIZE = 200  # words per chunk
@@ -52,11 +50,6 @@ class ChromaMemoryService(BaseMemoryService):
         self.db_path = os.getenv("MEMORYDB_PATH", MEMORY_DB_PATH)
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
-        # Initialize ChromaDB client with persistence
-        self.client = chromadb.PersistentClient(
-            path=self.db_path, settings=Settings(anonymized_telemetry=False)
-        )
-
         self.llm_service = llm_service
         ## set to groq if key available
         if self.llm_service:
@@ -73,31 +66,8 @@ class ChromaMemoryService(BaseMemoryService):
             elif self.llm_service.provider_name == "github_copilot":
                 self.llm_service.model = "gpt-4o-mini"
 
-        # Create or get collection for storing memories
-        if os.getenv("VOYAGE_API_KEY"):
-            voyage_ef = VoyageEmbeddingFunction(
-                api_key=os.getenv("VOYAGE_API_KEY"),
-                model_name="voyage-3.5",
-            )
-            self.embedding_function = voyage_ef
-        elif os.getenv("GITHUB_COPILOT_API_KEY"):
-            github_copilot_ef = GithubCopilotEmbeddingFunction(
-                api_key=os.getenv("GITHUB_COPILOT_API_KEY"),
-                model_name="text-embedding-3-small",
-            )
-            self.embedding_function = github_copilot_ef
-        elif os.getenv("OPENAI_API_KEY"):
-            openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-                api_key=os.getenv("OPENAI_API_KEY"), model_name="text-embedding-3-small"
-            )
-            self.embedding_function = openai_ef
-        else:
-            self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
-
-        self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            embedding_function=self.embedding_function,  # type:ignore
-        )
+        self._collection = None
+        self.collection_name = collection_name
         # Configuration for chunking
         self.chunk_size = DEFAULT_CHUNK_SIZE
         self.chunk_overlap = DEFAULT_CHUNK_OVERLAP
@@ -113,6 +83,49 @@ class ChromaMemoryService(BaseMemoryService):
 
         # Start worker thread
         self._start_memory_worker()
+
+    def _initialize_collection(self) -> Collection:
+        # Initialize ChromaDB client with persistence
+        import chromadb
+        import chromadb.utils.embedding_functions as embedding_functions
+        from chromadb.config import Settings
+
+        if self._collection is not None:
+            return self._collection
+
+        self.client = chromadb.PersistentClient(
+            path=self.db_path, settings=Settings(anonymized_telemetry=False)
+        )
+        if os.getenv("VOYAGE_API_KEY"):
+            from .voyageai_ef import VoyageEmbeddingFunction
+
+            voyage_ef = VoyageEmbeddingFunction(
+                api_key=os.getenv("VOYAGE_API_KEY"),
+                model_name="voyage-3.5",
+            )
+            self.embedding_function = voyage_ef
+        elif os.getenv("GITHUB_COPILOT_API_KEY"):
+            from .github_copilot_ef import GithubCopilotEmbeddingFunction
+
+            github_copilot_ef = GithubCopilotEmbeddingFunction(
+                api_key=os.getenv("GITHUB_COPILOT_API_KEY"),
+                model_name="text-embedding-3-small",
+            )
+            self.embedding_function = github_copilot_ef
+        elif os.getenv("OPENAI_API_KEY"):
+            openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+                api_key=os.getenv("OPENAI_API_KEY"), model_name="text-embedding-3-small"
+            )
+            self.embedding_function = openai_ef
+        else:
+            self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+
+        self._collection = self.client.get_or_create_collection(
+            name=self.collection_name,
+            embedding_function=self.embedding_function,  # type:ignore
+        )
+        self.cleanup_old_memories(months=1)
+        return self._collection
 
     def _create_chunks(self, text: str) -> List[str]:
         """
@@ -142,6 +155,7 @@ class ChromaMemoryService(BaseMemoryService):
     def _memory_worker_thread(self):
         """Worker thread for processing conversation storage operations."""
         loop = asyncio.new_event_loop()
+        self._initialize_collection()
         while not self._memory_stop_event.is_set():
             try:
                 # Get operation from queue with timeout
@@ -220,6 +234,7 @@ class ChromaMemoryService(BaseMemoryService):
     async def _store_conversation_internal(self, operation_data: Dict[str, Any]):
         """Internal method to actually store conversation (runs in worker thread)."""
         try:
+            collection = self._initialize_collection()
             user_message = operation_data["user_message"]
             assistant_response = operation_data["assistant_response"]
             agent_name = operation_data["agent_name"]
@@ -228,43 +243,58 @@ class ChromaMemoryService(BaseMemoryService):
             # Use the existing storage logic but make it synchronous
             ids = []
             memory_data = {}
-            avaialble_ids = self.collection.get(
-                where={
-                    "agent": agent_name,
-                },
-                include=[],
-            )["ids"]
+            # avaialble_ids = collection.get(
+            #     where={
+            #         "agent": agent_name,
+            #     },
+            #     include=[],
+            # )["ids"]
             if self.llm_service:
                 try:
                     # Process with LLM using asyncio.run to handle async call in worker thread
-                    analyzed_text = await self.llm_service.process_message(
-                        PRE_ANALYZE_PROMPT.replace(
-                            "{current_date}", datetime.today().strftime("%Y-%m-%d")
+                    if self.current_conversation_context.get(session_id, ""):
+                        analyzed_prompt = PRE_ANALYZE_WITH_CONTEXT_PROMPT.replace(
+                            "{conversation_context}",
+                            f"""<PREVIOUS_CONVERSATION_CONTEXT>
+    {self.current_conversation_context[session_id]}
+    </PREVIOUS_CONVERSATION_CONTEXT>""",
                         )
-                        .replace(
-                            "{current_conversation_context}",
-                            self.current_conversation_context.get(session_id, ""),
+                    else:
+                        analyzed_prompt = PRE_ANALYZE_PROMPT
+                    analyzed_prompt = (
+                        analyzed_prompt.replace(
+                            "{current_date}",
+                            datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
                         )
-                        .replace("{existing_ids}", ", ".join(avaialble_ids))
                         .replace("{user_message}", user_message)
                         .replace("{assistant_response}", assistant_response)
+                    )
+                    analyzed_text = await self.llm_service.process_message(
+                        analyzed_prompt
                     )
                     start_xml = analyzed_text.index("<MEMORY>")
                     end_xml = analyzed_text.index("</MEMORY>")
                     xml_content = analyzed_text[start_xml : end_xml + len("</MEMORY>")]
+                    xml_content.replace("&", "&amp;").replace("'", "&apos;").replace(
+                        '"', "&quot;"
+                    )
                     memory_data = xmltodict.parse(xml_content)
-                    if "MEMORY" in memory_data and "ID" in memory_data["MEMORY"]:
+                    if (
+                        "MEMORY" in memory_data
+                        and "ID" in memory_data["MEMORY"]
+                        and memory_data["MEMORY"]["ID"]
+                    ):
                         ids.append(memory_data["MEMORY"]["ID"])
-                    if (
-                        "MEMORY" in memory_data
-                        and "USER_REQUEST" not in memory_data["MEMORY"]
-                    ):
-                        memory_data["MEMORY"]["USER_REQUEST"] = user_message
-                    if (
-                        "MEMORY" in memory_data
-                        and "ASSISTANT_RESPONSE" not in memory_data["MEMORY"]
-                    ):
-                        memory_data["MEMORY"]["ASSISTANT_RESPONSE"] = assistant_response
+                    # if (
+                    #     "MEMORY" in memory_data
+                    #     and "USER_REQUEST" not in memory_data["MEMORY"]
+                    # ):
+                    #     memory_data["MEMORY"]["USER_REQUEST"] = user_message
+                    # if (
+                    #     "MEMORY" in memory_data
+                    #     and "ASSISTANT_RESPONSE" not in memory_data["MEMORY"]
+                    # ):
+                    #     memory_data["MEMORY"]["ASSISTANT_RESPONSE"] = assistant_response
 
                 except Exception as e:
                     logger.warning(f"Error processing conversation with LLM: {e}")
@@ -293,7 +323,9 @@ class ChromaMemoryService(BaseMemoryService):
             # Store in ChromaDB (existing logic)
             memory_id = str(uuid.uuid4())
             timestamp = datetime.now().timestamp()
-            conversation_document = xmltodict.unparse(memory_data, pretty=True)
+            conversation_document = xmltodict.unparse(
+                memory_data, pretty=True, full_document=False
+            )
             self.current_conversation_context[session_id] = conversation_document
 
             conversation_embedding = self.embedding_function([conversation_document])
@@ -311,14 +343,14 @@ class ChromaMemoryService(BaseMemoryService):
 
             # Add to ChromaDB collection (existing logic)
             if ids:
-                self.collection.upsert(
+                collection.upsert(
                     ids=[ids[0]],
                     documents=[conversation_document],
                     embeddings=conversation_embedding,
                     metadatas=[metadata],
                 )
             else:
-                self.collection.add(
+                collection.add(
                     documents=[conversation_document],
                     embeddings=conversation_embedding,
                     metadatas=[metadata],
@@ -333,6 +365,8 @@ class ChromaMemoryService(BaseMemoryService):
             )
 
     async def need_generate_user_context(self, user_input: str) -> bool:
+        import numpy as np
+
         keywords = await self._semantic_extracting(user_input)
         if not self.loaded_conversation and self.current_embedding_context is None:
             self.current_embedding_context = self.embedding_function([keywords])
@@ -351,7 +385,20 @@ class ChromaMemoryService(BaseMemoryService):
 
     def clear_conversation_context(self):
         self.current_embedding_context = None
+        self.current_conversation_context = {}
         self.context_embedding = []
+
+    def load_conversation_context(self, session_id: str):
+        collection = self._initialize_collection()
+        latest_memory = collection.get(
+            where={
+                "session_id": session_id,
+            },
+        )
+        if latest_memory["documents"]:
+            self.current_conversation_context[session_id] = latest_memory["documents"][
+                -1
+            ]
 
     def generate_user_context(self, user_input: str, agent_name: str = "None") -> str:
         """
@@ -396,6 +443,7 @@ class ChromaMemoryService(BaseMemoryService):
         Returns:
             Formatted string of relevant memories
         """
+        collection = self._initialize_collection()
 
         and_conditions: List[Dict[str, Any]] = []
 
@@ -409,7 +457,7 @@ class ChromaMemoryService(BaseMemoryService):
         if to_date:
             and_conditions.append({"date": {"$lte": to_date}})
 
-        results = self.collection.query(
+        results = collection.query(
             query_texts=[keywords],
             n_results=10,
             where={"$and": and_conditions}
@@ -458,11 +506,12 @@ class ChromaMemoryService(BaseMemoryService):
             timestamp = "Unknown time"
             if conv_data["timestamp"] != "unknown":
                 try:
-                    if isinstance(conv_data["timestamp"], int):
+                    try:
                         dt = datetime.fromtimestamp(conv_data["timestamp"])
-                    else:
+                        timestamp = dt.strftime("%Y-%m-%d %H:%M")
+                    except Exception:
                         dt = datetime.fromisoformat(conv_data["timestamp"])
-                    timestamp = dt.strftime("%Y-%m-%d %H:%M")
+                        timestamp = dt.strftime("%Y-%m-%d %H:%M")
                 except Exception:
                     timestamp = conv_data["timestamp"]
 
@@ -487,6 +536,7 @@ class ChromaMemoryService(BaseMemoryService):
 
     def _cosine_similarity(self, vec_a, vec_b):
         """Calculate cosine similarity between vectors"""
+        import numpy as np
 
         a = np.array(vec_a, dtype=np.float32)
         b = np.array(vec_b, dtype=np.float32)
@@ -510,11 +560,12 @@ class ChromaMemoryService(BaseMemoryService):
         Returns:
             Number of memories removed
         """
+        collection = self._initialize_collection()
         # Calculate the cutoff date
         cutoff_date = datetime.now() - timedelta(days=30 * months)
 
         # Get all memories
-        all_memories = self.collection.get()
+        all_memories = collection.get()
 
         # Find IDs to remove
         ids_to_remove = []
@@ -535,7 +586,7 @@ class ChromaMemoryService(BaseMemoryService):
 
         # Remove the old memories
         if ids_to_remove:
-            self.collection.delete(ids=ids_to_remove)
+            collection.delete(ids=ids_to_remove)
 
         return len(ids_to_remove)
 
@@ -556,6 +607,7 @@ class ChromaMemoryService(BaseMemoryService):
             Dict with success status and information about the operation
         """
         try:
+            collection = self._initialize_collection()
             # Query for memories related to the topic
             and_conditions: List[Dict[str, Any]] = []
 
@@ -566,7 +618,7 @@ class ChromaMemoryService(BaseMemoryService):
                 and_conditions.append({"date": {"$gte": from_date}})
             if to_date:
                 and_conditions.append({"date": {"$lte": to_date}})
-            results = self.collection.query(
+            results = collection.query(
                 query_texts=[topic],
                 n_results=100,
                 where={"$and": and_conditions}
@@ -592,7 +644,7 @@ class ChromaMemoryService(BaseMemoryService):
                         conversation_ids.add(conv_id)
 
             # Get all memories to find those with matching conversation IDs
-            all_memories = self.collection.get()
+            all_memories = collection.get()
 
             # Find IDs to remove
             ids_to_remove = []
@@ -603,7 +655,7 @@ class ChromaMemoryService(BaseMemoryService):
 
             # Remove the memories
             if ids_to_remove:
-                self.collection.delete(ids=ids_to_remove)
+                collection.delete(ids=ids_to_remove)
 
             return {
                 "success": True,
@@ -620,7 +672,8 @@ class ChromaMemoryService(BaseMemoryService):
             }
 
     def forget_ids(self, ids: List[str], agent_name: str = "None") -> Dict[str, Any]:
-        self.collection.delete(ids=ids, where={"agent": agent_name})
+        collection = self._initialize_collection()
+        collection.delete(ids=ids, where={"agent": agent_name})
 
         return {
             "success": True,

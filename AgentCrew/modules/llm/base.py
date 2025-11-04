@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Tuple
+from typing import TYPE_CHECKING
 import re
 import json
 import base64
-from AgentCrew.modules import logger
+from loguru import logger
+
+if TYPE_CHECKING:
+    from typing import List, Dict, Any, Optional, Tuple
 
 
 def read_text_file(file_path):

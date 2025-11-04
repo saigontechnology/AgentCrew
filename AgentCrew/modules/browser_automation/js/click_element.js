@@ -30,7 +30,7 @@ function clickElement(xpath) {
   }
 
   // Scroll element into view to ensure it's visible in viewport
-  element.scrollIntoView({ behavior: "smooth", block: "center" });
+  element.scrollIntoView({ behavior: "instant", block: "center" });
 
   const rect = element.getBoundingClientRect();
 

@@ -13,7 +13,7 @@ from AgentCrew.modules.llm.base import (
     read_text_file,
     base64_to_bytes,
 )
-from AgentCrew.modules import logger
+from loguru import logger
 import traceback
 
 
@@ -150,35 +150,32 @@ class GoogleAINativeService(BaseLLMService):
         return 0.0
 
     async def process_message(self, prompt: str, temperature: float = 0) -> str:
-        try:
-            response = await self.client.aio.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    max_output_tokens=3000, temperature=temperature
-                ),
-            )
+        response = await self.client.aio.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=3000, temperature=temperature
+            ),
+        )
 
-            # Get token usage if available
-            input_tokens = 0
-            output_tokens = 0
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                if hasattr(response.usage_metadata, "prompt_token_count"):
-                    input_tokens = response.usage_metadata.prompt_token_count or 0
-                if hasattr(response.usage_metadata, "candidates_token_count"):
-                    output_tokens = response.usage_metadata.candidates_token_count or 0
+        # Get token usage if available
+        input_tokens = 0
+        output_tokens = 0
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            if hasattr(response.usage_metadata, "prompt_token_count"):
+                input_tokens = response.usage_metadata.prompt_token_count or 0
+            if hasattr(response.usage_metadata, "candidates_token_count"):
+                output_tokens = response.usage_metadata.candidates_token_count or 0
 
-            # Calculate and log cost
-            total_cost = self.calculate_cost(input_tokens, output_tokens)
-            logger.info("\nToken Usage Statistics:")
-            logger.info(f"Input tokens: {input_tokens:,}")
-            logger.info(f"Output tokens: {output_tokens:,}")
-            logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
-            logger.info(f"Estimated cost: ${total_cost:.4f}")
+        # Calculate and log cost
+        total_cost = self.calculate_cost(input_tokens, output_tokens)
+        logger.info("\nToken Usage Statistics:")
+        logger.info(f"Input tokens: {input_tokens:,}")
+        logger.info(f"Output tokens: {output_tokens:,}")
+        logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
+        logger.info(f"Estimated cost: ${total_cost:.4f}")
 
-            return response.text or ""
-        except Exception as e:
-            raise Exception(f"Failed to process content: {str(e)}")
+        return response.text or ""
 
     def process_file_for_message(self, file_path: str) -> Optional[Dict[str, Any]]:
         """
@@ -640,38 +637,33 @@ class GoogleAINativeService(BaseLLMService):
         Returns:
             Validation result as a JSON string
         """
-        try:
-            # Request JSON response
-            response = await self.client.aio.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                ),
-            )
+        # Request JSON response
+        response = await self.client.aio.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        )
 
-            # Calculate and log token usage
-            input_tokens = 0
-            output_tokens = 0
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                if hasattr(response.usage_metadata, "prompt_token_count"):
-                    input_tokens = response.usage_metadata.prompt_token_count or 0
-                if hasattr(response.usage_metadata, "candidates_token_count"):
-                    output_tokens = response.usage_metadata.candidates_token_count or 0
+        # Calculate and log token usage
+        input_tokens = 0
+        output_tokens = 0
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            if hasattr(response.usage_metadata, "prompt_token_count"):
+                input_tokens = response.usage_metadata.prompt_token_count or 0
+            if hasattr(response.usage_metadata, "candidates_token_count"):
+                output_tokens = response.usage_metadata.candidates_token_count or 0
 
-            # Calculate cost
-            total_cost = self.calculate_cost(input_tokens, output_tokens)
+        # Calculate cost
+        total_cost = self.calculate_cost(input_tokens, output_tokens)
 
-            logger.info("\nSpec Validation Token Usage:")
-            logger.info(f"Input tokens: {input_tokens:,}")
-            logger.info(f"Output tokens: {output_tokens:,}")
-            logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
-            logger.info(f"Estimated cost: ${total_cost:.4f}")
+        logger.info("\nSpec Validation Token Usage:")
+        logger.info(f"Input tokens: {input_tokens:,}")
+        logger.info(f"Output tokens: {output_tokens:,}")
+        logger.info(f"Total tokens: {input_tokens + output_tokens:,}")
+        logger.info(f"Estimated cost: ${total_cost:.4f}")
 
-            # Return the response text (should be JSON)
-            return response.text or ""
-        except Exception as e:
-            raise Exception(f"Failed to validate specification: {str(e)}")
+        # Return the response text (should be JSON)
+        return response.text or ""
 
     def set_system_prompt(self, system_prompt: str):
         """

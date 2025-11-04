@@ -25,7 +25,7 @@ from .element_extractor import (
 from .js_loader import js_loader, key_codes
 
 import PyChromeDevTools
-from AgentCrew.modules import logger
+from loguru import logger
 
 
 class BrowserAutomationService:

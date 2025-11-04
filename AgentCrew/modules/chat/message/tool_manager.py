@@ -1,7 +1,7 @@
 from typing import Dict, Any
 import asyncio
 
-from AgentCrew.modules import logger
+from loguru import logger
 from AgentCrew.modules.config import ConfigManagement
 
 # from AgentCrew.modules.llm.message import MessageTransformer
@@ -38,6 +38,7 @@ class ToolManager:
     async def execute_tool(self, tool_use: Dict[str, Any]):
         """Execute a tool with proper confirmation flow."""
         tool_name = tool_use["name"]
+        tool_id = tool_use["id"]
 
         # Special handling for the transfer tool - always auto-approve
         if tool_name == "transfer":
@@ -78,6 +79,54 @@ class ToolManager:
                 )
             return
 
+        elif tool_name == "ask":
+            self.message_handler._notify("tool_use", tool_use)
+            try:
+                # Wait for user response through confirmation flow
+                user_response = await self._wait_for_tool_confirmation(tool_use)
+
+                # Format the user's answer as the tool result
+                if user_response.get("action") == "answer":
+                    answer = user_response.get("answer", "")
+                    tool_result = f"User's answer: {answer}"
+                else:
+                    # User cancelled or error occurred
+                    tool_result = "User cancelled the question."
+
+                # Store the tool result in message history
+                tool_result_message = self.message_handler.agent.format_message(
+                    MessageType.ToolResult,
+                    {"tool_use": tool_use, "tool_result": tool_result},
+                )
+                self.message_handler._messages_append(tool_result_message)
+                self.message_handler._notify(
+                    "tool_result",
+                    {
+                        "tool_use": tool_use,
+                        "tool_result": tool_result,
+                        "message": tool_result_message,
+                    },
+                )
+            except Exception as e:
+                error_message = self.message_handler.agent.format_message(
+                    MessageType.ToolResult,
+                    {
+                        "tool_use": tool_use,
+                        "tool_result": str(e),
+                        "is_error": True,
+                    },
+                )
+                self.message_handler._messages_append(error_message)
+                self.message_handler._notify(
+                    "tool_error",
+                    {
+                        "tool_use": tool_use,
+                        "error": str(e),
+                        "message": error_message,
+                    },
+                )
+            return
+
         if (
             not self.message_handler.is_non_interactive
             and not self.get_effective_yolo_mode()
@@ -88,14 +137,21 @@ class ToolManager:
             action = confirmation.get("action", "deny")
 
             if action == "deny":
+                reason = confirmation.get("reason", "")
+                reason_message = (
+                    f"Here is the reason: {reason}. Adjust your actions bases on user's reason. Adapt behavior if it's recurring."
+                    if reason
+                    else "Immediately STOP any tasks or any tool calls and WAIT for user reason and adjustment, adapt new behavior if needed. "
+                )
+                tool_result = (
+                    f"Tool: {tool_id} call has been rejected by user, {reason_message}"
+                )
                 error_message = self.message_handler.agent.format_message(
                     MessageType.ToolResult,
                     {
                         "tool_use": tool_use,
-                        "tool_result": (
-                            "This tool call has been rejected by user, "
-                            "Immediately STOP any tasks or any tool calls and WAIT for user reason and adjustment, adapt new behavior if needed. "
-                        ),
+                        "tool_result": tool_result,
+                        "is_rejected": True,
                         "is_error": True,
                     },
                 )
@@ -104,7 +160,7 @@ class ToolManager:
                     "tool_denied",
                     {
                         "tool_use": tool_use,
-                        "message": error_message,
+                        "message": tool_result,
                     },
                 )
                 return  # Skip to the next tool
@@ -210,7 +266,8 @@ class ToolManager:
     def _post_tool_transfer(self, tool_use, tool_result):
         """Handle post-transfer operations."""
         if (
-            self.message_handler.current_conversation_id
+            self.message_handler.persistent_service
+            and self.message_handler.current_conversation_id
             and self.message_handler.last_assisstant_response_idx >= 0
         ):
             self.message_handler.persistent_service.append_conversation_messages(
@@ -237,7 +294,10 @@ class ToolManager:
                 "content": [{"type": "text", "text": tool_result}],
             }
         )
-        if self.message_handler.current_conversation_id:
+        if (
+            self.message_handler.persistent_service
+            and self.message_handler.current_conversation_id
+        ):
             self.message_handler.persistent_service.append_conversation_messages(
                 self.message_handler.current_conversation_id,
                 [

@@ -1,21 +1,12 @@
-"""
-Browser automation tool definitions and handlers.
+from __future__ import annotations
 
-Provides eight tools for browser automation:
-- browser_navigate: Navigate to URLs
-- browser_click: Click elements using UUID selectors
-- browser_scroll: Scroll page content
-- browser_get_content: Extract page content and interactive elements as markdown
-- browser_input: Input data into form fields using UUID selectors
-- browser_get_elements_by_text: Find elements by text content
-- browser_capture_screenshot: Capture page screenshots
-- browser_send_key: send keyboard events (arrow keys, function keys, etc.)
-"""
-
-from typing import Dict, Any, Callable, Union, List
-from .service import BrowserAutomationService
+from typing import TYPE_CHECKING
 import difflib
 import time
+
+if TYPE_CHECKING:
+    from .service import BrowserAutomationService
+    from typing import Dict, Any, Callable, Union, List
 
 
 def get_browser_navigate_tool_definition(provider="claude") -> Dict[str, Any]:
