@@ -366,14 +366,15 @@ class DisplayHandlers:
         title = Text(f"\n[{agent_name}", style=RICH_STYLE_RED)
         title.append(":")
         title.append(f"{model_name}]", style=RICH_STYLE_BLUE)
-        # Display YOLO mode indicator if enabled
-        if yolo_mode_enabled:
-            title.append(" [🔥]", style=RICH_STYLE_YELLOW_BOLD)
 
         title.append(
-            f" [{datetime.now().strftime('%H:%M:%S')}]",
+            f"      [{datetime.now().strftime('%H:%M:%S')}]",
             style=RICH_STYLE_GRAY,
         )
+
+        if yolo_mode_enabled:
+            title.append("\n[YOLO mode enabled]", style=RICH_STYLE_YELLOW_BOLD)
+
         title.append(
             "\n(Press Enter for new line, Ctrl+S/Alt+Enter to Send, Ctrl+V to paste)\n",
             style=RICH_STYLE_YELLOW,

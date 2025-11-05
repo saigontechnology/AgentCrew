@@ -157,7 +157,7 @@ class InputHandler:
                     self.display_handlers.print_prompt_prefix(
                         self.message_handler.agent.name,
                         self.message_handler.agent.get_model(),
-                        self.message_handler.tool_manager.get_effective_yolo_mode()
+                        self.message_handler.tool_manager.get_effective_yolo_mode(),
                     )
                     prompt = Text("👤 YOU: ", style=RICH_STYLE_BLUE)
                     self.console.print(prompt, end="")
@@ -350,14 +350,14 @@ class InputHandler:
             self.display_handlers.print_prompt_prefix(
                 self.message_handler.agent.name,
                 self.message_handler.agent.get_model(),
-                self.message_handler.tool_manager.get_effective_yolo_mode()
+                self.message_handler.tool_manager.get_effective_yolo_mode(),
             )
             self._start_input_thread()
         else:
             self.display_handlers.print_prompt_prefix(
                 self.message_handler.agent.name,
                 self.message_handler.agent.get_model(),
-                self.message_handler.tool_manager.get_effective_yolo_mode()
+                self.message_handler.tool_manager.get_effective_yolo_mode(),
             )
             self.clear_buffer()
 

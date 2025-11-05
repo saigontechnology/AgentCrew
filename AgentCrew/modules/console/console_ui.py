@@ -80,7 +80,6 @@ class ConsoleUI(Observer):
             "yolo_mode", False
         )
         self.message_handler.tool_manager.yolo_mode = yolo_mode_config
-        self.message_handler.tool_manager.session_overrided_yolo_mode = yolo_mode_config
 
     def listen(self, event: str, data: Any = None):
         """

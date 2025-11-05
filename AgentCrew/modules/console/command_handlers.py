@@ -139,7 +139,7 @@ class CommandHandlers:
         state = (
             "🚀 Enabled"
             if self.message_handler.tool_manager.session_overrided_yolo_mode
-            else "🔒 Disabled"
+            else "⛔ Disabled"
         )
         self.console.print(
             Text(f"{state} session overrided YOLO mode", style=RICH_STYLE_YELLOW)
