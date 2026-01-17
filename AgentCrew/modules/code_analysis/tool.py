@@ -5,6 +5,7 @@ from loguru import logger
 
 from .service import CodeAnalysisService
 from .file_search_service import FileSearchService
+from .grep_service import GrepTextService
 
 
 # ============================================================================
@@ -378,16 +379,197 @@ def get_find_files_tool_handler(service_instance: FileSearchService) -> Callable
 
 
 # ============================================================================
+# Grep Text Tool
+# ============================================================================
+
+
+def get_grep_text_tool_definition(provider="claude") -> Dict[str, Any]:
+    """
+    Return the tool definition for grep text search based on provider.
+
+    Args:
+        provider: The LLM provider ("claude" for Claude/Anthropic,
+                 "openai" for OpenAI/Groq)
+
+    Returns:
+        Dict containing the tool definition in provider-specific format
+    """
+    description = "Searches for text patterns within files in a specified directory using grep-like functionality. "
+
+    tool_arguments = {
+        "pattern": {
+            "type": "string",
+            "description": (
+                "The regular expression pattern to search for. "
+                "Supports standard regular expressions. "
+                "Examples: 'TODO', 'def .*\\(' (regex for Python functions), "
+                "'import .*' (regex for import statements), '^class ' (regex for class definitions at line start). "
+            ),
+        },
+        "directory": {
+            "type": "string",
+            "description": (
+                "The directory path to search within. Use '.' for current directory, "
+                "or specify a subdirectory path like 'src', 'tests', or 'lib/utils'."
+            ),
+            "default": ".",
+        },
+        "case_sensitive": {
+            "type": "boolean",
+            "description": "Boolean flag to control case sensitivity of the search.",
+            "default": True,
+        },
+        "max_results": {
+            "type": "integer",
+            "description": (
+                "Maximum number of matching lines to return. Use this to limit output when "
+                "searching large codebases or patterns with many matches. "
+                "Examples: 50, 100, 500. Set to null or omit for unlimited results. "
+            ),
+            "default": 50,
+        },
+    }
+    tool_required = ["pattern"]
+
+    if provider == "claude":
+        return {
+            "name": "grep_text",
+            "description": description,
+            "input_schema": {
+                "type": "object",
+                "properties": tool_arguments,
+                "required": tool_required,
+            },
+        }
+    else:  # provider == "openai" or "groq"
+        return {
+            "type": "function",
+            "function": {
+                "name": "grep_text",
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": tool_arguments,
+                    "required": tool_required,
+                },
+            },
+        }
+
+
+def get_grep_text_tool_handler(service_instance: GrepTextService) -> Callable:
+    """
+    Return the handler function for the grep_text tool.
+
+    Args:
+        service_instance: The GrepTextService instance to use for searches
+
+    Returns:
+        Callable handler function that accepts **params and returns formatted results as list of dicts
+
+    Raises:
+        Exception: For validation errors or search execution failures
+    """
+
+    def handler(**params):
+        """
+        Handle the grep_text tool call from LLM.
+
+        Args:
+            **params: Tool parameters from LLM
+                - pattern (str, required): Regex pattern to search for
+                - directory (str, required): Directory to search in (default: ".")
+                - case_sensitive (bool, optional): Enable case sensitivity (default: True)
+                - max_results (int, optional): Maximum results to return (default: None)
+
+        Returns:
+            List of dictionaries with "type" and "text" keys containing search results
+
+        Raises:
+            Exception: For parameter validation errors or search failures
+        """
+        pattern = params.get("pattern")
+        directory = params.get("directory", ".")
+        case_sensitive = params.get("case_sensitive", True)
+        max_results = params.get("max_results", 50)
+
+        # Validate required parameters
+        if not pattern:
+            error_msg = "Parameter 'pattern' is required but was not provided"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+
+        if not pattern.strip():
+            error_msg = "Parameter 'pattern' cannot be empty or whitespace"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+
+        # Validate optional parameters
+        if not isinstance(case_sensitive, bool):
+            error_msg = f"Parameter 'case_sensitive' must be a boolean, got: {type(case_sensitive).__name__}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+
+        if max_results is not None:
+            if not isinstance(max_results, int):
+                error_msg = f"Parameter 'max_results' must be an integer, got: {type(max_results).__name__}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+
+            if max_results < 0:
+                error_msg = (
+                    f"Parameter 'max_results' must be non-negative, got: {max_results}"
+                )
+                logger.error(error_msg)
+                raise Exception(error_msg)
+
+        # Expand user directory if present (e.g., ~/project -> /home/user/project)
+        expanded_directory = os.path.expanduser(directory)
+
+        logger.info(
+            f"grep_text tool called with: pattern='{pattern}', directory='{expanded_directory}', "
+            f"case_sensitive={case_sensitive}, max_results={max_results}"
+        )
+
+        try:
+            # search_text now returns a formatted string
+            result_text = service_instance.search_text(
+                pattern=pattern,
+                directory=expanded_directory,
+                case_sensitive=case_sensitive,
+                max_results=max_results,
+            )
+        except Exception as e:
+            error_msg = f"Text search failed: {str(e)}"
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+
+        return [
+            {
+                "type": "text",
+                "text": result_text,
+            }
+        ]
+
+    return handler
+
+
+# ============================================================================
 # Registration
 # ============================================================================
 
 
 def register(service_instance=None, agent=None):
     """
-    Register code analysis and file search tools with the central registry or directly with an agent.
+    Register code analysis, file search, and grep text tools with the central registry or directly with an agent.
+
+    This function registers all available tools from the code_analysis module:
+    - read_repo: Analyze code structure and create structural maps
+    - get_file: Retrieve file content or specific line ranges
+    - find_files: Search for files by pattern
+    - grep_text: Search for text patterns within file contents
 
     Args:
-        service_instance: The code analysis service instance (optional)
+        service_instance: The code analysis service instance (optional, for backward compatibility)
         agent: Agent instance to register with directly (optional)
     """
     from AgentCrew.modules.tools.registration import register_tool
@@ -413,5 +595,14 @@ def register(service_instance=None, agent=None):
         get_find_files_tool_definition,
         get_find_files_tool_handler,
         file_search_service,
+        agent,
+    )
+
+    # Register grep text search tool
+    grep_text_service = GrepTextService.get_instance()
+    register_tool(
+        get_grep_text_tool_definition,
+        get_grep_text_tool_handler,
+        grep_text_service,
         agent,
     )
