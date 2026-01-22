@@ -157,34 +157,34 @@ class DisplayHandlers:
                 f"  - {agent_name}{current}: {agent_data['description']}"
             )
 
-    def display_conversations(self, conversations: List[Dict[str, Any]]):
-        """Display available conversations."""
+    def display_conversations(
+        self,
+        conversations: List[Dict[str, Any]],
+        get_history_callback=None,
+    ):
+        """Display available conversations using interactive browser.
+        
+        Args:
+            conversations: List of conversation metadata
+            get_history_callback: Optional callback to fetch full conversation history
+            
+        Returns:
+            Selected conversation ID or None if cancelled
+        """
         if not conversations:
             self.console.print(
                 Text("No saved conversations found.", style=RICH_STYLE_YELLOW)
             )
-            return
+            return None
 
-        self.console.print(Text("Available conversations:", style=RICH_STYLE_YELLOW))
-        for i, convo in enumerate(conversations[:30], 1):
-            # Format timestamp for better readability
-            timestamp = convo.get("timestamp", "Unknown")
-            if isinstance(timestamp, (int, float)):
-                timestamp = datetime.fromtimestamp(timestamp).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
+        from .conversation_browser import ConversationBrowser
 
-            title = convo.get("title", "Untitled")
-            convo_id = convo.get("id", "unknown")
-
-            # Display conversation with index for easy selection
-            self.console.print(f"  {i}. {title} [{convo_id}]")
-            self.console.print(f"     Created: {timestamp}")
-
-            # Show a preview if available
-            if "preview" in convo:
-                self.console.print(f"     Preview: {convo['preview']}")
-            self.console.print("")
+        browser = ConversationBrowser(
+            console=self.console,
+            get_conversation_history=get_history_callback,
+        )
+        browser.set_conversations(conversations)
+        return browser.show()
 
     def display_consolidation_result(self, result: Dict[str, Any]):
         """Display information about a consolidation operation."""

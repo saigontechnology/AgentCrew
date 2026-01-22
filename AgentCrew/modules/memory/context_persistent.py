@@ -393,6 +393,7 @@ class ContextPersistenceService:
                             {
                                 "id": conversation_id,
                                 "timestamp": timestamp,
+                                "title": preview,
                                 "preview": preview,
                             }
                         )

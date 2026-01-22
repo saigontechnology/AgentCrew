@@ -71,6 +71,14 @@ class ConsoleUI(Observer):
         self.conversation_handler = ConversationHandler(self)
         self.command_handlers = CommandHandlers(self)
 
+    def _get_conversation_history(self, conversation_id: str):
+        """Get conversation history for preview in browser."""
+        if self.message_handler.persistent_service:
+            return self.message_handler.persistent_service.get_conversation_history(
+                conversation_id
+            )
+        return None
+
     def listen(self, event: str, data: Any = None):
         """
         Update method required by the Observer interface. Handles events from the MessageHandler.
@@ -454,7 +462,18 @@ class ConsoleUI(Observer):
                         self.conversation_handler.update_cached_conversations(
                             conversations
                         )
-                        self.display_handlers.display_conversations(conversations)
+                        self.input_handler._stop_input_thread()
+                        try:
+                            selected_id = self.display_handlers.display_conversations(
+                                conversations,
+                                get_history_callback=self._get_conversation_history,
+                            )
+                            if selected_id:
+                                self.conversation_handler.handle_load_conversation(
+                                    selected_id, self.message_handler
+                                )
+                        finally:
+                            self.input_handler._start_input_thread()
                         continue
 
                     # Handle load command directly
