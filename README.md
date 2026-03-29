@@ -426,6 +426,33 @@ tools = ["code_analysis", "file_editing", "web_search", "memory"]
 temperature = 0.7
 ```
 
+**System prompts from Markdown files:**
+
+`agents.toml` also supports loading `system_prompt` from a Markdown file. If the
+configured value points to a valid file, AgentCrew loads the file contents. If
+not, the value is treated as the literal prompt text for backward compatibility.
+
+Supported path styles:
+
+- Absolute paths such as `~/.AgentCrew/agents/software_architect.md`
+- Paths relative to `~/.AgentCrew`, such as `agents/software_architect.md`
+
+Example:
+
+```toml
+[[agents]]
+name = "SoftwareArchitect"
+description = "Specialized in software architecture, system design, and planning"
+system_prompt = "~/.AgentCrew/agents/software_architect.md"
+tools = ["clipboard", "memory", "web_search", "code_analysis"]
+
+[[agents]]
+name = "SoftwareArchitect2"
+description = "Specialized in software architecture, system design, and planning"
+system_prompt = "agents/software_architect.md"
+tools = ["clipboard", "memory", "web_search", "code_analysis"]
+```
+
 See `CONFIGURATION.md` for detailed configuration documentation.
 
 ## 📦 Agent Sharing & Reuse

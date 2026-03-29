@@ -1,5 +1,7 @@
 import tomllib as toml
 import json
+import os
+from pathlib import Path
 from enum import Enum
 from typing import Dict, Any, Optional, List
 
@@ -17,6 +19,7 @@ class AgentManager:
     """Manager for specialized agents."""
 
     _instance = None
+    AGENTCREW_HOME = Path(os.path.expanduser("~/.AgentCrew"))
 
     def __new__(cls):
         """Ensure only one instance is created (singleton pattern)."""
@@ -24,6 +27,45 @@ class AgentManager:
             cls._instance = super(AgentManager, cls).__new__(cls)
             cls._instance._initialized = False
         return cls._instance
+
+    @classmethod
+    def _resolve_system_prompt_path(cls, system_prompt: Any) -> Optional[Path]:
+        if not isinstance(system_prompt, str):
+            return None
+
+        prompt_value = system_prompt.strip()
+        if not prompt_value:
+            return None
+
+        expanded_path = Path(os.path.expanduser(prompt_value))
+        candidate_path = (
+            expanded_path
+            if expanded_path.is_absolute()
+            else cls.AGENTCREW_HOME / prompt_value
+        )
+
+        if candidate_path.is_file():
+            return candidate_path
+
+        return None
+
+    @classmethod
+    def _load_system_prompt(cls, system_prompt: Any) -> Any:
+        prompt_path = cls._resolve_system_prompt_path(system_prompt)
+        if prompt_path is None:
+            return system_prompt
+
+        return prompt_path.read_text(encoding="utf-8")
+
+    @classmethod
+    def _resolve_agent_system_prompts(cls, agents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        for agent in agents:
+            if "system_prompt" in agent:
+                agent["system_prompt"] = cls._load_system_prompt(
+                    agent.get("system_prompt")
+                )
+
+        return agents
 
     @staticmethod
     def load_agents_from_config(config_uri: str) -> list:
@@ -83,9 +125,9 @@ class AgentManager:
             raise ValueError("Invalid configuration file format.")
 
         # Filter enabled agents (default to True if enabled field is missing)
-        local_agents = [
-            agent for agent in config.get("agents", []) if agent.get("enabled", True)
-        ]
+        local_agents = AgentManager._resolve_agent_system_prompts(
+            [agent for agent in config.get("agents", []) if agent.get("enabled", True)]
+        )
         remote_agents = [
             agent
             for agent in config.get("remote_agents", [])
