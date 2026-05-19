@@ -14,6 +14,7 @@ def _build_available_models():
     from AgentCrew.modules.custom_llm.github_copilot_models import GITHUB_COPILOT_MODELS
     from AgentCrew.modules.custom_llm.opencode_models import OPENCODE_GO_MODELS
     from AgentCrew.modules.together.models import TOGETHER_MODELS
+    from AgentCrew.modules.litellm.models import LITELLM_MODELS
 
     return (
         ANTHROPIC_MODELS
@@ -25,6 +26,7 @@ def _build_available_models():
         + OPENCODE_GO_MODELS
         + FIREWORKS_MODELS
         + GITHUB_COPILOT_MODELS
+        + LITELLM_MODELS
     )
 
 

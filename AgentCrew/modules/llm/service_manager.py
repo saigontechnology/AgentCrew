@@ -45,6 +45,7 @@ class ServiceManager:
             "github_copilot": self._create_github_copilot_service,
             "copilot_response": self._create_copilot_response_service,
             "fireworks": self._create_fireworks_service,
+            "litellm": self._create_litellm_service,
         }
 
         # Store details for custom providers
@@ -153,6 +154,12 @@ class ServiceManager:
         return GithubCopilotResponseService(
             api_key=api_key, provider_name=provider_name
         )
+
+    def _create_litellm_service(self) -> BaseLLMService:
+        """Lazy import and create LiteLLM service."""
+        from AgentCrew.modules.litellm import LiteLLMService
+
+        return LiteLLMService()
 
     def _create_fireworks_service(self) -> BaseLLMService:
         """Lazy import and create Fireworks AI service."""
