@@ -78,14 +78,49 @@ class ModelCompleter(Completer):
     def __init__(self):
         self.registry = ModelRegistry.get_instance()
 
+    @staticmethod
+    def _fuzzy_match(query, text):
+        """Check if all characters in query appear in text in order (case-insensitive).
+        Returns the match score (lower is better) or None if no match.
+        Score is based on gap penalty — consecutive matches score better.
+        """
+        query_lower = query.lower()
+        text_lower = text.lower()
+        query_idx = 0
+        score = 0
+        last_match_pos = -1
+
+        for i, char in enumerate(text_lower):
+            if query_idx < len(query_lower) and char == query_lower[query_idx]:
+                # Penalize gaps between matched characters
+                if last_match_pos >= 0:
+                    score += i - last_match_pos - 1
+                last_match_pos = i
+                query_idx += 1
+
+        if query_idx == len(query_lower):
+            return score
+        return None
+
     def get_completions(self, document, complete_event):
         text = document.text
 
         # Only provide completions for the /model command
         if text.startswith("/model "):
-            word_before_cursor = document.get_word_before_cursor(
-                pattern=COMPLETER_PATTERN
-            )
+            model_text = text[len("/model "):]
+            filter_text = model_text.split("/")[-1] if "/" in model_text else model_text
+
+            if not filter_text:
+                # No filter text yet, show all models
+                for provider in self.registry.get_providers():
+                    for model in self.registry.get_models_by_provider(provider):
+                        display = f"{model.id} - {model.name} ({provider})"
+                        yield Completion(
+                            f"{provider}/{model.id}",
+                            start_position=-len(model_text),
+                            display=display,
+                        )
+                return
 
             # Get all available models from the registry
             all_models = []
@@ -93,15 +128,44 @@ class ModelCompleter(Completer):
                 for model in self.registry.get_models_by_provider(provider):
                     all_models.append((model.id, model.name, provider))
 
-            # Filter models based on what the user has typed so far
+            filter_lower = filter_text.lower()
+
+            # Score and rank matches: prefix (0) > substring (1) > fuzzy (2+)
+            scored = []
             for model_id, model_name, provider in all_models:
-                if model_id.startswith(word_before_cursor):
-                    display = f"{model_id} - {model_name} ({provider})"
-                    yield Completion(
-                        f"{provider}/{model_id}",
-                        start_position=-len(word_before_cursor),
-                        display=display,
-                    )
+                id_lower = model_id.lower()
+                name_lower = model_name.lower()
+
+                # Prefix match on model_id — best priority
+                if id_lower.startswith(filter_lower):
+                    scored.append((0, model_id, model_name, provider))
+                    continue
+
+                # Substring match on model_id or model_name
+                if filter_lower in id_lower or filter_lower in name_lower:
+                    scored.append((1, model_id, model_name, provider))
+                    continue
+
+                # Fuzzy character match on model_id
+                fuzzy_score = self._fuzzy_match(filter_text, model_id)
+                if fuzzy_score is not None:
+                    scored.append((2 + fuzzy_score, model_id, model_name, provider))
+                    continue
+
+                # Fuzzy character match on model_name
+                fuzzy_score = self._fuzzy_match(filter_text, model_name)
+                if fuzzy_score is not None:
+                    scored.append((2 + fuzzy_score, model_id, model_name, provider))
+
+            # Sort by match quality and cap results
+            scored.sort(key=lambda x: x[0])
+            for _, model_id, model_name, provider in scored[:20]:
+                display = f"{model_id} - {model_name} ({provider})"
+                yield Completion(
+                    f"{provider}/{model_id}",
+                    start_position=-len(model_text),
+                    display=display,
+                )
 
 
 class AgentCompleter(Completer):
