@@ -167,9 +167,6 @@ class InputHandler:
                 hasattr(self, "_last_ctrl_c_time")
                 and current_time - self._last_ctrl_c_time <= 1
             ):
-                self.console.print(
-                    Text("\n🎮 Confirmed exit. Goodbye!", style=RICH_STYLE_YELLOW_BOLD)
-                )
                 # Don't try to join from within the same thread - just exit
                 event.app.exit("__EXIT__")
             else:
