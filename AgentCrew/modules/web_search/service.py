@@ -58,20 +58,65 @@ class TavilySearchService:
             print(f"❌ Search error: {str(e)}")
             return {"error": str(e)}
 
-    def extract(self, url: str) -> dict[str, Any]:
+    def extract(self, url: str, include_images: bool = True) -> dict[str, Any]:
         """
         Extract content from a specific URL using Tavily API.
 
         Args:
             url: The URL to extract content from
+            include_images: Whether to include extracted images in results
 
         Returns:
             dict containing the extracted content
         """
         try:
-            return self.client.extract(url)
+            return self.client.extract(url, include_images=include_images)
         except Exception as e:
             print(f"❌ Extract error: {str(e)}")
+            return {"error": str(e)}
+
+    def crawl(
+        self,
+        url: str,
+        max_depth: int = 2,
+        limit: int = 50,
+        select_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+        extract_depth: str = "basic",
+        instructions: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Crawl a website starting from a root URL using Tavily Crawl API.
+
+        Args:
+            url: The root URL to start crawling from
+            max_depth: How many levels deep to crawl (1-5)
+            limit: Maximum number of pages to crawl (max 500)
+            select_paths: list of regex patterns to only crawl matching paths
+            exclude_paths: list of regex patterns to exclude matching paths
+            extract_depth: "basic" or "advanced" extraction
+            instructions: Natural language guidance for the crawler
+
+        Returns:
+            dict containing crawl results with multiple pages
+        """
+        try:
+            kwargs: dict[str, Any] = {
+                "url": url,
+                "max_depth": max_depth,
+                "limit": limit,
+                "extract_depth": extract_depth,
+            }
+            if select_paths:
+                kwargs["select_paths"] = select_paths
+            if exclude_paths:
+                kwargs["exclude_paths"] = exclude_paths
+            if instructions:
+                kwargs["instructions"] = instructions
+
+            return self.client.crawl(**kwargs)
+        except Exception as e:
+            print(f"❌ Crawl error: {str(e)}")
             return {"error": str(e)}
 
     def format_search_results(self, results: dict[str, Any]) -> str:
@@ -113,3 +158,29 @@ class TavilySearchService:
             return f"{url}\n{content}"
         else:
             return "No content could be extracted."
+
+    def format_crawl_results(self, results: dict[str, Any]) -> str:
+        """Format crawl results into a readable string."""
+        if "error" in results:
+            return f"Crawl error: {results['error']}"
+
+        pages = results.get("results") or []
+        if not pages:
+            return "No pages were crawled."
+
+        lines = []
+        base_url = results.get("base_url", "Unknown")
+        lines.append(f"Crawl results from: {base_url}")
+        lines.append(f"Pages crawled: {len(pages)}")
+        if results.get("usage"):
+            lines.append(f"Credits used: {results['usage'].get('credits', 'N/A')}")
+        lines.append("")
+
+        for i, page in enumerate(pages, 1):
+            lines.append(f"--- Page {i} ---")
+            lines.append(f"URL: {page.get('url', 'Unknown')}")
+            content = page.get("raw_content", "No content")
+            lines.append(content)
+            lines.append("")
+
+        return "\n".join(lines)
