@@ -561,6 +561,41 @@ class LocalAgent(BaseAgent):
         except Exception as e:
             logger.warning(f"Failed to store conversation in memory: {e}")
 
+    def _refresh_agent_skills(self) -> None:
+        """Refresh skills from disk and update LLM tool definitions if needed.
+
+        Handles all state transitions:
+        - No skills, tool present -> remove tool, re-sync to LLM
+        - Skills appear -> register tool, re-sync to LLM
+        - Skills changed (names added/removed) -> re-register tool with current
+          skill list, re-sync to LLM
+        - No changes in state -> no-op
+        """
+        skills_service = self.services.get("skills")
+        if not skills_service:
+            return
+
+        changed = skills_service.refresh()
+        has_skills = skills_service.has_skills()
+        has_tool = "activate_skill" in self.tool_definitions
+
+        # Quick exit when nothing changed
+        if has_skills == has_tool and not changed:
+            return
+
+        # State changed — update tool definitions
+        if has_tool:
+            del self.tool_definitions["activate_skill"]
+
+        if has_skills:
+            from AgentCrew.modules.skills.tool import register as register_skills
+
+            register_skills(skills_service, self)
+
+        # Re-sync to LLM only when already past deferred sync
+        if not self._defer_tool_registration:
+            self._register_tools_with_llm()
+
     async def process_messages(
         self,
         messages: list[dict[str, Any]] | None = None,
@@ -577,6 +612,9 @@ class LocalAgent(BaseAgent):
         """
         if not self.llm:
             return
+
+        self._refresh_agent_skills()
+
         if self._defer_tool_registration:
             while len(self.mcps_loading) > 0:
                 await asyncio.sleep(0.2)

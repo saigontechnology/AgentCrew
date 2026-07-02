@@ -154,6 +154,18 @@ class SkillsService:
     def get_skill(self, name: str) -> dict | None:
         return self._skills.get(name)
 
+    def refresh(self) -> bool:
+        """Re-discover skills from filesystem.
+
+        Returns:
+            True if the set of skill names changed, False otherwise.
+        """
+        old_names = set(self._skills.keys())
+        self._skills = {}
+        self._discover()
+        new_names = set(self._skills.keys())
+        return old_names != new_names
+
     def get_skill_names(self) -> list[str]:
         return list(self._skills.keys())
 

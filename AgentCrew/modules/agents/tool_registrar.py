@@ -109,7 +109,7 @@ class AgentToolRegistrar:
                 )
 
         skills_service = agent.services.get("skills")
-        if skills_service and skills_service.has_skills():
+        if skills_service:
             from AgentCrew.modules.skills.tool import register as register_skills
 
             register_skills(skills_service, agent)
