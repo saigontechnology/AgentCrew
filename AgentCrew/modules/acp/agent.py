@@ -42,6 +42,7 @@ class AgentCrewAcpAgent(Agent):
         self._mcp_orchestrator = McpOrchestrator(agent_manager)
         self._tool_manager = AcpToolManager(agent_manager)
         self._sessions: dict[str, AcpSessionState] = {}
+        self._session_locks: dict[str, asyncio.Lock] = {}
         self._model_controller = ModelController(
             agent_manager=agent_manager,
             tool_manager=self._tool_manager,
@@ -55,6 +56,11 @@ class AgentCrewAcpAgent(Agent):
             session_store=self.session_store,
             client_comm=self._client_comm,
         )
+
+    def _get_session_lock(self, session_id: str) -> asyncio.Lock:
+        if session_id not in self._session_locks:
+            self._session_locks[session_id] = asyncio.Lock()
+        return self._session_locks[session_id]
 
     def on_connect(self, conn: Client):
         self._conn = conn
@@ -225,19 +231,21 @@ class AgentCrewAcpAgent(Agent):
         logger.debug(f"close session: {session_id}, {kwargs}")
         from acp.schema import CloseSessionResponse
 
-        state = self._sessions.pop(session_id, None)
-        if state and state.current_task and not state.current_task.done():
-            state.cancelled = True
-            state.current_task.cancel()
-        if state:
-            if self._conn:
-                await self._turn_executor.release_active_terminals(
-                    session_id, state, self._conn
+        async with self._get_session_lock(session_id):
+            state = self._sessions.pop(session_id, None)
+            if state and state.current_task and not state.current_task.done():
+                state.cancelled = True
+                state.current_task.cancel()
+            if state:
+                if self._conn:
+                    await self._turn_executor.release_active_terminals(
+                        session_id, state, self._conn
+                    )
+                self._tool_manager.restore_builtin_tools(state)
+                await self._mcp_orchestrator.cleanup_session_mcp_servers(
+                    state, clear_configs=True
                 )
-            self._tool_manager.restore_builtin_tools(state)
-            await self._mcp_orchestrator.cleanup_session_mcp_servers(
-                state, clear_configs=True
-            )
+        self._session_locks.pop(session_id, None)
         return CloseSessionResponse()
 
     async def set_session_mode(self, mode_id: str, session_id: str, **kwargs):
@@ -453,27 +461,33 @@ class AgentCrewAcpAgent(Agent):
         logger.debug(f"Prompt: {session_id}, {prompt}, {message_id}, {kwargs}")
         from .message_extraction import prompt_to_text
 
-        state = self._sessions.get(session_id)
-        if state is None:
-            raise RequestError.resource_not_found(f"session:{session_id}")
+        # Serialize concurrent prompt calls for the same session
+        async with self._get_session_lock(session_id):
+            state = self._sessions.get(session_id)
+            if state is None:
+                raise RequestError.resource_not_found(f"session:{session_id}")
 
-        user_text = prompt_to_text(prompt)
-        if user_text.strip() and state.pending_ask_tool is not None:
-            handled = await self._turn_executor.resume_pending_ask(
-                session_id,
-                state,
-                user_text,
-            )
-            if handled:
-                user_text = ""
-        if user_text.strip():
-            state.history.append(
-                {"role": "user", "content": [{"type": "text", "text": user_text}]}
-            )
-            if not state.title:
-                state.title = user_text[:80].split("\n")[0].strip()
-                await self._client_comm.send_session_info_update(session_id, state)
+            user_text = prompt_to_text(prompt)
+            if user_text.strip() and state.pending_ask_tool is not None:
+                handled = await self._turn_executor.resume_pending_ask(
+                    session_id,
+                    state,
+                    user_text,
+                )
+                if handled:
+                    user_text = ""
+            if user_text.strip():
+                state.history.append(
+                    {"role": "user", "content": [{"type": "text", "text": user_text}]}
+                )
+                if not state.title:
+                    state.title = user_text[:80].split("\n")[0].strip()
+                    await self._client_comm.send_session_info_update(session_id, state)
 
+            state.cancelled = False
+            state.current_task = asyncio.current_task()
+
+        # Release the lock during run_turn so cancel() can interrupt
         ctx = AcpSessionContext(
             conn=self._conn,
             session_id=session_id,
@@ -484,8 +498,6 @@ class AgentCrewAcpAgent(Agent):
 
         from acp.schema import PromptResponse
 
-        state.cancelled = False
-        state.current_task = asyncio.current_task()
         try:
             await self._turn_executor.run_turn(session_id, state, self._conn)
             return PromptResponse(
@@ -509,21 +521,24 @@ class AgentCrewAcpAgent(Agent):
             )
         finally:
             _current_acp_session.reset(token)
-            state.current_task = None
-            await self._session_lifecycle._persist_session(session_id, state)
+            # Re-acquire lock to persist — safe because run_turn has returned
+            async with self._get_session_lock(session_id):
+                state.current_task = None
+                await self._session_lifecycle._persist_session(session_id, state)
 
     async def cancel(self, session_id: str, **kwargs):
         logger.debug(f"Cancel: {session_id}, {kwargs}")
-        state = self._sessions.get(session_id)
-        if state is None:
-            return
-        state.cancelled = True
-        if self._conn:
-            await self._turn_executor.release_active_terminals(
-                session_id, state, self._conn
-            )
-        if state.current_task and not state.current_task.done():
-            state.current_task.cancel()
+        async with self._get_session_lock(session_id):
+            state = self._sessions.get(session_id)
+            if state is None:
+                return
+            state.cancelled = True
+            if self._conn:
+                await self._turn_executor.release_active_terminals(
+                    session_id, state, self._conn
+                )
+            if state.current_task and not state.current_task.done():
+                state.current_task.cancel()
 
     async def ext_method(self, method: str, params: dict[str, Any]):
         logger.debug(f"Extension method: {method}, {params}")

@@ -43,6 +43,12 @@ async def run_agent_loop(
                 thinking_signature += signature
 
     if not tool_uses:
+        assistant_message = agent.format_message(
+            MessageType.Assistant, {"message": current_response}
+        )
+        if assistant_message:
+            history.append(assistant_message)
+
         user_message = agent._extract_last_user_message_for_memory(history)
         agent.store_memory_if_available(user_message, history, current_response)
         # Prevent agent loop exit with empty response
@@ -58,6 +64,12 @@ async def run_agent_loop(
         filtered = tool_uses
 
     if not filtered:
+        assistant_message = agent.format_message(
+            MessageType.Assistant, {"message": current_response}
+        )
+        if assistant_message:
+            history.append(assistant_message)
+
         user_message = agent._extract_last_user_message_for_memory(history)
         agent.store_memory_if_available(user_message, history, current_response)
         return current_response, token_usage

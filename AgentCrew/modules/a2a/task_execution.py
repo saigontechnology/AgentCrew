@@ -469,8 +469,8 @@ class TaskExecutionEngine:
                 MessageType.Assistant, {"message": current_response}
             )
             if assistant_message:
-                await self.store.append_task_history_message(
-                    task.context_id, assistant_message
+                await self._append_history_message(
+                    task.context_id, assistant_message, task_history
                 )
             user_message = agent._extract_last_user_message_for_memory(task_history)
             agent.store_memory_if_available(
