@@ -2,6 +2,17 @@ from AgentCrew.modules.llm.types import Model
 
 OPENAI_CODEX_MODELS = [
     Model(
+        id="gpt-5.3-codex-spark",
+        provider="openai_codex",
+        name="GPT-5.3 codex",
+        description="Ultra fast coding model",
+        capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
+        default_reasoning="medium",
+        max_context_token=272_000,
+        input_token_price_1m=0.0,
+        output_token_price_1m=0.0,
+    ),
+    Model(
         id="gpt-5.4-mini",
         provider="openai_codex",
         name="GPT-5.4 Mini(ChatGPT)",
