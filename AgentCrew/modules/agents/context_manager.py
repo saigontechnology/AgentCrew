@@ -190,7 +190,7 @@ You must analyze and plan out the steps then execute it with your available tool
                 )
                 if memory_headers:
                     adaptive_messages.append(
-                        f"## Recent Memories from last conversations:\n- {'\n - '.join(memory_headers)}\n---\nIf the user request related to any recent memories, call search_memory before responding."
+                        f"## Recent conversation memory headlines:\n- {'\n - '.join(memory_headers)}\n---\nIf the user request related to any recent memories, call search_memory before responding."
                     )
 
             dir_structure = self._get_directory_structure()
@@ -326,7 +326,7 @@ You must analyze and plan out the steps then execute it with your available tool
                         msg["content"] = [
                             {
                                 "type": "text",
-                                "text": f"[tool: {tool_name} was rejected with reason: {msg.get('content')}]",
+                                "text": f"[tool: {tool_name} was rejected by user with reason: {msg.get('content')}]",
                             }
                         ]
                     msg.pop("tool_name", None)

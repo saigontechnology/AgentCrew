@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 DEFAULT_QUEUE_TIMEOUT = 5.0
 MAX_QUEUE_SIZE = 1000
 WORKER_THREAD_NAME = "ChromaMemoryWorker"
-RELEVANT_THRESHOLD = 0.91
 CONSOLIDATION_EVERY_N = 5
 
 
@@ -31,10 +30,12 @@ class MemoryWorker:
         self,
         embedding_fn: EmbeddingFunction | None = None,
         llm_service: BaseLLMService | None = None,
+        relevant_threashold: float = 1,
     ):
         self._embedding_function = embedding_fn
         self.llm_service = llm_service
         self._collection: Collection | None = None
+        self._relevant_threashold = relevant_threashold
 
         self.context_embedding: list = []
         self.current_conversation_context: dict[str, Any] = {}
@@ -46,6 +47,9 @@ class MemoryWorker:
 
     def set_collection(self, collection: Collection):
         self._collection = collection
+
+    def set_relevant_threshold(self, relevant_threashold: float):
+        self._relevant_threashold = relevant_threashold
 
     def set_embedding_fn(self, embedding_fn: EmbeddingFunction):
         self._embedding_function = embedding_fn
@@ -321,7 +325,7 @@ class MemoryWorker:
             candidates = []
             for i in range(len(results["ids"][0])):
                 dist = results["distances"][0][i] if results["distances"] else 99
-                if dist <= RELEVANT_THRESHOLD:
+                if dist <= self._relevant_threashold:
                     candidates.append(
                         {
                             "id": results["ids"][0][i],

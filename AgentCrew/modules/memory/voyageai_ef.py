@@ -9,6 +9,8 @@ import os
 if TYPE_CHECKING:
     from typing import Any
 
+VOYAGE_RELEVANT_THRESHOLD = 1
+
 
 class VoyageEmbeddingFunction(EmbeddingFunction[Documents]):
     """To use this EmbeddingFunction, you must have the google.generativeai Python package installed and have a Google API key."""

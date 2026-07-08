@@ -6,13 +6,14 @@ from datetime import datetime, timedelta
 from loguru import logger
 
 from .base_service import BaseMemoryService
-from .memory_worker import MemoryWorker, RELEVANT_THRESHOLD
+from .memory_worker import MemoryWorker
 
 if TYPE_CHECKING:
     from chromadb import Collection
     from AgentCrew.modules.llm.base import BaseLLMService
 
 MEMORY_DB_PATH = "./memory_db"
+RELEVANT_THRESHOLD = 0.30
 
 
 class ChromaMemoryService(BaseMemoryService):
@@ -79,23 +80,39 @@ class ChromaMemoryService(BaseMemoryService):
             path=self.db_path, settings=Settings(anonymized_telemetry=False)
         )
         if os.getenv("VOYAGE_API_KEY"):
-            from .voyageai_ef import VoyageEmbeddingFunction
+            from .voyageai_ef import VoyageEmbeddingFunction, VOYAGE_RELEVANT_THRESHOLD
 
             voyage_ef = VoyageEmbeddingFunction(
                 api_key=os.getenv("VOYAGE_API_KEY"),
                 model_name="voyage-4",
             )
             self.embedding_function = voyage_ef
+            self.relevant_threshold = VOYAGE_RELEVANT_THRESHOLD
         else:
             self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            self.relevant_threshold = RELEVANT_THRESHOLD
 
         self._collection = self.client.get_or_create_collection(
             name=self.collection_name,
             embedding_function=self.embedding_function,  # type:ignore
+            configuration={"hnsw": {"space": "cosine", "ef_construction": 200}},
         )
+
+        ## Re-create memory collection to prevent incompatible issue
+        if (
+            self._collection.configuration.get("hnsw")
+            and self._collection.configuration.get("hnsw").get("space") != "cosine"  # type:ignore
+        ):
+            self.client.delete_collection(self.collection_name)
+            self._collection = self.client.get_or_create_collection(
+                name=self.collection_name,
+                embedding_function=self.embedding_function,  # type:ignore
+                configuration={"hnsw": {"space": "cosine", "ef_construction": 200}},
+            )
 
         self._worker.set_collection(self._collection)
         self._worker.set_embedding_fn(self.embedding_function)
+        self._worker.set_relevant_threshold(self.relevant_threshold)
 
         self.cleanup_old_memories(months=1)
         return self._collection
@@ -224,7 +241,7 @@ class ChromaMemoryService(BaseMemoryService):
                     or metadata.get("timestamp", "unknown"),
                     "relevance": results["distances"][0][i]
                     if results["distances"]
-                    else 99,
+                    else 1,
                 }
             )
 
@@ -233,7 +250,7 @@ class ChromaMemoryService(BaseMemoryService):
         output = []
         for conv_data in sorted_conversations[:3]:
             conversation_text = conv_data["document"]
-            if conv_data["relevance"] > RELEVANT_THRESHOLD:
+            if conv_data["relevance"] > self.relevant_threshold:
                 continue
             timestamp = "Unknown time"
             if conv_data["timestamp"] != "unknown":
@@ -247,7 +264,9 @@ class ChromaMemoryService(BaseMemoryService):
                 except Exception:
                     timestamp = conv_data["timestamp"]
 
-            output.append(f"---Date:{timestamp}---\n{conversation_text}\n---")
+            output.append(
+                f"---Date:{timestamp} (Similarity: {1 - conv_data['relevance']:.2f})---\n{conversation_text}\n---"
+            )
 
         memories = "\n\n".join(output)
         return memories
