@@ -275,7 +275,7 @@ You must analyze and plan out the steps then execute it with your available tool
         last_agent_tool_calls = -1
         tool_result_needed_rearrange: dict[int, list[int]] = {}
         tool_with_id_needed_rearrange: list[str] = []
-        tool_result_id_needed_shrink: list[str] = []
+        shrink_tool_call_args: dict[str, dict[str, Any]] = {}
 
         for i, msg in enumerate(final_messages):
             content = None
@@ -294,7 +294,9 @@ You must analyze and plan out the steps then execute it with your available tool
                                     tool_call.get("id")
                                 )
                                 continue
-                            tool_result_id_needed_shrink.append(tool_call.get("id"))
+                            shrink_tool_call_args[tool_call.get("id")] = tool_call.get(
+                                "arguments", {}
+                            )
                     msg["tool_calls"] = [
                         t
                         for t in msg.get("tool_calls", [])
@@ -313,12 +315,23 @@ You must analyze and plan out the steps then execute it with your available tool
                         tool_result_needed_rearrange[last_agent_tool_calls] = [i]
                     continue
 
-                if msg.get("tool_call_id", None) in tool_result_id_needed_shrink:
+                if msg.get("tool_call_id", None) in shrink_tool_call_args:
+                    _raw_args = shrink_tool_call_args.get(
+                        msg.get("tool_call_id", ""), {}
+                    )
+                    _arg_parts = []
+                    for _k, _v in _raw_args.items():
+                        _v_str = str(_v)
+                        if len(_v_str) > 50:
+                            _v_str = _v_str[:50] + "..."
+                        _arg_parts.append(f"{_k}={_v_str}")
+                    _arg_preview = ", ".join(_arg_parts)
+
                     # keep the reason of tool rejected remains
                     if not msg.get("is_rejected", False):
                         msg["content"] = [
                             {
-                                "text": f"[tool:{tool_name} was truncated]",
+                                "text": f"[tool:{tool_name}({_arg_preview}) was truncated]",
                                 "type": "text",
                             }
                         ]
@@ -326,7 +339,7 @@ You must analyze and plan out the steps then execute it with your available tool
                         msg["content"] = [
                             {
                                 "type": "text",
-                                "text": f"[tool: {tool_name} was rejected by user with reason: {msg.get('content')}]",
+                                "text": f"[tool: {tool_name}({_arg_preview}) was rejected by user with reason: {msg.get('content')}]",
                             }
                         ]
                     msg.pop("tool_name", None)
