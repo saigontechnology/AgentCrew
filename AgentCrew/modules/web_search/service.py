@@ -70,7 +70,9 @@ class TavilySearchService:
             dict containing the extracted content
         """
         try:
-            return self.client.extract(url, include_images=include_images)
+            return self.client.extract(
+                url, include_images=include_images, extract_depth="advanced"
+            )
         except Exception as e:
             print(f"❌ Extract error: {str(e)}")
             return {"error": str(e)}
