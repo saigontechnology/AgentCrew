@@ -283,38 +283,57 @@ class TurnExecutor:
         tool_use: dict[str, Any],
     ):
         tool_input = tool_use.get("input", {})
-        question = str(tool_input.get("question", "")).strip()
-        guided_answers = tool_input.get("guided_answers", [])
-        if not question:
+        questions = tool_input.get("questions", [])
+        if not questions or not isinstance(questions, list):
             await self.append_tool_result(
                 session_id,
                 state,
                 agent,
                 tool_use,
-                "Ask tool requires a non-empty question.",
+                "Ask tool requires a non-empty `questions` array.",
                 is_error=True,
             )
             return
-        if not isinstance(guided_answers, list):
-            await self.append_tool_result(
-                session_id,
-                state,
-                agent,
-                tool_use,
-                "Ask tool guided_answers must be a list.",
-                is_error=True,
-            )
-            return
-        normalized_answers = [str(answer) for answer in guided_answers]
-        await self._client_comm.send_ask_request(
-            session_id,
-            question,
-            normalized_answers,
-        )
+
+        # Validate each question
+        for i, q in enumerate(questions):
+            if not isinstance(q, dict):
+                await self.append_tool_result(
+                    session_id,
+                    state,
+                    agent,
+                    tool_use,
+                    f"Question at index {i} must be an object.",
+                    is_error=True,
+                )
+                return
+            q_text = str(q.get("question", "")).strip()
+            if not q_text:
+                await self.append_tool_result(
+                    session_id,
+                    state,
+                    agent,
+                    tool_use,
+                    f"Question at index {i} has no question text.",
+                    is_error=True,
+                )
+                return
+            answers = q.get("guided_answers", [])
+            if not isinstance(answers, list):
+                await self.append_tool_result(
+                    session_id,
+                    state,
+                    agent,
+                    tool_use,
+                    f"Question at index {i} guided_answers must be a list.",
+                    is_error=True,
+                )
+                return
+
+        await self._client_comm.send_ask_request(session_id, questions)
         state.pending_ask_tool = {
             "tool_use": tool_use,
-            "question": question,
-            "guided_answers": normalized_answers,
+            "questions": questions,
         }
 
     async def resume_pending_ask(
@@ -330,13 +349,35 @@ class TurnExecutor:
         if not isinstance(tool_use, dict):
             state.pending_ask_tool = None
             return False
+        questions = pending_ask.get("questions", [])
         agent = self._get_agent(state.agent_name)
+
+        # Parse multi-answer response. Expected format:
+        # q0: <answer1>
+        # q1: <answer2>
+        import re as _re
+        parsed: dict[str, str] = {}
+        for line in answer.split("\n"):
+            line = line.strip()
+            m = _re.match(r"^q(\d+):\s*(.*)", line)
+            if m:
+                parsed[m.group(1)] = m.group(2)
+
+        # Build structured result
+        answer_lines = []
+        for i, q in enumerate(questions):
+            idx_str = str(i)
+            ans = parsed.get(idx_str, "(skipped)")
+            answer_lines.append(f"- {q.get('question', '?')}: {ans}")
+
+        result = "Answers:\n" + "\n".join(answer_lines)
+
         await self.append_tool_result(
             session_id,
             state,
             agent,
             tool_use,
-            f"User answered: {answer}",
+            result,
         )
         state.pending_ask_tool = None
         return True

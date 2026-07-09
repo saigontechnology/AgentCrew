@@ -89,40 +89,105 @@ class ConfirmationHandler:
         self._get_and_handle_tool_response(tool_use, confirmation_id, message_handler)
 
     def _handle_ask_tool(self, tool_use, confirmation_id, message_handler):
-        """Handle the ask tool - display question and guided answers."""
-        question = tool_use["input"].get("question", "")
-        guided_answers = tool_use["input"].get("guided_answers", [])
-        if isinstance(guided_answers, str):
-            guided_answers = guided_answers.strip("\n ").splitlines()
+        """Handle the ask tool - display one question at a time with navigation."""
+        questions = tool_use["input"].get("questions", [])
+        if isinstance(questions, str):
+            import json
+            try:
+                questions = json.loads(questions)
+            except (json.JSONDecodeError, TypeError):
+                questions = []
 
-        guided_answers.append("Custom your answer")
+        if not questions or not isinstance(questions, list):
+            questions = [{"question": "(missing questions)", "guided_answers": ["OK"]}]
+
+        # Normalize each question's guided_answers
+        for q in questions:
+            answers = q.get("guided_answers", [])
+            if isinstance(answers, str):
+                q["guided_answers"] = answers.strip("\n ").splitlines()
+
+        total = len(questions)
+        current_idx = 0
+        answers: dict[str, str] = {}
 
         self.input_handler._stop_input_thread()
-        # Display the question
-        self.console.print(
-            Text("\n❓ Agent is asking for clarification:", style=RICH_STYLE_BLUE_BOLD)
+
+        while current_idx < total:
+            q = questions[current_idx]
+            question_text = q.get("question", "")
+            guided_answers = list(q.get("guided_answers", []))
+
+            # Build navigation prefix
+            nav_prefix = f"[{current_idx + 1}/{total}] " if total > 1 else ""
+
+            guided_answers.append("Custom your answer")
+
+            self.console.print(
+                Text(
+                    f"\n❓ {nav_prefix}Agent is asking for clarification:",
+                    style=RICH_STYLE_BLUE_BOLD,
+                )
+            )
+
+            # Determine choices: answers + navigation + submit
+            choices = list(guided_answers)
+            if total > 1:
+                if current_idx > 0:
+                    choices.append("← Back")
+                if current_idx < total - 1:
+                    choices.append("Next →")
+                choices.append("Submit all answers")
+
+            response = self.input_handler.get_choice_input(
+                f"{nav_prefix}{question_text}", choices
+            )
+
+            if response == "Custom your answer":
+                custom_answer = self.input_handler.get_prompt_input(
+                    "Input your answer (Alt+Enter or Ctrl+S to submit):"
+                )
+                if custom_answer:
+                    answers[str(current_idx)] = custom_answer
+                current_idx += 1
+
+            elif response == "← Back":
+                current_idx -= 1
+
+            elif response == "Next →":
+                current_idx += 1
+
+            elif response == "Submit all answers":
+                break
+
+            elif response:
+                answers[str(current_idx)] = response
+                current_idx += 1
+
+            else:
+                # User cancelled mid-way
+                message_handler.resolve_tool_confirmation(
+                    confirmation_id,
+                    {"action": "answer", "answer": "Cancelled by user"},
+                )
+                self._ui.start_loading_animation()
+                self.input_handler._start_input_thread()
+                return
+
+        # Build structured result
+        answer_lines = []
+        for i, q in enumerate(questions):
+            idx_str = str(i)
+            ans = answers.get(idx_str, "(skipped)")
+            answer_lines.append(f"- {q['question']}: {ans}")
+
+        result = "Answers:\n" + "\n".join(answer_lines)
+
+        message_handler.resolve_tool_confirmation(
+            confirmation_id, {"action": "answer", "answer": result}
         )
-        response = self.input_handler.get_choice_input(f"{question}", guided_answers)
-
-        if response == "Custom your answer":
-            custom_answer = self.input_handler.get_prompt_input(
-                "Input your answer (Alt+Enter or Ctrl+S to submit):"
-            )
-            message_handler.resolve_tool_confirmation(
-                confirmation_id, {"action": "answer", "answer": custom_answer}
-            )
-        elif response:
-            message_handler.resolve_tool_confirmation(
-                confirmation_id, {"action": "answer", "answer": response}
-            )
-
-        else:
-            message_handler.resolve_tool_confirmation(
-                confirmation_id, {"action": "answer", "answer": "Cancelled by user"}
-            )
 
         self._ui.start_loading_animation()
-
         self.input_handler._start_input_thread()
 
     def _display_write_file_diff(self, tool_use, file_path, blocks):

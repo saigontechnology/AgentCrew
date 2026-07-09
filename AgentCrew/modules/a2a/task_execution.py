@@ -424,14 +424,13 @@ class TaskExecutionEngine:
         tool_use: dict[str, Any],
         task_history: list[dict[str, Any]],
     ) -> ToolCallResult:
-        question = tool_use["input"].get("question", "")
-        guided_answers = tool_use["input"].get("guided_answers", [])
+        questions = tool_use["input"].get("questions", [])
+        if not questions or not isinstance(questions, list):
+            questions = []
 
         task.status.state = TaskState.input_required
         task.status.timestamp = datetime.now().isoformat()
-        task.status.message = self.interaction.create_ask_message(
-            question, guided_answers
-        )
+        task.status.message = self.interaction.create_ask_message(questions)
 
         await self.store.save_task(task)
         await self.streaming.flush_task_events(task.id)

@@ -1,6 +1,7 @@
 """
 Ask tool for eliciting more details from users.
 This tool allows agents to request additional information from users with guided answer options.
+Supports multiple questions in a single call to reduce round trips.
 """
 
 from typing import Any, Callable
@@ -10,37 +11,48 @@ def get_ask_tool_definition() -> dict[str, Any]:
     """
     Get the definition for the ask tool.
 
-    Args:
-        provider: The LLM provider (claude, openai, google, etc.)
-
     Returns:
         The tool definition
     """
     tool_description = (
-        "Elicit more details from the user to better fulfill their request. "
-        "This tool allows you to ask clarifying questions with suggested answer options "
-        "to guide the user toward providing the information you need. "
-        "The user can select from the guided answers or provide a custom response."
+        "PRIMARY tool for gathering missing information — use when the request is "
+        "ambiguous, details are unclear, you hit a blocker, or need direction.\n\n"
+        "When the user presents a plan/design/proposal, interview relentlessly: "
+        "walk down each branch of the design tree, resolve dependencies one-by-one, "
+        "and provide your recommended answer as the first guided option.\n\n"
+        "Bundle up to 10 related questions in the `questions` array. "
+        "The user answers them one at a time and submits all at once."
     )
 
     tool_arguments = {
-        "question": {
-            "type": "string",
-            "description": "The question to ask the user. Be clear, specific, and concise.",
-        },
-        "guided_answers": {
+        "questions": {
             "type": "array",
-            "items": {"type": "string"},
-            "description": (
-                "A list of 3-6 suggested answers that guide the user. "
-                "These should cover the most common or expected responses. "
-            ),
-            "minItems": 3,
-            "maxItems": 6,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the user. Be clear, specific, and concise.",
+                    },
+                    "guided_answers": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "1-10 suggested answers. Put your recommended answer first. "
+                        ),
+                        "minItems": 1,
+                        "maxItems": 10,
+                    },
+                },
+                "required": ["question", "guided_answers"],
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "One or more questions to ask (up to 10). Use multiple entries to bundle related questions and reduce round trips.",
         },
     }
 
-    tool_required = ["question", "guided_answers"]
+    tool_required = ["questions"]
 
     return {
         "type": "function",
@@ -66,29 +78,22 @@ def ask_tool_prompt() -> str:
     return """
 <Ask_Tool_Instruction>
   <Purpose>
-    Use the `ask` tool when you need additional information or clarification from the user to complete their request effectively.
-    This tool helps you gather specific details through structured questioning with guided answer options.
-    When the user presents a plan, design, architecture, or proposal, use the `ask` tool to stress-test it through a focused interview until every important branch of the decision tree is resolved and both sides reach a shared understanding.
+    Your PRIMARY tool when anything is unclear, incomplete, or blocked.
+    Use it to:
+    - Resolve ambiguity or blockers before guessing
+    - Interview the user on plans/designs/proposals: walk each branch of the design tree,
+      resolve dependencies one-by-one, and provide your recommended answer as the first option
+    - Clarify specs, constraints, or choices where context is insufficient
+
+    Bundle up to 10 related questions in one call. The user sees them one at a time
+    and submits all answers together — reducing round trips.
   </Purpose>
 
-  <When_To_Use>
-    - User request is ambiguous or lacks critical details
-    - Multiple valid approaches exist and user preference is needed
-    - Confirmation is required before proceeding with a significant action
-    - Technical specifications or constraints need clarification
-    - Choice between options cannot be determined from context
-    - User presents a plan, design, architecture, proposal, or says they want to be grilled
-  </When_To_Use>
-
   <Best_Practices>
-    - Provide 3-6 guided answers that cover common scenarios
-    - Make guided answers clear, concise, and mutually exclusive
-    - Frame questions positively and professionally
-    - Ensure guided answers are actionable and relevant
-    - Prevent custom answer or user specify option
-    - Always use plain text
-    - Ask the smallest useful next question instead of bundling multiple decisions together
-    - Prefer a recommended answer that keeps the solution simple, consistent, and low-risk
+    - Default to `ask` when unclear — do not guess or assume
+    - Bundle related questions (up to 10), resolve one dependency at a time
+    - Put your recommended answer first; provide 2-6 clear, mutually exclusive options
+    - Ask the smallest useful question — don't bundle unrelated decisions
   </Best_Practices>
 </Ask_Tool_Instruction>
 """
@@ -111,32 +116,50 @@ def get_ask_tool_handler() -> Callable:
 
         This function doesn't directly interact with the user - that's handled
         by the UI layer through the confirmation flow. Instead, it prepares
-        the question and guided answers for presentation.
+        the questions for presentation.
 
         Args:
-            question: The question to ask the user
-            guided_answers: list of suggested answers
+            questions: list of {question, guided_answers} objects
 
         Returns:
-            A string describing the question (actual response comes from user)
+            A string describing the questions (actual response comes from user)
         """
-        question = params.get("question", "")
-        guided_answers = params.get("guided_answers", [])
+        questions = params.get("questions", [])
 
-        if not question:
-            raise ValueError("Error: No question provided")
-
-        if not guided_answers or len(guided_answers) < 3:
+        if not questions or not isinstance(questions, list):
             raise ValueError(
-                "Error: Must provide at least 3 guided answers for the user"
+                "Error: `questions` array is required with at least one {question, guided_answers} entry."
             )
 
-        if len(guided_answers) > 6:
-            raise ValueError("Error: Cannot provide more than 6 guided answers")
+        if len(questions) > 10:
+            raise ValueError(
+                "Error: Cannot ask more than 10 questions in a single call. "
+                "Limit to 10 questions."
+            )
+
+        for i, q in enumerate(questions):
+            if not isinstance(q, dict):
+                raise ValueError(f"Error: Question at index {i} must be an object")
+            question_text = q.get("question", "").strip()
+            guided_answers = q.get("guided_answers", [])
+
+            if not question_text:
+                raise ValueError(f"Error: Question at index {i} has no question text")
+
+            if not isinstance(guided_answers, list) or len(guided_answers) < 2:
+                raise ValueError(
+                    f"Error: Question at index {i} must have at least 2 guided answers"
+                )
+
+            if len(guided_answers) > 6:
+                raise ValueError(
+                    f"Error: Question at index {i} cannot have more than 6 guided answers"
+                )
 
         # This return value is a placeholder - the actual response
         # will be injected by the UI layer after user interaction
-        return f"Asking user: {question}"
+        count = len(questions)
+        return f"Asking user {count} question{'s' if count > 1 else ''}"
 
     return handler
 

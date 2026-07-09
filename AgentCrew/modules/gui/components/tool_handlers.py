@@ -453,40 +453,123 @@ class ToolEventHandler:
                 self.chat_window.display_status_message("Denied file edit")
 
     def _handle_ask_tool_confirmation(self, tool_use, confirmation_id):
-        """Handle the ask tool - display question and guided answers in GUI."""
-        question = tool_use["input"].get("question", "")
-        guided_answers = tool_use["input"].get("guided_answers", [])
-        if isinstance(guided_answers, str):
-            guided_answers = guided_answers.strip("\n ").splitlines()
+        """Handle the ask tool - display one question at a time with navigation in GUI."""
+        questions = tool_use["input"].get("questions", [])
+        if isinstance(questions, str):
+            import json
+            try:
+                questions = json.loads(questions)
+            except (json.JSONDecodeError, TypeError):
+                questions = []
 
-        # Create dialog
+        if not questions or not isinstance(questions, list):
+            questions = [{"question": "(missing questions)", "guided_answers": ["OK"]}]
+
+        # Normalize each question's guided_answers
+        for q in questions:
+            answers = q.get("guided_answers", [])
+            if isinstance(answers, str):
+                q["guided_answers"] = answers.strip("\n ").splitlines()
+
+        total = len(questions)
+        current_idx = 0
+        question_answers: dict[str, str] = {}
+
+        while current_idx < total:
+            q = questions[current_idx]
+            guided_answers = list(q.get("guided_answers", []))
+
+            dialog = self._build_multi_question_dialog(
+                questions, current_idx, question_answers
+            )
+
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                # Collect the answer for this question
+                custom_text = dialog._custom_input.toPlainText().strip()
+                selected = []
+                for i, cb in enumerate(dialog._checkboxes):
+                    if cb.isChecked():
+                        selected.append(guided_answers[i])
+
+                if custom_text:
+                    question_answers[str(current_idx)] = custom_text
+                elif selected:
+                    question_answers[str(current_idx)] = ", ".join(selected)
+
+                # Determine navigation action
+                action = getattr(dialog, "_nav_action", "next")
+                if action == "back" and current_idx > 0:
+                    current_idx -= 1
+                elif action == "submit":
+                    break
+                else:
+                    current_idx += 1
+            else:
+                # Dialog cancelled
+                self.chat_window.message_handler.resolve_tool_confirmation(
+                    confirmation_id,
+                    {"action": "answer", "answer": "Cancelled by user"},
+                )
+                return
+
+        # Build structured result
+        answer_lines = []
+        for i, q in enumerate(questions):
+            idx_str = str(i)
+            ans = question_answers.get(idx_str, "(skipped)")
+            answer_lines.append(f"- {q['question']}: {ans}")
+
+        result = "Answers:\n" + "\n".join(answer_lines)
+
+        self.chat_window.message_handler.resolve_tool_confirmation(
+            confirmation_id, {"action": "answer", "answer": result}
+        )
+
+        status_preview = result[:50] + "..." if len(result) > 50 else result
+        self.chat_window.display_status_message(f"Answered agent: {status_preview}")
+
+    def _build_multi_question_dialog(self, questions, current_idx, existing_answers):
+        """Build a dialog showing one question with navigation."""
+        from PySide6.QtWidgets import QCheckBox, QScrollArea, QWidget, QDialogButtonBox
+
+        total = len(questions)
+        q = questions[current_idx]
+        question_text = q.get("question", "")
+        guided_answers = list(q.get("guided_answers", []))
+
         dialog = QDialog(self.chat_window)
-        dialog.setWindowTitle("Agent Question")
+        nav_prefix = f"[{current_idx + 1}/{total}] " if total > 1 else ""
+        dialog.setWindowTitle(f"{nav_prefix}Agent Question")
         dialog.setMinimumWidth(600)
-        dialog.setMinimumHeight(400)
+        dialog.setMinimumHeight(450)
 
-        # Create layout
         layout = QVBoxLayout()
 
-        # Add question label
-        question_label = QLabel(f"❓ {question}")
+        # Progress indicator
+        if total > 1:
+            progress_label = QLabel(f"Question {current_idx + 1} of {total}")
+            progress_label.setStyleSheet(
+                "font-size: 11px; color: #888; padding: 2px 10px;"
+            )
+            layout.addWidget(progress_label)
+
+        # Question label
+        question_label = QLabel(f"❓ {nav_prefix}{question_text}")
         question_label.setWordWrap(True)
         question_label.setStyleSheet(
             "font-size: 14px; font-weight: bold; padding: 10px;"
         )
         layout.addWidget(question_label)
 
-        # Add instruction label
+        # Instruction
         instruction_label = QLabel(
-            "Select one or more options (hold Ctrl/Cmd for multiple), or provide a custom answer below:"
+            "Select an option or provide a custom answer below:"
         )
         instruction_label.setWordWrap(True)
         instruction_label.setStyleSheet("font-size: 12px; color: #888; padding: 5px;")
         layout.addWidget(instruction_label)
 
-        # Add guided answers as checkable buttons
-        from PySide6.QtWidgets import QCheckBox, QScrollArea, QWidget
-
+        # Radio-style answer buttons
         answers_container = QWidget()
         answers_layout = QVBoxLayout()
         checkboxes = []
@@ -499,72 +582,70 @@ class ToolEventHandler:
 
         answers_container.setLayout(answers_layout)
 
-        # Add scroll area for answers
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(answers_container)
-        scroll_area.setMinimumHeight(150)
+        scroll_area.setMinimumHeight(100)
         layout.addWidget(scroll_area)
 
-        # Add custom answer section
+        # Custom answer section
         custom_label = QLabel("Or provide a custom answer:")
-        custom_label.setStyleSheet("font-size: 12px; padding: 5px; margin-top: 10px;")
+        custom_label.setStyleSheet(
+            "font-size: 12px; padding: 5px; margin-top: 10px;"
+        )
         layout.addWidget(custom_label)
 
         custom_input = QTextEdit()
         custom_input.setPlaceholderText("Type your custom answer here...")
-        custom_input.setMinimumHeight(80)
+        custom_input.setMinimumHeight(60)
         custom_input.setStyleSheet(
             self.chat_window.style_provider.get_tool_dialog_text_edit_style()
         )
         layout.addWidget(custom_input)
 
-        # Add submit button
-        submit_button = QPushButton("Submit Answer")
-        submit_button.setStyleSheet(
-            self.chat_window.style_provider.get_tool_dialog_yes_button_style()
+        # Pre-fill if already answered
+        prev_answer = existing_answers.get(str(current_idx), "")
+        if prev_answer:
+            custom_input.setPlainText(prev_answer)
+
+        # Navigation buttons
+        button_box = QDialogButtonBox()
+        if current_idx > 0 and total > 1:
+            button_box.addButton("← Back", QDialogButtonBox.ButtonRole.ActionRole)
+        button_box.addButton(
+            "Next →" if current_idx < total - 1 else "Finish",
+            QDialogButtonBox.ButtonRole.ActionRole,
         )
-        layout.addWidget(submit_button)
+        if total > 1:
+            button_box.addButton(
+                "Submit all", QDialogButtonBox.ButtonRole.AcceptRole
+            )
+
+        layout.addWidget(button_box)
 
         dialog.setLayout(layout)
         dialog.setStyleSheet(self.chat_window.style_provider.get_config_window_style())
 
-        submit_shortcut = QShortcut(QKeySequence("Ctrl+Return"), dialog)
-        submit_shortcut.activated.connect(submit_button.click)
+        # Store references for result collection
+        dialog._checkboxes = checkboxes
+        dialog._custom_input = custom_input
+        dialog._nav_action = "next"
 
-        submit_button.clicked.connect(dialog.accept)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            custom_text = custom_input.toPlainText().strip()
-
-            if custom_text:
-                # User provided custom answer
-                final_answer = custom_text
+        # Wire up navigation
+        for btn in button_box.buttons():
+            text = btn.text()
+            if "←" in text:
+                btn.clicked.connect(lambda: setattr(dialog, "_nav_action", "back"))
+                btn.clicked.connect(dialog.accept)
+            elif "Submit all" in text:
+                btn.clicked.connect(lambda: setattr(dialog, "_nav_action", "submit"))
+                btn.clicked.connect(dialog.accept)
             else:
-                # Collect selected checkboxes
-                selected = [
-                    guided_answers[i]
-                    for i, cb in enumerate(checkboxes)
-                    if cb.isChecked()
-                ]
+                btn.clicked.connect(lambda: setattr(dialog, "_nav_action", "next"))
+                btn.clicked.connect(dialog.accept)
 
-                if not selected:
-                    final_answer = "Cancelled by user"
+        # Ctrl+Enter shortcut to submit
+        submit_shortcut = QShortcut(QKeySequence("Ctrl+Return"), dialog)
+        submit_shortcut.activated.connect(dialog.accept)
 
-                else:
-                    final_answer = ", ".join(selected)
-
-            # Resolve the confirmation with the answer
-            self.chat_window.message_handler.resolve_tool_confirmation(
-                confirmation_id, {"action": "answer", "answer": final_answer}
-            )
-
-            self.chat_window.display_status_message(
-                f"Answered agent question: {final_answer[:50]}..."
-                if len(final_answer) > 50
-                else f"Answered agent question: {final_answer}"
-            )
-        else:
-            # Resolve the confirmation with the answer
-            self.chat_window.message_handler.resolve_tool_confirmation(
-                confirmation_id, {"action": "answer", "answer": "Cancelled by user"}
-            )
+        return dialog

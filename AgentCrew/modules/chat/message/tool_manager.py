@@ -41,7 +41,7 @@ class ToolManager:
         tool_id = tool_use["id"]
 
         if tool_name == "ask":
-            self.message_handler._notify("tool_use", tool_use)
+            # self.message_handler._notify("tool_use", tool_use)
             try:
                 # Wait for user response through confirmation flow
                 user_response = await self._wait_for_tool_confirmation(tool_use)
@@ -49,7 +49,7 @@ class ToolManager:
                 # Format the user's answer as the tool result
                 if user_response.get("action") == "answer":
                     answer = user_response.get("answer", "")
-                    tool_result = f"User's answer: {answer}"
+                    tool_result = answer
                 else:
                     # User cancelled or error occurred
                     tool_result = "User cancelled the question."

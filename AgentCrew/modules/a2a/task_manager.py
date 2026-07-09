@@ -134,7 +134,7 @@ class AgentTaskManager(TaskManager):
                     ask_tool_use = pending["ask_tool_use"]
                     remaining_tools = pending["remaining_tools"]
 
-                    tool_result = f"User's answer: {user_response}"
+                    tool_result = user_response
                     tool_result_message = self.agent.format_message(
                         MessageType.ToolResult,
                         {"tool_use": ask_tool_use, "tool_result": tool_result},

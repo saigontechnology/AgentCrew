@@ -42,17 +42,28 @@ class ClientCommunication:
     async def send_ask_request(
         self,
         session_id: str,
-        question: str,
-        guided_answers: list[str],
+        questions: list[dict[str, Any]],
     ):
-        lines = [f"Question: {question}"]
-        if guided_answers:
-            lines.extend(["", "Guided answers:"])
-            lines.extend(
-                f"{index}. {answer}"
-                for index, answer in enumerate(guided_answers, start=1)
-            )
-        lines.extend(["", "Reply with one option or your own answer."])
+        """Send one or more questions to the client.
+
+        Args:
+            session_id: The ACP session ID
+            questions: list of {question, guided_answers} dicts
+        """
+        total = len(questions)
+        lines = [f"Agent has {total} question{'s' if total > 1 else ''}:"]
+        for i, q in enumerate(questions):
+            q_text = q.get("question", "")
+            answers = q.get("guided_answers", [])
+            lines.append(f"")
+            lines.append(f"{i + 1}. {q_text}")
+            if answers:
+                for j, ans in enumerate(answers, 1):
+                    lines.append(f"   {j}) {ans}")
+        lines.extend(["", "Reply with answers in the format:"])
+        for i in range(total):
+            lines.append(f"q{i}: <your answer for question {i + 1}>")
+        lines.append("Answer all questions in one response.")
         await self.send_agent_message(session_id, "\n".join(lines))
 
     async def send_current_mode_update(self, session_id: str, state: Any):
@@ -134,7 +145,7 @@ class ClientCommunication:
                     cost=Cost(amount=session_cost, currency="USD"),
                     size=context_size,
                     used=context_used,
-                    _meta={
+                    field_meta={
                         "input_tokens": token_usage.input_tokens,
                         "output_tokens": token_usage.output_tokens,
                         "cached_tokens": token_usage.cached_tokens,
