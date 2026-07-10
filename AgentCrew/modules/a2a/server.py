@@ -80,9 +80,11 @@ class A2AServer:
         @asynccontextmanager
         async def lifespan(app):
             await self.task_manager.initialize()
-            yield
-            await self.task_manager.close()
-            logger.info("A2A server stopped — task stores closed.")
+            try:
+                yield
+            finally:
+                await self.task_manager.close()
+                logger.info("A2A server stopped — task stores closed.")
 
         routes: list[BaseRoute] = [
             Route("/agents", self._list_agents, methods=["GET"]),

@@ -42,7 +42,11 @@ class TaskInteractionHandler:
             message_id=f"ask_{hash(first_q)}_{total}",
             role=Role.agent,
             parts=[
-                Part(root=TextPart(text=f"❓ Agent has {total} question{'s' if total > 1 else ''}")),
+                Part(
+                    root=TextPart(
+                        text=f"❓ Agent has {total} question{'s' if total > 1 else ''}"
+                    )
+                ),
                 Part(root=DataPart(data=ask_data)),
             ],
         )

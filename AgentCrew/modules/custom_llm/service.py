@@ -44,13 +44,27 @@ class CustomLLMService(OpenAIService):
         if isinstance(raw_arguments, dict):
             return raw_arguments
         if not raw_arguments:
+            logger.warning(
+                f"_safe_json_loads: empty or null arguments (raw_arguments={raw_arguments!r})"
+            )
             return {}
         if isinstance(raw_arguments, str):
             try:
                 parsed_arguments = json.loads(raw_arguments)
-                return parsed_arguments if isinstance(parsed_arguments, dict) else {}
-            except json.JSONDecodeError:
+                if not isinstance(parsed_arguments, dict):
+                    logger.warning(
+                        f"_safe_json_loads: valid JSON but not a dict (type={type(parsed_arguments).__name__}, value={parsed_arguments!r})"
+                    )
+                    return {}
+                return parsed_arguments
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    f"_safe_json_loads: JSONDecodeError parsing arguments (error={e}, raw_arguments={raw_arguments!r})"
+                )
                 return {}
+        logger.warning(
+            f"_safe_json_loads: unexpected argument type (type={type(raw_arguments).__name__}, value={raw_arguments!r})"
+        )
         return {}
 
     @staticmethod
@@ -114,9 +128,13 @@ class CustomLLMService(OpenAIService):
             )
             return False
 
-        tool_input = self._safe_json_loads(
-            getattr(function, "arguments", "") if function else ""
-        )
+        raw_arguments = getattr(function, "arguments", "") if function else ""
+        if not raw_arguments:
+            logger.warning(
+                f"_append_non_stream_tool_call: tool '{tool_name}' has empty arguments "
+                f"(raw_arguments={raw_arguments!r}, tool_call_id={getattr(tool_call, 'id', None)})"
+            )
+        tool_input = self._safe_json_loads(raw_arguments)
         self._normalize_tool_input_values(tool_input)
         tool_uses.append(
             {
@@ -206,8 +224,18 @@ class CustomLLMService(OpenAIService):
                     if isinstance(parsed_arguments, dict):
                         self._normalize_tool_input_values(parsed_arguments)
                         tool_use["input"] = parsed_arguments
+                    else:
+                        logger.warning(
+                            f"_merge_stream_tool_call_delta: accumulated args_json parsed as non-dict "
+                            f"(type={type(parsed_arguments).__name__}, value={parsed_arguments!r}, "
+                            f"args_json={tool_use['args_json']!r})"
+                        )
                 except json.JSONDecodeError:
-                    pass
+                    logger.warning(
+                        f"_merge_stream_tool_call_delta: accumulated args_json still incomplete "
+                        f"(tool_name={tool_use.get('name')!r}, "
+                        f"args_json={tool_use.get('args_json', '')!r})"
+                    )
 
         return tool_call_index
 
@@ -575,12 +603,18 @@ class CustomLLMService(OpenAIService):
 
                 try:
                     tool_data = json.loads(tool_call_content)
+                    tool_name = tool_data.get("name", "")
                     tool_input = tool_data.get("arguments", {})
+                    if not tool_input:
+                        logger.warning(
+                            f"_process_non_stream_chunk (XML): tool '{tool_name}' has empty arguments "
+                            f"(tool_data={tool_data!r})"
+                        )
                     self._normalize_tool_input_values(tool_input)
                     tool_uses.append(
                         {
                             "id": f"toolu_{len(tool_uses)}",  # Generate an ID
-                            "name": tool_data.get("name", ""),
+                            "name": tool_name,
                             "input": tool_input,
                             "type": "function",
                             "response": "",
@@ -590,8 +624,10 @@ class CustomLLMService(OpenAIService):
                     # Remove the tool call from the response
                     content = content[:start_idx] + content[end_idx:]
                 except json.JSONDecodeError:
-                    # If we can't parse the JSON, just continue
-                    pass
+                    logger.warning(
+                        f"_process_non_stream_chunk (XML): JSONDecodeError parsing tool_call content "
+                        f"(tool_call_content={tool_call_content!r})"
+                    )
 
             # Regular response without tool calls
             return (

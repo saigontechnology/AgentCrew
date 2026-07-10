@@ -55,7 +55,7 @@ class ClientCommunication:
         for i, q in enumerate(questions):
             q_text = q.get("question", "")
             answers = q.get("guided_answers", [])
-            lines.append(f"")
+            lines.append("")
             lines.append(f"{i + 1}. {q_text}")
             if answers:
                 for j, ans in enumerate(answers, 1):
