@@ -538,10 +538,8 @@ When system access is requested:
   </Tool_Usage>
 </Delegate_Tool_Instruction>"""
 
-    def get_context_awareness_prompt(self, max_context_token: int) -> str:
-        return f"""<Context_Awareness_Instruction>
-  <Max_Context_Length>{max_context_token} tokens</Max_Context_Length>
-
+    def get_context_awareness_prompt(self) -> str:
+        return """<Context_Awareness_Instruction>
   <Tool_Result_Retention>
     Tool results may be truncated or removed from context later to stay within the token limit. 
     After each tool result blocks, your next generated message must include a short brief summary in 10-20 words of the key findings from those tool results.

@@ -93,9 +93,9 @@ You must analyze and plan out the steps then execute it with your available tool
         if adaptive_sections:
             adaptive_messages.append(
                 (
-                    "## Adaptive Behaviors\n"
+                    "## Current Behaviors\n"
                     "### How to Apply\n"
-                    "Each behavior follows the format: `when [condition], do [action steps]`.\n"
+                    "Each behavior follows the format: `when [condition], [action steps]`.\n"
                     "- **Condition matching**: At the start of every task, scan all behaviors. If the current task matches a condition, apply its action steps.\n"
                     "- **Multiple matches**: Apply all matching behaviors. Project behaviors override global ones when they conflict.\n"
                     "- **What counts as a match**: The condition describes a triggering situation — project context, user preferences, task type, etc. Use your best judgment.\n\n"

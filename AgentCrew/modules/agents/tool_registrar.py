@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable
 from loguru import logger
-import os
 from AgentCrew.modules.tools.utils import extract_tool_name
 
 if TYPE_CHECKING:
@@ -159,14 +158,8 @@ class AgentToolRegistrar:
                 register_ask(agent)
                 agent.tool_prompts.append(ask_tool_prompt())
 
-            from AgentCrew.modules.llm.model_registry import ModelRegistry
-
-            max_ctx = os.getenv(
-                "AGENTCREW_DEFAULT_MAX_CONTEXT",
-                ModelRegistry.get_model_limit(agent.get_model()),
-            )
             agent.tool_prompts.append(
-                agent.services["agent_manager"].get_context_awareness_prompt(max_ctx)
+                agent.services["agent_manager"].get_context_awareness_prompt()
             )
 
     def register_tool(
