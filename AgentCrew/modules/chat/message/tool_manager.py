@@ -1,12 +1,17 @@
+from __future__ import annotations
+
 from typing import Any
 import asyncio
+import copy
 
 from loguru import logger
 from AgentCrew.modules.config.global_config import GlobalConfig
 
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.events import AppEvents, EventBus, HookRegistry, HookPoints
 from AgentCrew.modules.tools.parallel_executor import (
-    execute_tools_in_parallel,
+    ToolResult,
+    execute_tool_tasks_in_parallel,
     is_sequential_tool,
 )
 
@@ -14,12 +19,14 @@ from AgentCrew.modules.tools.parallel_executor import (
 class ToolManager:
     """Manages tool execution and confirmation."""
 
-    def __init__(self, message_handler):
-        from AgentCrew.modules.chat.message import MessageHandler
-
-        if isinstance(message_handler, MessageHandler):
-            self.message_handler = message_handler
-
+    def __init__(
+        self,
+        message_handler,
+        hooks: HookRegistry | None = None,
+    ):
+        self.message_handler = message_handler
+        self.bus = EventBus.get_instance()
+        self.hooks = hooks or HookRegistry(self.bus)
         self._auto_approved_tools = self._load_persistent_auto_approved_tools()
 
         self._pending_confirmations = {}  # Store futures for confirmation requests
@@ -35,13 +42,137 @@ class ToolManager:
         """Load persistent auto-approved tools from config."""
         return set(GlobalConfig().get_auto_approval_tools())
 
+    async def _execute_approved_tool(
+        self,
+        tool_use: dict[str, Any],
+    ) -> ToolResult:
+        requested_name = tool_use["name"]
+        requested_input = copy.deepcopy(tool_use["input"])
+        context = await self.hooks.run_before(
+            HookPoints.TOOL_EXECUTE,
+            agent_name=self.message_handler.agent.name,
+            tool_id=tool_use["id"],
+            tool_use=copy.deepcopy(tool_use),
+            requested_tool_name=requested_name,
+            requested_tool_input=copy.deepcopy(requested_input),
+            tool_name=requested_name,
+            tool_input=copy.deepcopy(requested_input),
+        )
+        if context is None:
+            message = (
+                f"Tool: {requested_name} with {tool_use['id']} was cancelled "
+                "by a tool.execute hook and was not executed."
+            )
+            return ToolResult(
+                tool_use=tool_use,
+                result=message,
+                is_error=True,
+                is_rejected=True,
+                was_executed=False,
+                resolved_name=requested_name,
+                resolved_input=requested_input,
+            )
+
+        resolved_name = context.get("tool_name", requested_name)
+        resolved_input = context.get("tool_input", requested_input)
+        context["resolved_tool_name"] = resolved_name
+        context["resolved_tool_input"] = copy.deepcopy(resolved_input)
+
+        try:
+            result_envelope: dict[str, Any] = {
+                "tool_result": await self.message_handler.agent.execute_tool_call(
+                    resolved_name, resolved_input
+                ),
+                "is_error": False,
+            }
+        except Exception as exc:
+            result_envelope = {
+                "tool_result": str(exc),
+                "is_error": True,
+            }
+
+        final_envelope = await self.hooks.run_after(
+            HookPoints.TOOL_EXECUTE,
+            result=result_envelope,
+            **context,
+        )
+        if isinstance(final_envelope, dict):
+            tool_result = final_envelope.get(
+                "tool_result", result_envelope["tool_result"]
+            )
+            is_error = bool(final_envelope.get("is_error", result_envelope["is_error"]))
+        else:
+            tool_result = final_envelope
+            is_error = result_envelope["is_error"]
+
+        return ToolResult(
+            tool_use=tool_use,
+            result=tool_result,
+            is_error=is_error,
+            resolved_name=resolved_name,
+            resolved_input=resolved_input,
+        )
+
+    def _record_tool_result(self, result: ToolResult) -> None:
+        tool_use = result.tool_use
+        if result.is_rejected:
+            result_message = self.message_handler.agent.format_message(
+                MessageType.ToolResult,
+                {
+                    "tool_use": tool_use,
+                    "tool_result": result.result,
+                    "is_rejected": True,
+                    "is_error": True,
+                },
+            )
+            self.message_handler._messages_append(result_message)
+            self.bus.emit_sync(
+                AppEvents.TOOL_DENIED,
+                tool_use=tool_use,
+                message=result.result,
+            )
+            return
+
+        if result.is_error:
+            result_message = self.message_handler.agent.format_message(
+                MessageType.ToolResult,
+                {
+                    "tool_use": tool_use,
+                    "tool_result": result.result,
+                    "is_error": True,
+                },
+            )
+            self.message_handler._messages_append(result_message)
+            self.bus.emit_sync(
+                AppEvents.TOOL_ERROR,
+                tool_use=tool_use,
+                error=result.result,
+                message=result_message,
+            )
+            return
+
+        if tool_use["name"] == "transfer":
+            self._post_tool_transfer(tool_use, result.result)
+            return
+
+        result_message = self.message_handler.agent.format_message(
+            MessageType.ToolResult,
+            {"tool_use": tool_use, "tool_result": result.result},
+        )
+        self.message_handler._messages_append(result_message)
+        self.bus.emit_sync(
+            AppEvents.TOOL_RESULT,
+            tool_use=tool_use,
+            tool_result=result.result,
+            message=result_message,
+        )
+
     async def execute_tool(self, tool_use: dict[str, Any]):
         """Execute a tool with proper confirmation flow."""
         tool_name = tool_use["name"]
         tool_id = tool_use["id"]
 
         if tool_name == "ask":
-            # self.message_handler._notify("tool_use", tool_use)
             try:
                 # Wait for user response through confirmation flow
                 user_response = await self._wait_for_tool_confirmation(tool_use)
@@ -60,13 +191,11 @@ class ToolManager:
                     {"tool_use": tool_use, "tool_result": tool_result},
                 )
                 self.message_handler._messages_append(tool_result_message)
-                self.message_handler._notify(
-                    "tool_result",
-                    {
-                        "tool_use": tool_use,
-                        "tool_result": tool_result,
-                        "message": tool_result_message,
-                    },
+                self.bus.emit_sync(
+                    AppEvents.TOOL_RESULT,
+                    tool_use=tool_use,
+                    tool_result=tool_result,
+                    message=tool_result_message,
                 )
             except Exception as e:
                 error_message = self.message_handler.agent.format_message(
@@ -78,13 +207,11 @@ class ToolManager:
                     },
                 )
                 self.message_handler._messages_append(error_message)
-                self.message_handler._notify(
-                    "tool_error",
-                    {
-                        "tool_use": tool_use,
-                        "error": str(e),
-                        "message": error_message,
-                    },
+                self.bus.emit_sync(
+                    AppEvents.TOOL_ERROR,
+                    tool_use=tool_use,
+                    error=str(e),
+                    message=error_message,
                 )
             return
 
@@ -114,12 +241,10 @@ class ToolManager:
                     },
                 )
                 self.message_handler._messages_append(error_message)
-                self.message_handler._notify(
-                    "tool_denied",
-                    {
-                        "tool_use": tool_use,
-                        "message": tool_result,
-                    },
+                self.bus.emit_sync(
+                    AppEvents.TOOL_DENIED,
+                    tool_use=tool_use,
+                    message=tool_result,
                 )
                 return  # Skip to the next tool
 
@@ -127,51 +252,9 @@ class ToolManager:
                 # Remember this tool for auto-approval
                 self._auto_approved_tools.add(tool_name)
 
-        # Tool is approved, execute it
-        self.message_handler._notify("tool_use", tool_use)
-
-        try:
-            tool_result = await self.message_handler.agent.execute_tool_call(
-                tool_name, tool_use["input"]
-            )
-
-            if tool_name == "transfer":
-                # Transfer tool needs post-transfer hook for agent switching
-                self._post_tool_transfer(tool_use, tool_result)
-                return
-
-            tool_result_message = self.message_handler.agent.format_message(
-                MessageType.ToolResult,
-                {"tool_use": tool_use, "tool_result": tool_result},
-            )
-            self.message_handler._messages_append(tool_result_message)
-            self.message_handler._notify(
-                "tool_result",
-                {
-                    "tool_use": tool_use,
-                    "tool_result": tool_result,
-                    "message": tool_result_message,
-                },
-            )
-
-        except Exception as e:
-            error_message = self.message_handler.agent.format_message(
-                MessageType.ToolResult,
-                {
-                    "tool_use": tool_use,
-                    "tool_result": str(e),
-                    "is_error": True,
-                },
-            )
-            self.message_handler._messages_append(error_message)
-            self.message_handler._notify(
-                "tool_error",
-                {
-                    "tool_use": tool_use,
-                    "error": str(e),
-                    "message": error_message,
-                },
-            )
+        self.bus.emit_sync(AppEvents.TOOL_USE, **tool_use)
+        result = await self._execute_approved_tool(tool_use)
+        self._record_tool_result(result)
 
     async def _wait_for_tool_confirmation(self, tool_use):
         """
@@ -190,8 +273,11 @@ class ToolManager:
         self._pending_confirmations[confirmation_id] = {"approval": "pending"}
 
         # Notify UI that confirmation is required
-        tool_info = {**tool_use, "confirmation_id": confirmation_id}
-        self.message_handler._notify("tool_confirmation_required", tool_info)
+        self.bus.emit_sync(
+            AppEvents.TOOL_CONFIRMATION_REQ,
+            tool_use=tool_use,
+            confirmation_id=confirmation_id,
+        )
 
         try:
             while self._pending_confirmations[confirmation_id]["approval"] == "pending":
@@ -275,9 +361,10 @@ class ToolManager:
             self.message_handler.streamline_messages
         )
 
-        self.message_handler._notify(
-            "agent_changed_by_transfer",
-            {"tool_use": tool_use, "agent_name": self.message_handler.agent.name},
+        self.bus.emit_sync(
+            AppEvents.AGENT_CHANGED_BY_TRANSFER,
+            tool_use=tool_use,
+            agent_name=self.message_handler.agent.name,
         )
 
     async def execute_tools_batch(self, tool_uses: list[dict[str, Any]]):
@@ -307,46 +394,15 @@ class ToolManager:
             return
 
         for tool_use in approved:
-            self.message_handler._notify("tool_use", tool_use)
+            self.bus.emit_sync(AppEvents.TOOL_USE, **tool_use)
 
-        results = await execute_tools_in_parallel(
+        results = await execute_tool_tasks_in_parallel(
             approved,
-            self.message_handler.agent.execute_tool_call,
+            self._execute_approved_tool,
         )
 
-        for r in results:
-            if r.is_error:
-                error_message = self.message_handler.agent.format_message(
-                    MessageType.ToolResult,
-                    {
-                        "tool_use": r.tool_use,
-                        "tool_result": r.result,
-                        "is_error": True,
-                    },
-                )
-                self.message_handler._messages_append(error_message)
-                self.message_handler._notify(
-                    "tool_error",
-                    {
-                        "tool_use": r.tool_use,
-                        "error": r.result,
-                        "message": error_message,
-                    },
-                )
-            else:
-                result_msg = self.message_handler.agent.format_message(
-                    MessageType.ToolResult,
-                    {"tool_use": r.tool_use, "tool_result": r.result},
-                )
-                self.message_handler._messages_append(result_msg)
-                self.message_handler._notify(
-                    "tool_result",
-                    {
-                        "tool_use": r.tool_use,
-                        "tool_result": r.result,
-                        "message": result_msg,
-                    },
-                )
+        for result in results:
+            self._record_tool_result(result)
 
     async def _needs_and_gets_approval(self, tool_use: dict[str, Any]) -> str:
         tool_name = tool_use["name"]
@@ -376,12 +432,10 @@ class ToolManager:
                 },
             )
             self.message_handler._messages_append(error_message)
-            self.message_handler._notify(
-                "tool_denied",
-                {
-                    "tool_use": tool_use,
-                    "message": tool_result,
-                },
+            self.bus.emit_sync(
+                AppEvents.TOOL_DENIED,
+                tool_use=tool_use,
+                message=tool_result,
             )
             return "denied"
 

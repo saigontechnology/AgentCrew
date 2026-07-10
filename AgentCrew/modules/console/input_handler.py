@@ -285,7 +285,7 @@ class InputHandler:
                 self.display_handlers.print_divider("👤 YOU: ", with_time=True)
 
     def get_choice_input(self, message: str, values: list[str], default=None) -> str:
-        from prompt_toolkit.shortcuts import choice
+        from prompt_toolkit.shortcuts.choice_input import ChoiceInput
         from prompt_toolkit.styles import Style
 
         style = Style.from_dict(
@@ -301,7 +301,7 @@ class InputHandler:
         def _(event):
             event.app.exit(result="", style="class:accepted")
 
-        return choice(
+        choice_input = ChoiceInput(
             message=HTML(f"<ansiyellow>{message}</ansiyellow> "),
             options=[(v, v) for v in values],
             default=default,
@@ -309,6 +309,16 @@ class InputHandler:
             key_bindings=kb,
             show_frame=True,
         )
+        app = choice_input._create_application()
+        original_exit = app.exit
+
+        def safe_exit(*args, **kwargs):
+            # Ignore late callbacks after the ChoiceInput app has completed.
+            if app.is_running and not app.is_done:
+                original_exit(*args, **kwargs)
+
+        app.exit = safe_exit
+        return app.run()
 
     def get_prompt_input(self, prompt_message: str, default: str = "") -> str:
         from prompt_toolkit import prompt

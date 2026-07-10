@@ -93,6 +93,7 @@ class ConfirmationHandler:
         questions = tool_use["input"].get("questions", [])
         if isinstance(questions, str):
             import json
+
             try:
                 questions = json.loads(questions)
             except (json.JSONDecodeError, TypeError):

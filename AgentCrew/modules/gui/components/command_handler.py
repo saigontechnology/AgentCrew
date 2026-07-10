@@ -345,169 +345,141 @@ class CommandHandler:
 
         return text[: max_length - 3] + "..."
 
-    def handle_event(self, event: str, data: Any) -> bool:
-        """
-        Handle command-related events. Returns True if event was processed, False otherwise.
-        """
-        if event == "clear_requested":
-            self.chat_window.chat_components.clear_chat_ui()
-            self.chat_window.session_cost = 0.0
-            self.chat_window.token_usage.update_token_info(0, 0, 0, 0.0, 0.0)
-            self.chat_window.chat_components.add_system_message(
-                "Welcome! Select a past conversation or start a new one."
-            )
-            self.chat_window.chat_components.add_system_message(
-                "Press Ctrl+Enter to send, Ctrl+Shift+C to copy, Ctrl+L to clear chat."
-            )
-            self.chat_window.loading_conversation = False
-            self.chat_window.ui_state_manager.set_input_controls_enabled(True)
-            self.chat_window.sidebar.update_conversation_list()
-            return True
+    def handle_clear_event(self):
+        self.chat_window.chat_components.clear_chat_ui()
+        self.chat_window.session_cost = 0.0
+        self.chat_window.token_usage.update_token_info(0, 0, 0, 0.0, 0.0)
+        self.chat_window.chat_components.add_system_message(
+            "Welcome! Select a past conversation or start a new one."
+        )
+        self.chat_window.chat_components.add_system_message(
+            "Press Ctrl+Enter to send, Ctrl+Shift+C to copy, Ctrl+L to clear chat."
+        )
+        self.chat_window.loading_conversation = False
+        self.chat_window.ui_state_manager.set_input_controls_enabled(True)
+        self.chat_window.sidebar.update_conversation_list()
 
-        elif event == "exit_requested":
-            QApplication.quit()
-            return True
+    def handle_exit_requested(self):
+        QApplication.quit()
 
-        elif event == "debug_requested":
-            if isinstance(data, dict) and data.get("type") == "system":
-                self.chat_window.chat_components.add_system_message(
-                    "DEBUG - System Prompt:\n\n"
-                    f"```text\n{data.get('system_prompt') or ''}\n```"
+    def handle_debug_requested(self, data: dict):
+        if data.get("type") == "system":
+            self.chat_window.chat_components.add_system_message(
+                "DEBUG - System Prompt:\n\n"
+                f"```text\n{data.get('system_prompt') or ''}\n```"
+            )
+        elif "type" in data and "messages" in data:
+            title = "Agent Messages" if data["type"] == "agent" else "Chat Messages"
+            self._display_debug_messages(title, data["messages"])
+
+    def handle_agent_changed(self, agent_name: str):
+        self.chat_window.chat_components.add_system_message(
+            f"Switched to {agent_name} agent"
+        )
+        self.chat_window.status_indicator.setText(
+            f"Agent: {agent_name} | Model: {self.chat_window.message_handler.agent.get_model()}"
+        )
+
+    def handle_agent_command_result(self, data: dict):
+        self.chat_window.ui_state_manager.set_input_controls_enabled(True)
+
+    def handle_model_changed(self, data: dict):
+        self.chat_window.chat_components.add_system_message(
+            f"Switched to {data['name']} ({data['id']})"
+        )
+        self.chat_window.status_indicator.setText(
+            f"Agent: {self.chat_window.message_handler.agent.name} | Model: {self.chat_window.message_handler.agent.get_model()}"
+        )
+
+    def handle_think_budget_set(self, budget):
+        self.chat_window.chat_components.add_system_message(
+            f"Set thinking budget at {budget}"
+        )
+        self.chat_window.ui_state_manager.set_input_controls_enabled(True)
+
+    def handle_jump_performed(self, data: dict):
+        self.chat_window.chat_components.add_system_message(
+            f"🕰️ Jumped to turn {data['turn_number']}: {data['preview']}"
+        )
+
+    def handle_fork_and_switch(self, data: dict):
+        self.chat_window.chat_components.add_system_message(
+            f"🍴 Forked at turn {data['turn_number']}: {data['preview']}"
+        )
+
+    def handle_evolution_started(self, data: dict):
+        agent_name = data.get("agent_name", "Agent")
+        self.chat_window.chat_components.add_system_message(
+            f"🧬 Starting prompt evolution for {agent_name}..."
+        )
+        self.chat_window.display_status_message(f"Evolving {agent_name} prompt...")
+        self.chat_window.ui_state_manager.set_input_controls_enabled(False)
+        if self._evolution_loading_dialog is None:
+            self._evolution_loading_dialog = EvolutionLoadingDialog(
+                self.chat_window, agent_name=agent_name
+            )
+        else:
+            self._evolution_loading_dialog.set_agent_name(agent_name)
+        self._evolution_loading_dialog.show()
+        self._evolution_loading_dialog.raise_()
+        self._evolution_loading_dialog.activateWindow()
+
+    def handle_evolution_summary(self, data: dict):
+        from AgentCrew.modules.gui.widgets.evolution_review_dialog import (
+            EvolutionReviewDialog,
+        )
+
+        self._hide_evolution_loading_dialog()
+        dialog = EvolutionReviewDialog(
+            self.chat_window,
+            agent_name=data.get("agent_name", ""),
+            summary=data.get("user_editable_summary", ""),
+            analysis_summary=data.get("analysis_summary"),
+            source_memory_count=data.get("source_memory_count", 0),
+        )
+        if dialog.exec():
+            summary = dialog.get_summary()
+            if summary:
+                self.chat_window.llm_worker.process_evolution_action.emit(
+                    "edit", summary
                 )
-            elif isinstance(data, dict) and "type" in data and "messages" in data:
-                msg_type = data["type"]
-                messages = data["messages"]
-                title = "Agent Messages" if msg_type == "agent" else "Chat Messages"
-                self._display_debug_messages(title, messages)
-            return True
-
-        elif event == "agent_changed":
-            self.chat_window.chat_components.add_system_message(
-                f"Switched to {data} agent"
-            )
-            self.chat_window.status_indicator.setText(
-                f"Agent: {data} | Model: {self.chat_window.message_handler.agent.get_model()}"
-            )
-        elif event == "agent_command_result":
-            self.chat_window.ui_state_manager.set_input_controls_enabled(True)
-            return True
-
-        elif event == "model_changed":
-            self.chat_window.chat_components.add_system_message(
-                f"Switched to {data['name']} ({data['id']})"
-            )
-            self.chat_window.status_indicator.setText(
-                f"Agent: {self.chat_window.message_handler.agent.name} | Model: {self.chat_window.message_handler.agent.get_model()}"
-            )
-            return True
-
-        # elif event == "agent_changed_by_transfer":
-        #     self.chat_window.chat_components.add_system_message(
-        #         f"Transfered to {data} agent"
-        #     )
-        #     self.chat_window.status_indicator.setText(
-        #         f"Agent: {data} | Model: {self.chat_window.message_handler.agent.get_model()}"
-        #     )
-        #     self.chat_window.bubble_state.current_response_bubble = None
-        #     self.chat_window.bubble_state.current_response_container = None
-        #     return True
-
-        elif event == "think_budget_set":
-            self.chat_window.chat_components.add_system_message(
-                f"Set thinking budget at {data}"
-            )
-            self.chat_window.ui_state_manager.set_input_controls_enabled(True)
-            return True
-
-        elif event == "jump_performed":
-            self.chat_window.chat_components.add_system_message(
-                f"🕰️ Jumped to turn {data['turn_number']}: {data['preview']}"
-            )
-            return True
-        elif event == "evolution_started":
-            agent_name = (
-                data.get("agent_name", "Agent") if isinstance(data, dict) else "Agent"
-            )
-            self.chat_window.chat_components.add_system_message(
-                f"🧬 Starting prompt evolution for {agent_name}..."
-            )
-            self.chat_window.display_status_message(f"Evolving {agent_name} prompt...")
-            self.chat_window.ui_state_manager.set_input_controls_enabled(False)
-            if self._evolution_loading_dialog is None:
-                self._evolution_loading_dialog = EvolutionLoadingDialog(
-                    self.chat_window, agent_name=agent_name
-                )
-            else:
-                self._evolution_loading_dialog.set_agent_name(agent_name)
-            self._evolution_loading_dialog.show()
-            self._evolution_loading_dialog.raise_()
-            self._evolution_loading_dialog.activateWindow()
-            return True
-        elif event == "evolution_summary_ready":
-            from AgentCrew.modules.gui.widgets.evolution_review_dialog import (
-                EvolutionReviewDialog,
-            )
-
-            self._hide_evolution_loading_dialog()
-
-            dialog = EvolutionReviewDialog(
-                self.chat_window,
-                agent_name=data.get("agent_name", ""),
-                summary=data.get("user_editable_summary", ""),
-                analysis_summary=data.get("analysis_summary"),
-                source_memory_count=data.get("source_memory_count", 0),
-            )
-            if dialog.exec():
-                summary = dialog.get_summary()
-                if summary:
-                    self.chat_window.llm_worker.process_evolution_action.emit(
-                        "edit", summary
-                    )
-                    self.chat_window.ui_state_manager.set_input_controls_enabled(False)
-                else:
-                    self.chat_window.llm_worker.process_evolution_action.emit(
-                        "decline", ""
-                    )
-                    self.chat_window.ui_state_manager.set_input_controls_enabled(True)
+                self.chat_window.ui_state_manager.set_input_controls_enabled(False)
             else:
                 self.chat_window.llm_worker.process_evolution_action.emit("decline", "")
                 self.chat_window.ui_state_manager.set_input_controls_enabled(True)
-            return True
-        elif event == "evolution_applied":
-            self._hide_evolution_loading_dialog()
-            self.chat_window.chat_components.add_system_message(
-                f"Updated persisted system prompt for {data['agent_name']}."
-            )
-            self.chat_window.chat_components.add_diff_system_message(
-                f"🧬 Prompt evolution result for {data['agent_name']}",
-                data.get("previous_system_prompt", ""),
-                data.get("revised_system_prompt", ""),
-            )
-            self.chat_window.display_status_message(
-                f"Prompt evolution applied for {data['agent_name']}"
-            )
+        else:
+            self.chat_window.llm_worker.process_evolution_action.emit("decline", "")
             self.chat_window.ui_state_manager.set_input_controls_enabled(True)
-            return True
-        elif event == "evolution_declined":
-            self._hide_evolution_loading_dialog()
-            self.chat_window.chat_components.add_system_message(
-                "Prompt evolution declined."
-            )
-            self.chat_window.display_status_message("Prompt evolution declined")
-            self.chat_window.ui_state_manager.set_input_controls_enabled(True)
-            return True
-        elif event == "learn_behavior_confirmation":
-            self._handle_learn_behavior_confirmation(data)
-            return True
-        elif event == "evolution_finished":
-            self._hide_evolution_loading_dialog()
-            self.chat_window.display_status_message(
-                "Prompt evolution processing finished"
-            )
-            return True
 
-        # Event not handled by command handler
-        return False
+    def handle_evolution_applied(self, data: dict):
+        self._hide_evolution_loading_dialog()
+        self.chat_window.chat_components.add_system_message(
+            f"Updated persisted system prompt for {data['agent_name']}."
+        )
+        self.chat_window.chat_components.add_diff_system_message(
+            f"🧬 Prompt evolution result for {data['agent_name']}",
+            data.get("previous_system_prompt", ""),
+            data.get("revised_system_prompt", ""),
+        )
+        self.chat_window.display_status_message(
+            f"Prompt evolution applied for {data['agent_name']}"
+        )
+        self.chat_window.ui_state_manager.set_input_controls_enabled(True)
+
+    def handle_evolution_declined(self):
+        self._hide_evolution_loading_dialog()
+        self.chat_window.chat_components.add_system_message(
+            "Prompt evolution declined."
+        )
+        self.chat_window.display_status_message("Prompt evolution declined")
+        self.chat_window.ui_state_manager.set_input_controls_enabled(True)
+
+    def handle_learn_confirmation(self, data: dict):
+        self._handle_learn_behavior_confirmation(data)
+
+    def handle_evolution_finished(self):
+        self._hide_evolution_loading_dialog()
+        self.chat_window.display_status_message("Prompt evolution processing finished")
 
     def _handle_learn_behavior_confirmation(self, data: Any):
         """Handle learn behavior confirmation request from the /learn command."""

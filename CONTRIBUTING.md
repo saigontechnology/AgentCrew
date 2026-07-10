@@ -111,7 +111,8 @@ For feature requests:
 
 - **Modularity**: Keep components loosely coupled
 - **Single Responsibility**: Each class/function should have one clear purpose
-- **Observer Pattern**: Use the existing Observable/Observer pattern for events
+- **EventBus**: Publish events through the application-owned `EventBus` using `AppEvents` constants and normalized keyword payloads documented in `EVENT_PAYLOAD_MAP`
+- **Hooks**: Register `tool.execute` hooks through the application-owned `HookRegistry`; only `before` and `after` phases are supported
 - **Service-Oriented**: Follow the existing service-based architecture
 - **Configuration-Driven**: Make features configurable when possible
 

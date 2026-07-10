@@ -1,4 +1,5 @@
 from __future__ import annotations
+from AgentCrew.modules.events import AppEvents
 from typing import Any
 
 from loguru import logger
@@ -50,19 +51,19 @@ class ConversationManager:
                 self.message_handler.agent.current_task_id = None
 
             # Notify UI about the new conversation
-            self.message_handler._notify(
-                "system_message",
-                f"Started new conversation: {self.message_handler.current_conversation_id}",
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE,
+                message=f"Started new conversation: {self.message_handler.current_conversation_id}",
             )
             # Re-use existing signal to clear UI display, ensures UI is reset
-            self.message_handler._notify("clear_requested")
+            self.message_handler.bus.emit_sync(AppEvents.CLEAR_REQUESTED)
             logger.info(
                 f"INFO: Started new persistent conversation {self.message_handler.current_conversation_id}"
             )
         except Exception as e:
             error_message = f"Failed to start new persistent conversation: {str(e)}"
             logger.warning(f"Warning: {error_message}")
-            self.message_handler._notify("error", {"message": error_message})
+            self.message_handler.bus.emit_sync(AppEvents.ERROR, message=error_message)
             self.message_handler.current_conversation_id = None
 
     def store_conversation_turn(self, user_input, input_index):
@@ -81,7 +82,9 @@ class ConversationManager:
             return []
         except Exception as e:
             logger.error(f"Error listing conversations: {e}")
-            self.message_handler._notify("error", f"Failed to list conversations: {e}")
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Failed to list conversations: {e}"
+            )
             return []
 
     def load_conversation(self, conversation_id: str) -> list[dict[str, Any]] | None:
@@ -119,7 +122,9 @@ class ConversationManager:
                     self.message_handler.agent = (
                         self.message_handler.agent_manager.get_current_agent()
                     )
-                    self.message_handler._notify("agent_changed", last_agent_name)
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.AGENT_CHANGED, agent_name=last_agent_name
+                    )
 
                 if self.message_handler.memory_service:
                     self.message_handler.memory_service.session_id = (
@@ -184,24 +189,24 @@ class ConversationManager:
                     )
                     self.message_handler.agent.token_usage = token_usage
 
-                self.message_handler._notify(
-                    "conversation_loaded",
-                    {
-                        "id": conversation_id,
-                        "history": history,
-                        "token_usage": token_usage,
-                    },
+                self.message_handler.bus.emit_sync(
+                    AppEvents.CONVERSATION_LOADED,
+                    id=conversation_id,
+                    history=history,
+                    token_usage=token_usage,
                 )
                 return history
             else:
-                self.message_handler._notify(
-                    "error", f"Conversation {conversation_id} not found or empty."
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message=f"Conversation {conversation_id} not found or empty.",
                 )
                 return []
         except Exception as e:
             logger.error(f"Error loading conversation {conversation_id}: {e}")
-            self.message_handler._notify(
-                "error", f"Failed to load conversation {conversation_id}: {e}"
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR,
+                message=f"Failed to load conversation {conversation_id}: {e}",
             )
 
     def delete_conversation_by_id(self, conversation_id: str) -> bool:
@@ -241,9 +246,10 @@ class ConversationManager:
                         f"WARNING: Failed to delete memories for conversation {conversation_id}: {memory_result.get('message')}"
                     )
 
-            self.message_handler._notify("conversations_changed", None)
-            self.message_handler._notify(
-                "system_message", f"Conversation {conversation_id[:8]}... deleted."
+            self.message_handler.bus.emit_sync(AppEvents.CONVERSATIONS_CHANGED)
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE,
+                message=f"Conversation {conversation_id[:8]}... deleted.",
             )
 
             if self.message_handler.current_conversation_id == conversation_id:
@@ -255,7 +261,7 @@ class ConversationManager:
         else:
             error_msg = f"Failed to delete conversation {conversation_id[:8]}..."
             logger.error(f"ERROR: {error_msg}")
-            self.message_handler._notify("error", {"message": error_msg})
+            self.message_handler.bus.emit_sync(AppEvents.ERROR, message=error_msg)
             return False
 
     def fork_conversation(self, turn_number: int) -> str | None:
@@ -277,21 +283,24 @@ class ConversationManager:
             if turn_number < 1 or turn_number > len(
                 self.message_handler.conversation_turns
             ):
-                self.message_handler._notify(
-                    "error",
-                    f"Invalid turn number. Available turns: 1-{len(self.message_handler.conversation_turns)}",
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message=f"Invalid turn number. Available turns: 1-{len(self.message_handler.conversation_turns)}",
                 )
                 return None
 
             # Check if we have a current conversation
             if not self.message_handler.current_conversation_id:
-                self.message_handler._notify("error", "No active conversation to fork.")
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR, message="No active conversation to fork."
+                )
                 return None
 
             # Check if persistence service is available
             if not self.message_handler.persistent_service:
-                self.message_handler._notify(
-                    "error", "Persistence service not available for forking."
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message="Persistence service not available for forking.",
                 )
                 return None
 
@@ -310,38 +319,36 @@ class ConversationManager:
                 # Get preview for notification
                 preview = selected_turn.get_preview(100)
 
-                self.message_handler._notify(
-                    "fork_created",
-                    {
-                        "new_conversation_id": new_conversation_id,
-                        "parent_conversation_id": self.message_handler.current_conversation_id,
-                        "turn_number": turn_number,
-                        "preview": preview,
-                    },
+                self.message_handler.bus.emit_sync(
+                    AppEvents.FORK_CREATED,
+                    new_conversation_id=new_conversation_id,
+                    parent_conversation_id=self.message_handler.current_conversation_id,
+                    turn_number=turn_number,
+                    preview=preview,
                 )
 
-                self.message_handler._notify(
-                    "system_message",
-                    f"Forked conversation at turn {turn_number}. New ID: {new_conversation_id[:8]}...",
+                self.message_handler.bus.emit_sync(
+                    AppEvents.SYSTEM_MESSAGE,
+                    message=f"Forked conversation at turn {turn_number}. New ID: {new_conversation_id[:8]}...",
                 )
 
                 # Notify that conversations list changed
-                self.message_handler._notify("conversations_changed", None)
+                self.message_handler.bus.emit_sync(AppEvents.CONVERSATIONS_CHANGED)
 
                 logger.info(
                     f"INFO: Forked conversation {self.message_handler.current_conversation_id} at turn {turn_number} -> {new_conversation_id}"
                 )
                 return new_conversation_id
             else:
-                self.message_handler._notify(
-                    "error", "Failed to create conversation fork."
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR, message="Failed to create conversation fork."
                 )
                 return None
 
         except Exception as e:
             logger.error(f"Error forking conversation: {e}")
-            self.message_handler._notify(
-                "error", f"Failed to fork conversation: {str(e)}"
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Failed to fork conversation: {str(e)}"
             )
             return None
 

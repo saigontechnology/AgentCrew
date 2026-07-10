@@ -88,6 +88,7 @@ class AgentCrewApplication:
         from AgentCrew.modules.console import ConsoleUI
         from AgentCrew.modules.chat import MessageHandler
         from AgentCrew.modules.mcpclient import MCPSessionManager
+        import asyncio
 
         try:
             if provider is None:
@@ -110,11 +111,18 @@ class AgentCrewApplication:
             self.setup.setup_agents(services, agent_config)
             self.setup.restore_last_agent()
 
+            # Initialize plugins (non-blocking — errors logged, not fatal)
+            try:
+                asyncio.run(self.setup.initialize_plugins())
+            except Exception:
+                logger.exception("Failed to initialize plugins (continuing)")
+
             message_handler = MessageHandler(
                 services["memory"],
                 services["context_persistent"],
                 with_voice,
                 services.get("voice"),
+                hooks=self.setup.hooks,
             )
             global_config = GlobalConfig().read()
 
@@ -127,6 +135,10 @@ class AgentCrewApplication:
             logger.exception("Failed to run console mode")
             click.echo(f"❌ Error: {str(e)}", err=True)
         finally:
+            try:
+                asyncio.run(self.setup.shutdown_plugins())
+            except Exception:
+                logger.exception("Failed to unload plugins")
             MCPSessionManager.get_instance().cleanup()
 
     def run_gui(
@@ -144,6 +156,7 @@ class AgentCrewApplication:
         from AgentCrew.modules.gui import ChatWindow
         from AgentCrew.modules.chat import MessageHandler
         from AgentCrew.modules.mcpclient import MCPSessionManager
+        import asyncio
 
         try:
             if provider is None:
@@ -170,11 +183,18 @@ class AgentCrewApplication:
             self.setup.setup_agents(services, agent_config)
             self.setup.restore_last_agent()
 
+            # Initialize plugins in GUI mode (lazy — errors logged, not fatal)
+            try:
+                asyncio.run(self.setup.initialize_plugins())
+            except Exception:
+                logger.exception("Failed to initialize plugins (continuing)")
+
             message_handler = MessageHandler(
                 services["memory"],
                 services["context_persistent"],
                 with_voice,
                 services.get("voice"),
+                hooks=self.setup.hooks,
             )
 
             # Pre-initialize the ChromaDB memory collection on the main thread.
@@ -202,6 +222,10 @@ class AgentCrewApplication:
             logger.exception("Failed to run GUI mode")
             click.echo(f"❌ Error: {str(e)}", err=True)
         finally:
+            try:
+                asyncio.run(self.setup.shutdown_plugins())
+            except Exception:
+                logger.exception("Failed to unload plugins")
             MCPSessionManager.get_instance().cleanup()
 
     def run_server(
@@ -561,8 +585,6 @@ class AgentCrewApplication:
                     with open(token_usage_path, "w") as f:
                         json.dump(asdict(token_usage), f, indent=2)
 
-                MCPSessionManager.get_instance().cleanup()
-
                 if not output_schema or not schema_dict:
                     return response.strip()
                 return self._clean_json_response(response).strip() if response else ""
@@ -572,6 +594,8 @@ class AgentCrewApplication:
         except Exception:
             logger.exception("Failed to run job")
             raise
+        finally:
+            MCPSessionManager.get_instance().cleanup()
 
     def login(self) -> bool:
         return self.setup.login()

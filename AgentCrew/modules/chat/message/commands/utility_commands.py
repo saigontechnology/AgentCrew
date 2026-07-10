@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from AgentCrew.modules.events import AppEvents
 from datetime import datetime
 from typing import Any, TYPE_CHECKING
 
@@ -32,40 +33,45 @@ class UtilityCommands:
             )
             if current_budget is not None:
                 if current_budget == 0:
-                    self.message_handler._notify(
-                        "system_message", "Thinking mode is currently disabled."
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE,
+                        message="Thinking mode is currently disabled.",
                     )
                 else:
-                    self.message_handler._notify(
-                        "system_message",
-                        f"Thinking budget is currently set to {current_budget} tokens.",
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE,
+                        message=f"Thinking budget is currently set to {current_budget} tokens.",
                     )
             else:
                 reasoning_effort = getattr(
                     self.message_handler.agent.llm, "reasoning_effort", None
                 )
                 if reasoning_effort:
-                    self.message_handler._notify(
-                        "system_message",
-                        f"Reasoning effort is currently set to: {reasoning_effort}",
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE,
+                        message=f"Reasoning effort is currently set to: {reasoning_effort}",
                     )
                 else:
-                    self.message_handler._notify(
-                        "system_message",
-                        "Thinking mode is not available for the current model.",
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE,
+                        message="Thinking mode is not available for the current model.",
                     )
-            self.message_handler._notify(
-                "system_message", "Usage: /think <budget> (0 to disable)"
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE,
+                message="Usage: /think <budget> (0 to disable)",
             )
             return CommandResult(handled=True, clear_flag=True)
 
         try:
             budget = parts[1]
             self.message_handler.agent.configure_think(budget)
-            self.message_handler._notify("think_budget_set", budget)
+            self.message_handler.bus.emit_sync(
+                AppEvents.THINK_BUDGET_SET, budget=budget
+            )
         except ValueError:
-            self.message_handler._notify(
-                "error", "Invalid budget value. Please provide a number."
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR,
+                message="Invalid budget value. Please provide a number.",
             )
         return CommandResult(handled=True, clear_flag=True)
 
@@ -157,27 +163,31 @@ class UtilityCommands:
                 return CommandResult(handled=True, clear_flag=True)
             usage = await llm.get_usage()
             message = self._format_usage_message(usage)
-            self.message_handler._notify("system_message", message)
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE, message=message
+            )
         except Exception as e:
             logger.debug(f"Usage retrieval failed: {e}")
-            self.message_handler._notify("error", f"Failed to retrieve usage: {str(e)}")
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Failed to retrieve usage: {str(e)}"
+            )
         return CommandResult(handled=True, clear_flag=True)
 
     async def handle_clean_behaviors(self, user_input: str) -> CommandResult:
         try:
             context_service = self.message_handler.persistent_service
             if not context_service:
-                self.message_handler._notify(
-                    "error", "Context persistence service not available"
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR, message="Context persistence service not available"
                 )
                 return CommandResult(handled=True, clear_flag=True)
 
             parts = user_input.split(maxsplit=1)
             scope = parts[1].strip().lower() if len(parts) > 1 else "global"
             if scope not in ("global", "project"):
-                self.message_handler._notify(
-                    "system_message",
-                    "⚠️  Scope must be 'global' or 'project'. Defaulting to 'global'.",
+                self.message_handler.bus.emit_sync(
+                    AppEvents.SYSTEM_MESSAGE,
+                    message="⚠️  Scope must be 'global' or 'project'. Defaulting to 'global'.",
                 )
                 scope = "global"
 
@@ -188,19 +198,22 @@ class UtilityCommands:
             )
 
             if not behaviors:
-                self.message_handler._notify(
-                    "system_message", f"ℹ️  No {scope} behaviors to clean."
+                self.message_handler.bus.emit_sync(
+                    AppEvents.SYSTEM_MESSAGE,
+                    message=f"ℹ️  No {scope} behaviors to clean.",
                 )
                 return CommandResult(handled=True, clear_flag=True)
 
             llm_service = self.message_handler.agent.llm
             if not llm_service:
-                self.message_handler._notify("error", "LLM service not available")
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR, message="LLM service not available"
+                )
                 return CommandResult(handled=True, clear_flag=True)
 
-            self.message_handler._notify(
-                "system_message",
-                f"🔄 Normalizing {len(behaviors)} {scope} behavior(s)...",
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE,
+                message=f"🔄 Normalizing {len(behaviors)} {scope} behavior(s)...",
             )
             old_behaviors, normalized = await context_service.clean_adaptive_behaviors(
                 agent_name, llm_service, is_local=is_local
@@ -212,10 +225,14 @@ class UtilityCommands:
             message = f"✅ Cleaned {scope} behaviors: {len(old_behaviors)} → {len(normalized)} entries"
             if removed or added:
                 message += f" (merged/removed: {len(removed)}, new IDs: {len(added)})"
-            self.message_handler._notify("system_message", message)
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE, message=message
+            )
         except Exception as e:
             logger.error(f"clean behaviors error: {str(e)}", exc_info=True)
-            self.message_handler._notify("error", f"Error cleaning behaviors: {str(e)}")
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Error cleaning behaviors: {str(e)}"
+            )
         return CommandResult(handled=True, clear_flag=True)
 
     def handle_debug(self, user_input: str) -> CommandResult:
@@ -232,31 +249,31 @@ class UtilityCommands:
         valid_filters = ("agent", "chat", "system")
 
         if filter_type and filter_type not in valid_filters:
-            self.message_handler._notify(
-                "error",
-                f"Invalid filter '{filter_type}'. Use 'agent', 'chat', or 'system'.",
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR,
+                message=f"Invalid filter '{filter_type}'. Use 'agent', 'chat', or 'system'.",
             )
             return CommandResult(handled=True, clear_flag=True)
 
         if filter_type is None or filter_type == "agent":
-            self.message_handler._notify(
-                "debug_requested",
-                {"type": "agent", "messages": self.message_handler.agent.clean_history},
+            self.message_handler.bus.emit_sync(
+                AppEvents.DEBUG_REQUESTED,
+                type="agent",
+                messages=self.message_handler.agent.clean_history,
             )
 
         if filter_type is None or filter_type == "chat":
-            self.message_handler._notify(
-                "debug_requested",
-                {"type": "chat", "messages": self.message_handler.streamline_messages},
+            self.message_handler.bus.emit_sync(
+                AppEvents.DEBUG_REQUESTED,
+                type="chat",
+                messages=self.message_handler.streamline_messages,
             )
 
         if filter_type == "system" and self.message_handler.agent.llm:
-            self.message_handler._notify(
-                "debug_requested",
-                {
-                    "type": "system",
-                    "system_prompt": self.message_handler.agent.llm.get_system_prompt(),
-                },
+            self.message_handler.bus.emit_sync(
+                AppEvents.DEBUG_REQUESTED,
+                type="system",
+                system_prompt=self.message_handler.agent.llm.get_system_prompt(),
             )
 
         return CommandResult(handled=True, clear_flag=True)

@@ -1,5 +1,3 @@
-from typing import Any
-
 from PySide6.QtWidgets import QApplication
 from AgentCrew.modules.chat.agent_evaluation import parse_agent_evaluation
 
@@ -12,30 +10,6 @@ class MessageEventHandler:
 
         if isinstance(chat_window, ChatWindow):
             self.chat_window = chat_window
-
-    def handle_event(self, event: str, data: Any):
-        """Handle a message-related event."""
-        if event == "response_chunk":
-            self.handle_response_chunk(data)
-        elif event == "user_message_created":
-            self.handle_user_message_created(data)
-        elif event == "response_completed" or event == "assistant_message_added":
-            self.handle_response_completed(data)
-        elif event == "thinking_started":
-            self.handle_thinking_started(data)
-        elif event == "thinking_chunk":
-            if data.strip():
-                self.handle_thinking_chunk(data)
-        elif event == "thinking_completed":
-            self.handle_thinking_completed()
-        elif event == "stream_cancel_requested":
-            self.handle_stream_cancel_requested()
-        elif event == "stream_canceled":
-            self.handle_stream_canceled(data)
-        elif event == "stream_open_timeout":
-            self.handle_stream_open_timeout(data)
-        elif event == "user_context_request":
-            self.handle_user_context_request()
 
     def _update_planning_widget(self, planning_content: str):
         if not planning_content.strip():

@@ -245,7 +245,9 @@ Inside the chat interface, type:
 ## Next Steps
 
 - **[CONFIGURATION.md](CONFIGURATION.md)** — Detailed setup for providers,
-  agents, MCP servers, and advanced options
+  agents, MCP servers, plugins, and advanced options
+- **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** — Build plugins with
+  EventBus subscriptions and `tool.execute` hooks
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — How to build and contribute to
   AgentCrew
 - **[Docker guide](docker/DOCKER.md)** — Running AgentCrew in containers

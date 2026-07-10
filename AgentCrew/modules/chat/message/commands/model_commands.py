@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from AgentCrew.modules.events import AppEvents
 from typing import Tuple, TYPE_CHECKING
 
 from AgentCrew.modules.config.global_config import GlobalConfig
@@ -48,7 +49,9 @@ class ModelCommands:
                             }
                         )
 
-            self.message_handler._notify("models_listed", models_by_provider)
+            self.message_handler.bus.emit_sync(
+                AppEvents.MODELS_LISTED, models_by_provider=models_by_provider
+            )
             return False, True
 
         if registry.set_current_model(model_id):
@@ -65,13 +68,19 @@ class ModelCommands:
                 except Exception as e:
                     print(f"Warning: Failed to save last used model: {e}")
 
-                self.message_handler._notify(
-                    "model_changed",
-                    {"id": model.id, "name": model.name, "provider": model.provider},
+                self.message_handler.bus.emit_sync(
+                    AppEvents.MODEL_CHANGED,
+                    id=model.id,
+                    name=model.name,
+                    provider=model.provider,
                 )
             else:
-                self.message_handler._notify("error", "Failed to switch model.")
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR, message="Failed to switch model."
+                )
         else:
-            self.message_handler._notify("error", f"Unknown model: {model_id}")
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Unknown model: {model_id}"
+            )
 
         return False, True

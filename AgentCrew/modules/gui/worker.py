@@ -1,5 +1,6 @@
 import traceback
 from AgentCrew.modules.chat.message_handler import MessageHandler
+from AgentCrew.modules.events import AppEvents
 import asyncio
 import threading
 from PySide6.QtCore import (
@@ -80,8 +81,8 @@ class LLMWorker(QObject):
             else:
                 logger.info("No response received from assistant")
                 self.status_message.emit("No response received")
-                self.message_handler._notify(
-                    "error", "No response received from assistant"
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR, message="No response received from assistant"
                 )
 
         except Exception as e:

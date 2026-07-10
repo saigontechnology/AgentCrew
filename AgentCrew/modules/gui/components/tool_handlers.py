@@ -1,4 +1,3 @@
-from typing import Any
 from PySide6.QtWidgets import (
     QMessageBox,
     QTextEdit,
@@ -78,24 +77,15 @@ class ToolEventHandler:
             return reason_edit.toPlainText().strip()
         return None
 
-    def handle_event(self, event: str, data: Any):
-        """Handle a tool-related event."""
-        if event == "tool_use":
-            self.handle_tool_use(data)
-        elif event == "tool_result":
-            self.handle_tool_result(data)
-        elif event == "agent_changed_by_transfer":
-            data["tool_result"] = f"Transfered to Agent: {data['agent_name']}"
-            self.handle_tool_result(data)
-            self.chat_window.status_indicator.setText(
-                f"Agent: {data['agent_name']} | Model: {self.chat_window.message_handler.agent.get_model()}"
-            )
-        elif event == "tool_error":
-            self.handle_tool_error(data)
-        elif event == "tool_confirmation_required":
-            self.handle_tool_confirmation_required(data)
-        elif event == "tool_denied":
-            self.handle_tool_denied(data)
+    def handle_agent_changed_by_transfer(self, data: dict):
+        transfer_data = {
+            **data,
+            "tool_result": f"Transfered to Agent: {data['agent_name']}",
+        }
+        self.handle_tool_result(transfer_data)
+        self.chat_window.status_indicator.setText(
+            f"Agent: {data['agent_name']} | Model: {self.chat_window.message_handler.agent.get_model()}"
+        )
 
     def handle_tool_use(self, tool_use: dict):
         """Display information about a tool being used."""
@@ -457,6 +447,7 @@ class ToolEventHandler:
         questions = tool_use["input"].get("questions", [])
         if isinstance(questions, str):
             import json
+
             try:
                 questions = json.loads(questions)
             except (json.JSONDecodeError, TypeError):
@@ -562,9 +553,7 @@ class ToolEventHandler:
         layout.addWidget(question_label)
 
         # Instruction
-        instruction_label = QLabel(
-            "Select an option or provide a custom answer below:"
-        )
+        instruction_label = QLabel("Select an option or provide a custom answer below:")
         instruction_label.setWordWrap(True)
         instruction_label.setStyleSheet("font-size: 12px; color: #888; padding: 5px;")
         layout.addWidget(instruction_label)
@@ -590,9 +579,7 @@ class ToolEventHandler:
 
         # Custom answer section
         custom_label = QLabel("Or provide a custom answer:")
-        custom_label.setStyleSheet(
-            "font-size: 12px; padding: 5px; margin-top: 10px;"
-        )
+        custom_label.setStyleSheet("font-size: 12px; padding: 5px; margin-top: 10px;")
         layout.addWidget(custom_label)
 
         custom_input = QTextEdit()
@@ -617,9 +604,7 @@ class ToolEventHandler:
             QDialogButtonBox.ButtonRole.ActionRole,
         )
         if total > 1:
-            button_box.addButton(
-                "Submit all", QDialogButtonBox.ButtonRole.AcceptRole
-            )
+            button_box.addButton("Submit all", QDialogButtonBox.ButtonRole.AcceptRole)
 
         layout.addWidget(button_box)
 

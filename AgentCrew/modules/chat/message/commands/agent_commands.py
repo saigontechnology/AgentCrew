@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from AgentCrew.modules.events import AppEvents
 from typing import Tuple, TYPE_CHECKING
 
 from AgentCrew.modules.chat.message.commands.base import CommandResult
@@ -36,7 +37,9 @@ class AgentCommands:
                     ),
                 }
 
-            self.message_handler._notify("agents_listed", agents_info)
+            self.message_handler.bus.emit_sync(
+                AppEvents.AGENTS_LISTED, agents=agents_info
+            )
             return True, "Listed available agents"
 
         agent_name = parts[1]
@@ -57,15 +60,17 @@ class AgentCommands:
             except Exception as e:
                 print(f"Warning: Failed to save last used agent: {e}")
 
-            self.message_handler._notify("agent_changed", agent_name)
+            self.message_handler.bus.emit_sync(
+                AppEvents.AGENT_CHANGED, agent_name=agent_name
+            )
             return True, f"Switched to {agent_name} agent"
         else:
             available_agents = ", ".join(
                 self.message_handler.agent_manager.agents.keys()
             )
-            self.message_handler._notify(
-                "error",
-                f"Unknown agent: {agent_name}. Available agents: {available_agents}",
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR,
+                message=f"Unknown agent: {agent_name}. Available agents: {available_agents}",
             )
             return (
                 False,
@@ -89,16 +94,20 @@ class AgentCommands:
             self.message_handler.agent.activate()
 
             status = "enabled" if new_mode == AgentMode.TRANSFER else "disabled"
-            self.message_handler._notify(
-                "system_message", f"🔄 Transfer enforcement is now {status}."
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE,
+                message=f"🔄 Transfer enforcement is now {status}.",
             )
-            self.message_handler._notify("transfer_enforce_toggled", status)
+            self.message_handler.bus.emit_sync(
+                AppEvents.TRANSFER_ENFORCE_TOGGLE, status=status
+            )
 
             return CommandResult(handled=True, clear_flag=True)
 
         except Exception as e:
-            self.message_handler._notify(
-                "error", f"Failed to toggle transfer enforcement: {str(e)}"
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR,
+                message=f"Failed to toggle transfer enforcement: {str(e)}",
             )
             return CommandResult(handled=True, clear_flag=True)
 
@@ -111,9 +120,9 @@ class AgentCommands:
 
             if len(parts) == 1:
                 current = self.message_handler.agent_manager.agent_mode.value
-                self.message_handler._notify(
-                    "system_message",
-                    f"🤖 Current agent mode: **{current}**\n"
+                self.message_handler.bus.emit_sync(
+                    AppEvents.SYSTEM_MESSAGE,
+                    message=f"🤖 Current agent mode: **{current}**\n"
                     f"Options: transfer, delegate, none",
                 )
                 return CommandResult(handled=True, clear_flag=True)
@@ -122,9 +131,9 @@ class AgentCommands:
             try:
                 new_mode = AgentMode(mode_str)
             except ValueError:
-                self.message_handler._notify(
-                    "error",
-                    f"Invalid mode '{mode_str}'. Options: transfer, delegate, none",
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message=f"Invalid mode '{mode_str}'. Options: transfer, delegate, none",
                 )
                 return CommandResult(handled=True, clear_flag=True)
 
@@ -133,15 +142,15 @@ class AgentCommands:
             self.message_handler.agent.deactivate()
             self.message_handler.agent.activate()
 
-            self.message_handler._notify(
-                "system_message",
-                f"🔄 Agent mode switched to: **{new_mode.value}**",
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE,
+                message=f"🔄 Agent mode switched to: **{new_mode.value}**",
             )
 
             return CommandResult(handled=True, clear_flag=True)
 
         except Exception as e:
-            self.message_handler._notify(
-                "error", f"Failed to switch agent mode: {str(e)}"
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Failed to switch agent mode: {str(e)}"
             )
             return CommandResult(handled=True, clear_flag=True)

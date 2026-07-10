@@ -20,7 +20,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import QIcon
-from AgentCrew.modules.chat.message_handler import Observer
+from AgentCrew.modules.events import AppEvents, EventBus
 from loguru import logger
 
 from AgentCrew.modules.gui.widgets.system_message import SystemMessageWidget
@@ -61,9 +61,8 @@ class StreamState:
     delegated_user_input: str | None = None
 
 
-class ChatWindow(QMainWindow, Observer):
-    # Signal for thread-safe event handling
-    event_received = Signal(str, object)
+class ChatWindow(QMainWindow):
+    ui_call_requested = Signal(object, object, object)
     # # Widgets
     status_indicator: QLabel
     chat_scroll: QScrollArea
@@ -104,7 +103,8 @@ class ChatWindow(QMainWindow, Observer):
 
         # Initialize MessageHandler - kept in main thread
         self.message_handler = message_handler
-        self.message_handler.attach(self)
+        self.bus = EventBus.get_instance()
+        self._subscriptions: list[Any] = []
 
         # Track if we're waiting for a response
         self.waiting_for_response = False
@@ -180,8 +180,7 @@ class ChatWindow(QMainWindow, Observer):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
-        # Connect event handling signal
-        self.event_received.connect(self.handle_event)
+        self.ui_call_requested.connect(self._run_ui_call)
 
         # Setup keyboard handling after all UI components are ready
         self.keyboard_handler._setup_shortcuts()
@@ -227,6 +226,7 @@ class ChatWindow(QMainWindow, Observer):
         self.chat_components.add_system_message(
             "Tip: Ctrl+Enter to send, Ctrl+Shift+C to copy, Ctrl+L to clear chat."
         )
+        self._register_subscriptions()
 
     def reset_bubble_state(self, **overrides):
         self.bubble_state = BubbleState(**overrides)
@@ -264,7 +264,9 @@ class ChatWindow(QMainWindow, Observer):
 
     def closeEvent(self, event):
         """Handle window close event to clean up threads properly"""
-        # Terminate worker thread properly
+        for subscription in self._subscriptions:
+            self.bus.off(subscription)
+        self._subscriptions.clear()
         self.llm_thread.quit()
         self.llm_thread.wait(1000)  # Wait up to 1 second for thread to finish
         # If the thread didn't quit cleanly, terminate it
@@ -490,183 +492,358 @@ class ChatWindow(QMainWindow, Observer):
         self.ui_state_manager.set_input_controls_enabled(False)
         self.display_status_message("Unconsolidating messages...")
 
-    def listen(self, event: str, data: Any = None):
-        """Handle events from the message handler."""
-        # Use a signal to ensure thread-safety
-        self.event_received.emit(event, data)
-
-    def eventFilter(self, obj, event):
-        """Event filter to handle double-click on splitter handle."""
-        if (
-            obj is self.splitter.handle(1)
-            and event.type() == event.Type.MouseButtonDblClick
-        ):
-            self.toggleSidebar()
-            return True
-        return super().eventFilter(obj, event)
-
-    def toggleSidebar(self):
-        # Get current sizes
-        sizes = self.splitter.sizes()
-        if sizes[0] > 0:
-            # If sidebar is visible, hide it
-            self.splitter.setSizes([0, sum(sizes)])
-        else:
-            # If sidebar is hidden, show it
-            self.splitter.setSizes([250, max(sum(sizes) - 250, 0)])
-
-    @Slot(str, object)
-    def handle_event(self, event: str, data: Any):
-        # Delegate to appropriate event handlers
-        message_events = [
-            "response_chunk",
-            "user_message_created",
-            "response_completed",
-            "assistant_message_added",
-            "thinking_started",
-            "thinking_chunk",
-            "thinking_completed",
-            "stream_cancel_requested",
-            "stream_canceled",
-            "stream_open_timeout",
-            "user_context_request",
+    def _register_subscriptions(self):
+        self._subscriptions = [
+            self.bus.on(AppEvents.THINKING_STARTED, self._on_thinking_started),
+            self.bus.on(AppEvents.THINKING_CHUNK, self._on_thinking_chunk),
+            self.bus.on(AppEvents.THINKING_COMPLETED, self._on_thinking_completed),
+            self.bus.on(AppEvents.RESPONSE_CHUNK, self._on_response_chunk),
+            self.bus.on(AppEvents.RESPONSE_COMPLETED, self._on_response_completed),
+            self.bus.on(
+                AppEvents.ASSISTANT_MESSAGE_ADDED, self._on_assistant_message_added
+            ),
+            self.bus.on(
+                AppEvents.STREAM_CANCEL_REQUESTED, self._on_stream_cancel_requested
+            ),
+            self.bus.on(AppEvents.STREAM_CANCELED, self._on_stream_canceled),
+            self.bus.on(AppEvents.STREAM_OPEN_TIMEOUT, self._on_stream_open_timeout),
+            self.bus.on(AppEvents.STREAMING_STOPPED, self._on_streaming_stopped),
+            self.bus.on(AppEvents.TOOL_USE, self._on_tool_use),
+            self.bus.on(AppEvents.TOOL_RESULT, self._on_tool_result),
+            self.bus.on(AppEvents.TOOL_ERROR, self._on_tool_error),
+            self.bus.on(AppEvents.TOOL_CONFIRMATION_REQ, self._on_tool_confirmation),
+            self.bus.on(AppEvents.TOOL_DENIED, self._on_tool_denied),
+            self.bus.on(AppEvents.CLEAR_REQUESTED, self._on_clear_requested),
+            self.bus.on(AppEvents.FILE_PROCESSING, self._on_file_processing),
+            self.bus.on(AppEvents.FILE_PROCESSED, self._on_file_processed),
+            self.bus.on(AppEvents.FILE_DROPPED, self._on_file_dropped),
+            self.bus.on(AppEvents.IMAGE_GENERATED, self._on_image_generated),
+            self.bus.on(AppEvents.CONVERSATIONS_LISTED, self._on_conversations_listed),
+            self.bus.on(AppEvents.CONVERSATION_LOADED, self._on_conversation_loaded),
+            self.bus.on(AppEvents.CONVERSATION_SAVED, self._on_conversation_saved),
+            self.bus.on(
+                AppEvents.CONVERSATIONS_CHANGED, self._on_conversations_changed
+            ),
+            self.bus.on(
+                AppEvents.CONSOLIDATION_COMPLETED, self._on_consolidation_completed
+            ),
+            self.bus.on(
+                AppEvents.UNCONSOLIDATION_COMPLETED, self._on_unconsolidation_completed
+            ),
+            self.bus.on(AppEvents.AGENT_CHANGED, self._on_agent_changed),
+            self.bus.on(
+                AppEvents.AGENT_CHANGED_BY_TRANSFER, self._on_agent_changed_by_transfer
+            ),
+            self.bus.on(AppEvents.AGENTS_LISTED, self._on_agents_listed),
+            self.bus.on(AppEvents.MODEL_CHANGED, self._on_model_changed),
+            self.bus.on(AppEvents.MODELS_LISTED, self._on_models_listed),
+            self.bus.on(AppEvents.EVOLUTION_STARTED, self._on_evolution_started),
+            self.bus.on(AppEvents.EVOLUTION_FINISHED, self._on_evolution_finished),
+            self.bus.on(AppEvents.EVOLUTION_SUMMARY, self._on_evolution_summary),
+            self.bus.on(AppEvents.EVOLUTION_APPLIED, self._on_evolution_applied),
+            self.bus.on(AppEvents.EVOLUTION_DECLINED, self._on_evolution_declined),
+            self.bus.on(AppEvents.ERROR, self._on_error),
+            self.bus.on(AppEvents.SYSTEM_MESSAGE, self._on_system_message),
+            self.bus.on(AppEvents.DEBUG_REQUESTED, self._on_debug_requested),
+            self.bus.on(AppEvents.THINK_BUDGET_SET, self._on_think_budget_set),
+            self.bus.on(AppEvents.UPDATE_TOKEN_USAGE, self._on_update_token_usage),
+            self.bus.on(AppEvents.JUMP_PERFORMED, self._on_jump_performed),
+            self.bus.on(AppEvents.FORK_AND_SWITCH, self._on_fork_and_switch),
+            self.bus.on(AppEvents.LEARN_CONFIRMATION, self._on_learn_confirmation),
+            self.bus.on(AppEvents.MCP_PROMPT, self._on_mcp_prompt),
+            self.bus.on(
+                AppEvents.VOICE_RECORDING_STARTED, self._on_voice_recording_started
+            ),
+            self.bus.on(AppEvents.VOICE_ACTIVATE, self._on_voice_activate),
+            self.bus.on(
+                AppEvents.VOICE_RECORDING_STOPPING, self._on_voice_recording_stopping
+            ),
+            self.bus.on(
+                AppEvents.VOICE_RECORDING_COMPLETED, self._on_voice_recording_completed
+            ),
+            self.bus.on(
+                AppEvents.TRANSFER_ENFORCE_TOGGLE, self._on_transfer_enforce_toggled
+            ),
+            self.bus.on(AppEvents.AGENT_COMMAND_RESULT, self._on_agent_command_result),
+            self.bus.on(AppEvents.USER_MESSAGE_CREATED, self._on_user_message_created),
         ]
 
-        tool_events = [
-            "tool_use",
-            "tool_result",
-            "tool_error",
-            "tool_confirmation_required",
-            "tool_denied",
-            "agent_changed_by_transfer",
-        ]
-        command_events = [
-            "clear_requested",
-            "exit_requested",
-            "debug_requested",
-            "agent_changed",
-            "agent_command_result",
-            "model_changed",
-            "think_budget_set",
-            "jump_performed",
-            "evolution_started",
-            "evolution_finished",
-            "evolution_summary_ready",
-            "evolution_applied",
-            "evolution_declined",
-            "learn_behavior_confirmation",
-        ]
+    def _queue_ui(self, handler, *args, **kwargs):
+        self.ui_call_requested.emit(handler, args, kwargs)
 
-        if event in message_events:
-            # make sure file bubble is cleared if we are processing a new message
-            if self.bubble_state.current_file_bubble:
-                self.bubble_state.current_file_bubble = None
-            self.message_event_handler.handle_event(event, data)
-        elif event in tool_events:
-            self.tool_event_handler.handle_event(event, data)
-        elif event in command_events:
-            self.command_handler.handle_event(event, data)
-        elif event == "error":
-            # If an error occurs during LLM processing, ensure loading flag is false
-            self.loading_conversation = False
-            self.ui_state_manager.set_input_controls_enabled(True)
-            if self.bubble_state.current_file_bubble:
-                self.chat_components.remove_messages_after(
-                    self.bubble_state.current_file_bubble
-                )
-                self.bubble_state.current_file_bubble = None
-            self.display_error(data)
-        elif event == "consolidation_completed":
-            self.conversation_components.display_consolidation(data)
-            self.ui_state_manager.set_input_controls_enabled(True)
-        elif event == "unconsolidation_completed":
-            self.conversation_components.display_unconsolidation(data)
-            self.ui_state_manager.set_input_controls_enabled(True)
-        elif event == "file_processing":
-            file_path = data["file_path"]
-            self.bubble_state.current_file_bubble = self.chat_components.append_file(
-                file_path, is_user=True
+    @Slot(object, object, object)
+    def _run_ui_call(self, handler, args, kwargs):
+        handler(*args, **kwargs)
+
+    def _on_thinking_started(self, agent_name: str):
+        self._queue_ui(self.message_event_handler.handle_thinking_started, agent_name)
+
+    def _on_thinking_chunk(self, chunk: str):
+        if chunk.strip():
+            self._queue_ui(self.message_event_handler.handle_thinking_chunk, chunk)
+
+    def _on_thinking_completed(self, content: str):
+        self._queue_ui(self.message_event_handler.handle_thinking_completed)
+
+    def _on_response_chunk(self, chunk: str, full_response: str):
+        self._queue_ui(
+            self.message_event_handler.handle_response_chunk, (chunk, full_response)
+        )
+
+    def _on_response_completed(self, response: str):
+        self._queue_ui(self.message_event_handler.handle_response_completed, response)
+
+    def _on_assistant_message_added(self, response: str):
+        self._queue_ui(self.message_event_handler.handle_response_completed, response)
+
+    def _on_stream_cancel_requested(self):
+        self._queue_ui(self.message_event_handler.handle_stream_cancel_requested)
+
+    def _on_stream_canceled(self, session_id: int, assistant_response: str):
+        self._queue_ui(self.message_event_handler.handle_stream_canceled, None)
+
+    def _on_stream_open_timeout(self, session_id: int, timeout: float):
+        self._queue_ui(self.message_event_handler.handle_stream_open_timeout, None)
+
+    def _on_tool_use(self, **data):
+        self._queue_ui(self.tool_event_handler.handle_tool_use, data)
+
+    def _on_tool_result(self, **data):
+        self._queue_ui(self.tool_event_handler.handle_tool_result, data)
+
+    def _on_tool_error(self, **data):
+        self._queue_ui(self.tool_event_handler.handle_tool_error, data)
+
+    def _on_tool_confirmation(self, tool_use: dict, confirmation_id: int):
+        self._queue_ui(
+            self.tool_event_handler.handle_tool_confirmation_required,
+            {**tool_use, "confirmation_id": confirmation_id},
+        )
+
+    def _on_tool_denied(self, **data):
+        self._queue_ui(self.tool_event_handler.handle_tool_denied, data)
+
+    def _on_user_message_created(self, **data):
+        self._queue_ui(self.message_event_handler.handle_user_message_created, data)
+
+    def _on_clear_requested(self):
+        self._queue_ui(self.command_handler.handle_clear_event)
+
+    def _on_file_processing(self, file_path: str):
+        self._queue_ui(self._handle_file_processing, file_path)
+
+    def _on_file_processed(self, **data):
+        self._queue_ui(self._handle_file_processed, data)
+
+    def _on_file_dropped(self, **data):
+        return None
+
+    def _on_image_generated(self, image_source: str, is_base64: bool):
+        self._queue_ui(
+            self.chat_components.append_file,
+            image_source,
+            False,
+            is_base64,
+        )
+
+    def _on_conversations_listed(self, conversations: list[dict]):
+        return None
+
+    def _on_conversation_loaded(self, **data):
+        self._queue_ui(self._handle_conversation_loaded, data)
+
+    def _on_conversation_saved(self, **data):
+        self._queue_ui(self._handle_conversation_saved, data)
+
+    def _on_conversations_changed(self):
+        self._queue_ui(self._handle_conversations_changed)
+
+    def _on_consolidation_completed(self, result: dict):
+        self._queue_ui(self._handle_consolidation_completed, result)
+
+    def _on_unconsolidation_completed(self, result: dict):
+        self._queue_ui(self._handle_unconsolidation_completed, result)
+
+    def _on_agent_changed(self, agent_name: str):
+        self._queue_ui(self.command_handler.handle_agent_changed, agent_name)
+
+    def _on_agent_changed_by_transfer(self, **data):
+        self._queue_ui(self.tool_event_handler.handle_agent_changed_by_transfer, data)
+
+    def _on_agents_listed(self, agents: dict):
+        return None
+
+    def _on_agent_command_result(self, **data):
+        self._queue_ui(self.command_handler.handle_agent_command_result, data)
+
+    def _on_model_changed(self, **data):
+        self._queue_ui(self.command_handler.handle_model_changed, data)
+
+    def _on_models_listed(self, models_by_provider: dict):
+        return None
+
+    def _on_evolution_started(self, **data):
+        self._queue_ui(self.command_handler.handle_evolution_started, data)
+
+    def _on_evolution_finished(self):
+        self._queue_ui(self.command_handler.handle_evolution_finished)
+
+    def _on_evolution_summary(self, **data):
+        self._queue_ui(self.command_handler.handle_evolution_summary, data)
+
+    def _on_evolution_applied(self, **data):
+        self._queue_ui(self.command_handler.handle_evolution_applied, data)
+
+    def _on_evolution_declined(self):
+        self._queue_ui(self.command_handler.handle_evolution_declined)
+
+    def _on_error(self, message: str, **details):
+        self._queue_ui(self._handle_event_error, {"message": message, **details})
+
+    def _on_system_message(self, message):
+        self._queue_ui(self.chat_components.add_system_message, str(message))
+
+    def _on_debug_requested(self, **debug_info):
+        self._queue_ui(self.command_handler.handle_debug_requested, debug_info)
+
+    def _on_think_budget_set(self, budget):
+        self._queue_ui(self.command_handler.handle_think_budget_set, budget)
+
+    def _on_update_token_usage(self, **data):
+        self._queue_ui(self._handle_update_token_usage, data)
+
+    def _on_jump_performed(self, **data):
+        self._queue_ui(self.command_handler.handle_jump_performed, data)
+
+    def _on_fork_and_switch(self, **data):
+        self._queue_ui(self.command_handler.handle_fork_and_switch, data)
+
+    def _on_learn_confirmation(self, **data):
+        self._queue_ui(self.command_handler.handle_learn_confirmation, data)
+
+    def _on_mcp_prompt(self, **data):
+        self._queue_ui(self.message_input.setPlainText, data.get("content", ""))
+
+    def _on_transfer_enforce_toggled(self, status: str):
+        self._queue_ui(
+            self.chat_components.add_system_message,
+            f"🔄 Transfer enforcement is now {status}.",
+        )
+
+    def _on_voice_recording_started(self):
+        self._queue_ui(self._handle_voice_recording_started)
+
+    def _on_voice_activate(self, transcript: str):
+        self._queue_ui(self._handle_voice_activate, transcript)
+
+    def _on_voice_recording_stopping(self):
+        return None
+
+    def _on_voice_recording_completed(self):
+        self._queue_ui(self._handle_voice_recording_completed)
+
+    def _on_streaming_stopped(self, response: str):
+        self._queue_ui(self._handle_streaming_stopped)
+
+    def _handle_event_error(self, error: dict):
+        self.loading_conversation = False
+        self.ui_state_manager.set_input_controls_enabled(True)
+        if self.bubble_state.current_file_bubble:
+            self.chat_components.remove_messages_after(
+                self.bubble_state.current_file_bubble
             )
-            if not self.loading_conversation:
-                self.ui_state_manager.set_input_controls_enabled(True)
-        elif event == "file_processed":
-            # Mark the file as processed in the chat components
-            file_path = data.get("file_path")
-            if file_path:
-                self.chat_components.mark_file_processed(file_path)
             self.bubble_state.current_file_bubble = None
-        elif event == "image_generated":
-            self.chat_components.append_file(data, False, True)
-        # Command-related events are now handled by command_handler above
-        elif event == "conversation_saved":
-            self.display_status_message(f"Conversation saved: {data.get('id', 'N/A')}")
-            self.sidebar.update_conversation_list()
-            if not self.loading_conversation:
-                self.ui_state_manager.set_input_controls_enabled(True)
-        elif event == "conversations_changed":
-            self.display_status_message("Conversation list updated.")
-            self.sidebar.update_conversation_list()
-        elif event == "conversation_loaded":
-            self.display_status_message(f"Conversation loaded: {data.get('id', 'N/A')}")
-            token_usage = data.get("token_usage", None)
-            if token_usage is not None:
-                self.session_cost = 0.0
-                total_cost = self.message_handler.agent.calculate_usage_cost(
-                    token_usage.input_tokens,
-                    token_usage.output_tokens,
-                    token_usage.cached_tokens,
-                )
-                self.token_usage.update_token_info(
-                    token_usage.input_tokens,
-                    token_usage.output_tokens,
-                    token_usage.total_input_tokens,
-                    total_cost,
-                    0.0,
-                    token_usage.cached_tokens,
-                    token_usage.cache_creation_tokens,
-                )
-        elif event == "streaming_stopped":
-            self.chat_components.add_system_message(
-                "Message streaming stopped by user."
-            )
+        self.display_error(error)
+
+    def _handle_file_processing(self, file_path: str):
+        self.bubble_state.current_file_bubble = self.chat_components.append_file(
+            file_path, is_user=True
+        )
+        if not self.loading_conversation:
             self.ui_state_manager.set_input_controls_enabled(True)
-        elif event == "update_token_usage":
-            token_usage = TokenUsage(
+
+    def _handle_file_processed(self, data: dict):
+        file_path = data.get("file_path")
+        if file_path:
+            self.chat_components.mark_file_processed(file_path)
+        self.bubble_state.current_file_bubble = None
+
+    def _handle_conversation_saved(self, data: dict):
+        self.display_status_message(f"Conversation saved: {data.get('id', 'N/A')}")
+        self.sidebar.update_conversation_list()
+        if not self.loading_conversation:
+            self.ui_state_manager.set_input_controls_enabled(True)
+
+    def _handle_conversations_changed(self):
+        self.display_status_message("Conversation list updated.")
+        self.sidebar.update_conversation_list()
+
+    def _handle_conversation_loaded(self, data: dict):
+        self.display_status_message(f"Conversation loaded: {data.get('id', 'N/A')}")
+        token_usage = data.get("token_usage")
+        if token_usage is not None:
+            self.session_cost = 0.0
+            total_cost = self.message_handler.agent.calculate_usage_cost(
+                token_usage.input_tokens,
+                token_usage.output_tokens,
+                token_usage.cached_tokens,
+            )
+            self.token_usage.update_token_info(
+                token_usage.input_tokens,
+                token_usage.output_tokens,
+                token_usage.total_input_tokens,
+                total_cost,
+                0.0,
+                token_usage.cached_tokens,
+                token_usage.cache_creation_tokens,
+            )
+
+    def _handle_consolidation_completed(self, result: dict):
+        self.conversation_components.display_consolidation(result)
+        self.ui_state_manager.set_input_controls_enabled(True)
+
+    def _handle_unconsolidation_completed(self, result: dict):
+        self.conversation_components.display_unconsolidation(result)
+        self.ui_state_manager.set_input_controls_enabled(True)
+
+    def _handle_update_token_usage(self, data: dict):
+        self._update_cost_info(
+            TokenUsage(
                 input_tokens=data.get("input_tokens", 0),
                 output_tokens=data.get("output_tokens", 0),
                 cached_tokens=data.get("cached_tokens", 0),
                 total_input_tokens=data.get("total_input_tokens", 0),
                 cache_creation_tokens=data.get("cache_creation_tokens", 0),
             )
-            self._update_cost_info(token_usage)
-        elif event == "mcp_prompt":
-            self.message_input.setPlainText(data.get("content", ""))
-        elif event == "transfer_enforce_toggled":
-            self.chat_components.add_system_message(
-                f"🔄 Transfer enforcement is now {data}."
-            )
-        elif event == "voice_recording_started":
-            # Update UI to show recording state
-            self.ui_state_manager.set_input_controls_enabled(False)
-            self.message_input.setPlaceholderText(
-                "🎤 Recording... Click voice button to stop"
-            )
-            self.input_components.update_voice_button_state(True)
-        elif event == "voice_activate":
-            if not data:
-                self._set_voice_processing_state(False)
-                return
-            self._set_voice_processing_state(True)
-            self._add_user_message_bubble(data)
-            self.llm_worker.process_request.emit(data)
-            self.ui_state_manager._set_send_button_state(True)
-        elif event == "voice_recording_completed":
+        )
+
+    def _handle_streaming_stopped(self):
+        self.chat_components.add_system_message("Message streaming stopped by user.")
+        self.ui_state_manager.set_input_controls_enabled(True)
+
+    def _handle_voice_recording_started(self):
+        self.ui_state_manager.set_input_controls_enabled(False)
+        self.message_input.setPlaceholderText(
+            "🎤 Recording... Click voice button to stop"
+        )
+        self.input_components.update_voice_button_state(True)
+
+    def _handle_voice_activate(self, transcript: str):
+        if not transcript:
             self._set_voice_processing_state(False)
-            self.message_input.setPlaceholderText("Type a message...")
-            self.input_components.update_voice_button_state(False)
-            self.ui_state_manager.set_input_controls_enabled(
-                self.ui_state_manager._last_enabled_state
-            )
+            return
+        self._set_voice_processing_state(True)
+        self._add_user_message_bubble(transcript)
+        self.llm_worker.process_request.emit(transcript)
+        self.ui_state_manager._set_send_button_state(True)
+
+    def _handle_voice_recording_completed(self):
+        self._set_voice_processing_state(False)
+        self.message_input.setPlaceholderText("Type a message...")
+        self.input_components.update_voice_button_state(False)
+        self.ui_state_manager.set_input_controls_enabled(
+            self.ui_state_manager._last_enabled_state
+        )
 
     def _add_user_message_bubble(self, data):
         self.chat_components.append_message(

@@ -19,7 +19,7 @@ from AgentCrew.modules.mcpclient import MCPSessionManager
 from .command_processor import CommandProcessor
 from .tool_manager import ToolManager
 from .conversation import ConversationManager
-from .base import Observable
+from AgentCrew.modules.events import AppEvents, EventBus, HookRegistry
 from .prompt_evolution_coordinator import PromptEvolutionCoordinator
 from .learn_review_coordinator import LearnReviewCoordinator
 from AgentCrew.modules.chat.stream_session import StreamSession
@@ -45,11 +45,10 @@ def _resolve_at_mention(user_input: str, agent_manager) -> tuple:
     return user_input, user_input
 
 
-class MessageHandler(Observable):
+class MessageHandler:
     """
     Handles message processing, interaction with the LLM service, and manages
-    conversation history. Uses the Observer pattern to notify UI components
-    about relevant events.
+    conversation history. Uses EventBus to notify UI components about events.
     """
 
     def __init__(
@@ -58,6 +57,7 @@ class MessageHandler(Observable):
         context_persistent_service: ContextPersistenceService | None = None,
         with_voice: bool = False,
         voice_service=None,
+        hooks: HookRegistry | None = None,
     ):
         """
         Initializes the MessageHandler.
@@ -66,7 +66,8 @@ class MessageHandler(Observable):
             memory_service: Memory service for storing conversations.
             context_persistent_service: Service for persistent conversation storage.
         """
-        super().__init__()
+        self.bus = EventBus.get_instance()
+        self.hooks = hooks or HookRegistry(self.bus)
         self.agent_manager = AgentManager.get_instance()
         self.mcp_manager = MCPSessionManager.get_instance()
         self.agent = self.agent_manager.get_current_agent()
@@ -87,19 +88,19 @@ class MessageHandler(Observable):
         self.current_conversation_id: str | None = None  # ID for persistence
         self.prompt_evolution_coordinator = PromptEvolutionCoordinator(
             agent_getter=lambda: self.agent,
-            notify=self._notify,
+            bus=self.bus,
             memory_service=self.memory_service,
             persistence_service=self.persistent_service,
         )
         self.learn_review_coordinator = LearnReviewCoordinator(
             agent_getter=lambda: self.agent,
-            notify=self._notify,
+            bus=self.bus,
             persistence_service=self.persistent_service,
         )
 
         # Initialize components
         self.command_processor = CommandProcessor(self)
-        self.tool_manager = ToolManager(self)
+        self.tool_manager = ToolManager(self, self.hooks)
         self.conversation_manager = ConversationManager(self)
 
         self.conversation_manager.start_new_conversation()  # Initialize first conversation
@@ -107,6 +108,7 @@ class MessageHandler(Observable):
 
         self.voice_service = voice_service if with_voice else None
 
+    # ── Legacy backward compat ─────────────────────────────────
     def _yolo_mode_check(self):
         from AgentCrew.modules.config.global_config import GlobalConfig
 
@@ -131,7 +133,7 @@ class MessageHandler(Observable):
 
         for file_path in file_paths:
             self._queued_attached_files.append(file_path)
-            self._notify("file_processing", {"file_path": file_path})
+            self.bus.emit_sync(AppEvents.FILE_PROCESSING, file_path=file_path)
 
     async def process_user_input(
         self,
@@ -179,13 +181,11 @@ class MessageHandler(Observable):
         )
         self.current_user_input = self.agent.history[-1]
         self.current_user_input_idx = len(self.streamline_messages) - 1
-        self._notify(
-            "user_message_created",
-            {
-                "message": self.agent.history[-1],
-                "display_text": display_text,
-                "with_files": False,
-            },
+        self.bus.emit_sync(
+            AppEvents.USER_MESSAGE_CREATED,
+            message=self.agent.history[-1],
+            display_text=display_text,
+            with_files=False,
         )
 
         return False, False
@@ -243,7 +243,10 @@ class MessageHandler(Observable):
         if not session.mark_cancel_requested():
             return False
 
-        self._notify("stream_cancel_requested", {"session_id": session.session_id})
+        self.bus.emit_sync(
+            AppEvents.STREAM_CANCEL_REQUESTED,
+            session_id=session.session_id,
+        )
 
         if session.loop and session.task:
             session.loop.call_soon_threadsafe(session.task.cancel)
@@ -294,13 +297,13 @@ class MessageHandler(Observable):
                         self.current_conversation_id,
                         messages_for_this_turn,
                     )
-                    self._notify(
-                        "conversation_saved", {"id": self.current_conversation_id}
+                    self.bus.emit_sync(
+                        AppEvents.CONVERSATION_SAVED, id=self.current_conversation_id
                     )
             except Exception as e:
                 error_message = f"Failed to save conversation turn to {self.current_conversation_id}: {str(e)}"
                 logger.error(f"ERROR: {error_message}")
-                self._notify("error", {"message": error_message})
+                self.bus.emit_sync(AppEvents.ERROR, message=error_message)
 
         if self.current_user_input and self.current_user_input_idx >= 0:
             self.conversation_manager.store_conversation_turn(
@@ -381,12 +384,10 @@ class MessageHandler(Observable):
                     )
                 except asyncio.TimeoutError:
                     session.finalize("timed_out")
-                    self._notify(
-                        "stream_open_timeout",
-                        {
-                            "session_id": session.session_id,
-                            "timeout": session.first_chunk_timeout,
-                        },
+                    self.bus.emit_sync(
+                        AppEvents.STREAM_OPEN_TIMEOUT,
+                        session_id=session.session_id,
+                        timeout=session.first_chunk_timeout,
                     )
                     raise TimeoutError(
                         f"Timed out waiting {session.first_chunk_timeout}s for the model stream to open"
@@ -407,7 +408,10 @@ class MessageHandler(Observable):
                 ) = next_item
                 if session.cancel_requested:
                     has_stop_interupted = True
-                    self._notify("streaming_stopped", assistant_response)
+                    self.bus.emit_sync(
+                        AppEvents.STREAMING_STOPPED,
+                        response=assistant_response,
+                    )
                     session.finalize("canceled")
                     await self.stream_generator.aclose()
                     if assistant_response.strip():
@@ -420,17 +424,18 @@ class MessageHandler(Observable):
                                 },
                             )
                         )
-                        self._notify("response_completed", assistant_response)
+                        self.bus.emit_sync(
+                            AppEvents.RESPONSE_COMPLETED,
+                            response=assistant_response,
+                        )
                     self._finalize_current_turn(
                         token_usage,
                         store_memory=False,
                     )
-                    self._notify(
-                        "stream_canceled",
-                        {
-                            "session_id": session.session_id,
-                            "assistant_response": assistant_response,
-                        },
+                    self.bus.emit_sync(
+                        AppEvents.STREAM_CANCELED,
+                        session_id=session.session_id,
+                        assistant_response=assistant_response,
                     )
                     return assistant_response, token_usage
 
@@ -440,26 +445,39 @@ class MessageHandler(Observable):
 
                     if not start_thinking:
                         # Notify about thinking process
-                        self._notify("thinking_started", self.agent.name)
+                        self.bus.emit_sync(
+                            AppEvents.THINKING_STARTED,
+                            agent_name=self.agent.name,
+                        )
                         if not self.agent.is_streaming():
                             # Delays it a bit when using without stream
                             await asyncio.sleep(0.5)
                         start_thinking = True
                     if think_text_chunk:
                         thinking_content += think_text_chunk
-                        self._notify("thinking_chunk", think_text_chunk)
+                        self.bus.emit_sync(
+                            AppEvents.THINKING_CHUNK,
+                            chunk=think_text_chunk,
+                        )
                     if signature:
                         thinking_signature += signature
                 if chunk_text:
                     # End thinking when chunk_text start
                     if not end_thinking and start_thinking:
-                        self._notify("thinking_completed", thinking_content)
+                        self.bus.emit_sync(
+                            AppEvents.THINKING_COMPLETED,
+                            content=thinking_content,
+                        )
                         end_thinking = True
                     # Notify about response progress
                     if not self.agent.is_streaming():
                         # Delays it a bit when using without stream
                         await asyncio.sleep(0.3)
-                    self._notify("response_chunk", (chunk_text, assistant_response))
+                    self.bus.emit_sync(
+                        AppEvents.RESPONSE_CHUNK,
+                        chunk=chunk_text,
+                        full_response=assistant_response,
+                    )
 
             if not session.finished.is_set():
                 session.finalize("completed")
@@ -467,7 +485,10 @@ class MessageHandler(Observable):
 
             # End thinking when break the response stream
             if not end_thinking and start_thinking:
-                self._notify("thinking_completed", thinking_content)
+                self.bus.emit_sync(
+                    AppEvents.THINKING_COMPLETED,
+                    content=thinking_content,
+                )
                 end_thinking = True
 
             # Add thinking content as a separate message if available
@@ -499,7 +520,10 @@ class MessageHandler(Observable):
                         {"message": assistant_response, "thinking": thinking_data},
                     )
                     self._messages_append(assistant_message)
-                self._notify("assistant_message_added", assistant_response)
+                self.bus.emit_sync(
+                    AppEvents.ASSISTANT_MESSAGE_ADDED,
+                    response=assistant_response,
+                )
 
                 self._yolo_mode_check()
 
@@ -509,17 +533,18 @@ class MessageHandler(Observable):
                 # check the stop earlier to prevent double token merge
                 if has_stop_interupted:
                     # return as soon as possible
-                    self._notify("response_completed", assistant_response)
+                    self.bus.emit_sync(
+                        AppEvents.RESPONSE_COMPLETED,
+                        response=assistant_response,
+                    )
                     return assistant_response, token_usage
 
                 if token_usage:
-                    self._notify(
-                        "update_token_usage",
-                        {
-                            "input_tokens": token_usage.input_tokens,
-                            "output_tokens": token_usage.output_tokens,
-                            "cached_tokens": token_usage.cached_tokens,
-                        },
+                    self.bus.emit_sync(
+                        AppEvents.UPDATE_TOKEN_USAGE,
+                        input_tokens=token_usage.input_tokens,
+                        output_tokens=token_usage.output_tokens,
+                        cached_tokens=token_usage.cached_tokens,
                     )
                 return await self.get_assistant_response(token_usage)
 
@@ -531,7 +556,7 @@ class MessageHandler(Observable):
                         f"times consecutively. Max retry limit ({self.MAX_EMPTY_RESPONSE_RETRIES}) reached."
                     )
                     logger.error(error_msg)
-                    self._notify("error", {"message": error_msg})
+                    self.bus.emit_sync(AppEvents.ERROR, message=error_msg)
                     return None, token_usage
                 logger.warning(
                     f"Empty assistant response (attempt {_empty_response_retry_count + 1}), retrying..."
@@ -550,7 +575,10 @@ class MessageHandler(Observable):
                     },
                 )
             )
-            self._notify("response_completed", assistant_response)
+            self.bus.emit_sync(
+                AppEvents.RESPONSE_COMPLETED,
+                response=assistant_response,
+            )
 
             self._finalize_current_turn(
                 token_usage,
@@ -593,17 +621,18 @@ class MessageHandler(Observable):
                         },
                     )
                 )
-                self._notify("response_completed", assistant_response)
+                self.bus.emit_sync(
+                    AppEvents.RESPONSE_COMPLETED,
+                    response=assistant_response,
+                )
             self._finalize_current_turn(
                 token_usage,
                 store_memory=False,
             )
-            self._notify(
-                "stream_canceled",
-                {
-                    "session_id": session.session_id,
-                    "assistant_response": assistant_response,
-                },
+            self.bus.emit_sync(
+                AppEvents.STREAM_CANCELED,
+                session_id=session.session_id,
+                assistant_response=assistant_response,
             )
             return assistant_response, token_usage
         except GeneratorExit:
@@ -657,20 +686,18 @@ class MessageHandler(Observable):
                         self.current_conversation_id,
                         messages_for_this_turn,
                     )
-                    self._notify(
-                        "conversation_saved", {"id": self.current_conversation_id}
+                    self.bus.emit_sync(
+                        AppEvents.CONVERSATION_SAVED, id=self.current_conversation_id
                     )
             self.last_assisstant_response_idx = len(self.streamline_messages)
 
             error_message = str(e)
             traceback_str = traceback.format_exc()
             logger.error(f"{error_message} \n {traceback_str}")
-            self._notify(
-                "error",
-                {
-                    "message": error_message,
-                    "messages": self.agent.history,
-                },
+            self.bus.emit_sync(
+                AppEvents.ERROR,
+                message=error_message,
+                messages=self.agent.history,
             )
             if not session.finished.is_set():
                 session.finalize("failed")

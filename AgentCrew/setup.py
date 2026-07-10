@@ -10,6 +10,7 @@ from loguru import logger
 
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
+from AgentCrew.modules.events import EventBus, HookRegistry, PluginManager
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.service_manager import ServiceManager
 from AgentCrew.modules.agents import AgentManager, LocalAgent, RemoteAgent
@@ -40,6 +41,38 @@ class ApplicationSetup:
         self.config_manager = config_manager or ConfigManagement()
         self.services: dict[str, Any] | None = None
         self.agent_manager: AgentManager | None = None
+
+        # Initialize events infrastructure
+        self.bus = EventBus.get_instance()
+        self.hooks = HookRegistry(self.bus)
+        self.plugin_manager = PluginManager(self.bus, self.hooks)
+        self._plugins_initialized = False
+
+    async def initialize_plugins(self) -> None:
+        """Discover and load all plugins transactionally."""
+        if self._plugins_initialized:
+            return
+        global_config = GlobalConfig().read()
+        try:
+            await self.plugin_manager.load_all(config_json=global_config)
+        except BaseException:
+            try:
+                await self.plugin_manager.unload_all()
+            except BaseException:
+                logger.exception(
+                    "Failed to roll back plugins after initialization error"
+                )
+            finally:
+                self._plugins_initialized = False
+            raise
+        self._plugins_initialized = True
+
+    async def shutdown_plugins(self) -> None:
+        """Unload active plugins idempotently, including partial startup state."""
+        try:
+            await self.plugin_manager.unload_all()
+        finally:
+            self._plugins_initialized = False
 
     def load_api_keys_from_config(self) -> None:
         config_file_path = os.getenv("AGENTCREW_CONFIG_PATH")

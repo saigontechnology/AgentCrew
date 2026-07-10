@@ -197,6 +197,31 @@ Control UI appearance and system behavior:
   - `false` - Keep full conversation history
   - Default: `true`
 
+### Plugins
+
+Load plugins from local Python files or package directories through `config.json`:
+
+```json
+{
+  "plugins": {
+    "sources": [
+      {
+        "name": "example",
+        "path": "./plugins/example.py"
+      }
+    ],
+    "config": {
+      "example": {
+        "enabled": true,
+        "settings": {}
+      }
+    }
+  }
+}
+```
+
+Installed packages can also expose plugins through the `agentcrew.plugins` Python entry-point group. Local sources take precedence when names conflict. See [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for lifecycle, EventBus, hook, cleanup, packaging, and verification details.
+
 ### Auto-Approval Tools
 
 Specify tools that never require approval, even when `yolo_mode` is false:

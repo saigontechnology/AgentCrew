@@ -18,6 +18,10 @@ class ToolResult:
     tool_use: dict[str, Any]
     result: Any
     is_error: bool = False
+    is_rejected: bool = False
+    was_executed: bool = True
+    resolved_name: str | None = None
+    resolved_input: dict[str, Any] | None = None
 
 
 async def execute_tools_in_parallel(
@@ -29,6 +33,16 @@ async def execute_tools_in_parallel(
 
     tasks = [_safe_execute(executor, tu) for tu in tool_uses]
     return list(await asyncio.gather(*tasks))
+
+
+async def execute_tool_tasks_in_parallel(
+    tool_uses: list[dict[str, Any]],
+    executor: Callable[[dict[str, Any]], Awaitable[ToolResult]],
+) -> list[ToolResult]:
+    if len(tool_uses) == 1:
+        return [await executor(tool_uses[0])]
+
+    return list(await asyncio.gather(*(executor(tool_use) for tool_use in tool_uses)))
 
 
 async def _safe_execute(

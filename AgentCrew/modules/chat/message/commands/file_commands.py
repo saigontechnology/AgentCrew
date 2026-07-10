@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from AgentCrew.modules.events import AppEvents
 import os
 import shlex
 from typing import TYPE_CHECKING
@@ -27,7 +28,9 @@ class FileCommands:
         ]
 
         if not file_paths:
-            self.message_handler._notify("error", "No file paths provided")
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message="No file paths provided"
+            )
             return CommandResult(handled=True, clear_flag=True)
 
         processed_files: list[str] = []
@@ -42,18 +45,14 @@ class FileCommands:
             if file_content:
                 all_file_contents.append(file_content)
                 processed_files.append(file_path)
-                self.message_handler._notify(
-                    "file_processed",
-                    {
-                        "file_path": file_path,
-                        "message": file_content,
-                    },
+                self.message_handler.bus.emit_sync(
+                    AppEvents.FILE_PROCESSED, file_path=file_path, message=file_content
                 )
             else:
                 failed_files.append(file_path)
-                self.message_handler._notify(
-                    "error",
-                    f"Failed to process file {file_path} Or Model is not supported",
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message=f"Failed to process file {file_path} Or Model is not supported",
                 )
 
         if all_file_contents:
@@ -66,12 +65,13 @@ class FileCommands:
             )
 
             if failed_files:
-                self.message_handler._notify(
-                    "error", f"Failed to process: {', '.join(failed_files)}"
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message=f"Failed to process: {', '.join(failed_files)}",
                 )
-            self.message_handler._notify(
-                "system_message",
-                f"✅ Successfully processed {len(processed_files)} files: {', '.join(processed_files)}",
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE,
+                message=f"✅ Successfully processed {len(processed_files)} files: {', '.join(processed_files)}",
             )
 
         return CommandResult(handled=True, clear_flag=True)
@@ -82,14 +82,15 @@ class FileCommands:
 
         if not file_path:
             if not self.message_handler._queued_attached_files:
-                self.message_handler._notify(
-                    "error", "No files are currently queued for processing"
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message="No files are currently queued for processing",
                 )
                 return CommandResult(handled=True, clear_flag=True)
 
-            self.message_handler._notify(
-                "system_message",
-                "📋 Queued files:\n"
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE,
+                message="📋 Queued files:\n"
                 + "\n".join(self.message_handler._queued_attached_files)
                 + "\nUsage: /drop <file_id>",
             )
@@ -99,21 +100,28 @@ class FileCommands:
             try:
                 self.message_handler._queued_attached_files.remove(file_path)
             except Exception:
-                self.message_handler._notify(
-                    "error", f"Cannot unqueue file: {file_path}"
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR, message=f"Cannot unqueue file: {file_path}"
                 )
 
-            self.message_handler._notify(
-                "system_message", f"🗑️ Removed file from queue: {file_path}"
+            self.message_handler.bus.emit_sync(
+                AppEvents.SYSTEM_MESSAGE,
+                message=f"🗑️ Removed file from queue: {file_path}",
             )
 
-            self.message_handler._notify("file_dropped", {"file_path": file_path})
+            self.message_handler.bus.emit_sync(
+                AppEvents.FILE_DROPPED, file_path=file_path
+            )
 
             return CommandResult(handled=True, clear_flag=True)
 
         except ValueError as e:
-            self.message_handler._notify("error", f"Invalid file ID format: {str(e)}")
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Invalid file ID format: {str(e)}"
+            )
             return CommandResult(handled=True, clear_flag=True)
         except Exception as e:
-            self.message_handler._notify("error", f"Error removing file: {str(e)}")
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Error removing file: {str(e)}"
+            )
             return CommandResult(handled=True, clear_flag=True)

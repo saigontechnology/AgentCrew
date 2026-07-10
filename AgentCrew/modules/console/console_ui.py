@@ -13,7 +13,7 @@ import signal
 from typing import Any
 from rich.console import Console
 from rich.text import Text
-from AgentCrew.modules.chat.message_handler import Observer
+from AgentCrew.modules.events import AppEvents, EventBus
 from AgentCrew.modules.chat.agent_evaluation import parse_agent_evaluation
 from loguru import logger
 
@@ -34,10 +34,9 @@ if TYPE_CHECKING:
     from AgentCrew.modules.chat.message_handler import MessageHandler
 
 
-class ConsoleUI(Observer):
+class ConsoleUI:
     """
-    A console-based UI for the interactive chat that implements the Observer interface
-    to receive updates from the MessageHandler.
+    A console-based UI for the interactive chat that receives EventBus updates.
     """
 
     def __init__(self, message_handler: MessageHandler, swap_enter: bool = False):
@@ -57,7 +56,8 @@ class ConsoleUI(Observer):
         from .command_handlers import CommandHandlers
 
         self.message_handler = message_handler
-        self.message_handler.attach(self)
+        self.bus = EventBus.get_instance()
+        self._subscriptions: list[Any] = []
 
         self._is_resizing = False
 
@@ -107,7 +107,9 @@ class ConsoleUI(Observer):
             )
             self._token_usage = self._token_usage.merge(token_usage)
         except Exception as e:
-            self.message_handler._notify("error", f"Voice activation failed: {str(e)}")
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Voice activation failed: {str(e)}"
+            )
         finally:
             self.input_handler.is_message_processing = False
             self._clear_pending_input_queue()
@@ -122,303 +124,449 @@ class ConsoleUI(Observer):
                 self.session_cost,
             )
 
-    def listen(self, event: str, data: Any = None):
-        """
-        Update method required by the Observer interface. Handles events from the MessageHandler.
+    def _register_subscriptions(self):
+        """Register per-event handler methods with EventBus."""
+        self._subscriptions = [
+            # ── Streaming ──
+            self.bus.on(AppEvents.THINKING_STARTED, self._on_thinking_started),
+            self.bus.on(AppEvents.THINKING_CHUNK, self._on_thinking_chunk),
+            self.bus.on(AppEvents.THINKING_COMPLETED, self._on_thinking_completed),
+            self.bus.on(AppEvents.RESPONSE_CHUNK, self._on_response_chunk),
+            self.bus.on(AppEvents.RESPONSE_COMPLETED, self._on_response_completed),
+            self.bus.on(
+                AppEvents.ASSISTANT_MESSAGE_ADDED, self._on_assistant_message_added
+            ),
+            self.bus.on(
+                AppEvents.STREAM_CANCEL_REQUESTED, self._on_stream_cancel_requested
+            ),
+            self.bus.on(AppEvents.STREAM_CANCELED, self._on_stream_canceled),
+            self.bus.on(AppEvents.STREAM_OPEN_TIMEOUT, self._on_stream_open_timeout),
+            self.bus.on(AppEvents.STREAMING_STOPPED, self._on_streaming_stopped),
+            # ── Tools ──
+            self.bus.on(
+                AppEvents.TOOL_USE,
+                self._on_delegate_started,
+                filter_func=lambda e, d: d.get("name") == "delegate",
+            ),
+            self.bus.on(
+                AppEvents.TOOL_USE,
+                self._on_tool_use,
+                filter_func=lambda e, d: d.get("name") != "delegate",
+            ),
+            self.bus.on(
+                AppEvents.TOOL_RESULT,
+                self._on_delegate_result,
+                filter_func=lambda e, d: (
+                    d.get("tool_use", {}).get("name") == "delegate"
+                ),
+            ),
+            self.bus.on(
+                AppEvents.TOOL_RESULT,
+                self._on_tool_result,
+                filter_func=lambda e, d: (
+                    d.get("tool_use", {}).get("name") != "delegate"
+                ),
+            ),
+            self.bus.on(AppEvents.TOOL_ERROR, self._on_tool_error),
+            self.bus.on(AppEvents.TOOL_CONFIRMATION_REQ, self._on_tool_confirmation),
+            self.bus.on(AppEvents.TOOL_DENIED, self._on_tool_denied),
+            # ── Conversation ──
+            self.bus.on(AppEvents.CLEAR_REQUESTED, self._on_clear_requested),
+            self.bus.on(AppEvents.FILE_PROCESSING, self._on_file_processing),
+            self.bus.on(AppEvents.FILE_DROPPED, self._on_file_dropped),
+            self.bus.on(AppEvents.CONVERSATIONS_LISTED, self._on_conversations_listed),
+            self.bus.on(AppEvents.CONVERSATION_LOADED, self._on_conversation_loaded),
+            self.bus.on(AppEvents.CONVERSATION_SAVED, self._on_conversation_saved),
+            self.bus.on(
+                AppEvents.CONVERSATIONS_CHANGED, self._on_conversations_changed
+            ),
+            self.bus.on(
+                AppEvents.CONSOLIDATION_COMPLETED, self._on_consolidation_completed
+            ),
+            self.bus.on(
+                AppEvents.UNCONSOLIDATION_COMPLETED, self._on_unconsolidation_completed
+            ),
+            # ── Agent / Model ──
+            self.bus.on(AppEvents.AGENT_CHANGED, self._on_agent_changed),
+            self.bus.on(
+                AppEvents.AGENT_CHANGED_BY_TRANSFER, self._on_agent_changed_by_transfer
+            ),
+            self.bus.on(AppEvents.AGENTS_LISTED, self._on_agents_listed),
+            self.bus.on(AppEvents.MODEL_CHANGED, self._on_model_changed),
+            self.bus.on(AppEvents.MODELS_LISTED, self._on_models_listed),
+            # ── Evolution ──
+            self.bus.on(AppEvents.EVOLUTION_STARTED, self._on_evolution_started),
+            self.bus.on(AppEvents.EVOLUTION_FINISHED, self._on_evolution_finished),
+            self.bus.on(AppEvents.EVOLUTION_SUMMARY, self._on_evolution_summary),
+            self.bus.on(AppEvents.EVOLUTION_APPLIED, self._on_evolution_applied),
+            self.bus.on(AppEvents.EVOLUTION_DECLINED, self._on_evolution_declined),
+            # ── UX ──
+            self.bus.on(AppEvents.ERROR, self._on_error),
+            self.bus.on(AppEvents.SYSTEM_MESSAGE, self._on_system_message),
+            self.bus.on(AppEvents.DEBUG_REQUESTED, self._on_debug_requested),
+            self.bus.on(AppEvents.THINK_BUDGET_SET, self._on_think_budget_set),
+            self.bus.on(AppEvents.UPDATE_TOKEN_USAGE, self._on_update_token_usage),
+            self.bus.on(AppEvents.JUMP_PERFORMED, self._on_jump_performed),
+            self.bus.on(AppEvents.FORK_AND_SWITCH, self._on_fork_and_switch),
+            self.bus.on(AppEvents.LEARN_CONFIRMATION, self._on_learn_confirmation),
+            self.bus.on(AppEvents.MCP_PROMPT, self._on_mcp_prompt),
+            # ── Voice ──
+            self.bus.on(
+                AppEvents.VOICE_RECORDING_STARTED, self._on_voice_recording_started
+            ),
+            self.bus.on(AppEvents.VOICE_ACTIVATE, self._on_voice_activate),
+            self.bus.on(
+                AppEvents.VOICE_RECORDING_STOPPING, self._on_voice_recording_stopping
+            ),
+            self.bus.on(
+                AppEvents.VOICE_RECORDING_COMPLETED, self._on_voice_recording_completed
+            ),
+            self.bus.on(
+                AppEvents.TRANSFER_ENFORCE_TOGGLE, self._on_transfer_enforce_toggled
+            ),
+            self.bus.on(AppEvents.AGENT_COMMAND_RESULT, self._on_agent_command_result),
+            self.bus.on(AppEvents.FILE_PROCESSED, self._on_file_processed),
+            self.bus.on(AppEvents.IMAGE_GENERATED, self._on_image_generated),
+            self.bus.on(AppEvents.USER_MESSAGE_CREATED, self._on_user_message_created),
+        ]
 
-        Args:
-            event: The type of event that occurred.
-            data: The data associated with the event.
-        """
+    # ════════════════════════════════════════════════
+    # Per-event handler methods
+    # ════════════════════════════════════════════════
 
-        if event == "thinking_started":
-            self.ui_effects.stop_loading_animation()  # Stop loading on first chunk
-            # self.display_handlers.display_thinking_started(data)  # data is agent_name
-        elif event == "thinking_chunk":
-            if data.strip():
-                self.ui_effects.update_live_display(data, is_thinking=True)
-        elif event == "thinking_completed":
-            self.ui_effects.finish_response(
-                self.ui_effects.updated_text, is_thinking=True
-            )
-        elif event == "user_message_created":
-            pass
-        elif event == "response_chunk":
-            _, assistant_response = data
-            parsed = parse_agent_evaluation(assistant_response)
+    # ── Streaming handlers ──
 
-            self.ui_effects.stop_loading_animation()
-            self.ui_effects.update_live_display(
-                parsed["visible_content"],
-                planning_content=parsed["planning_content"],
-            )
-        elif event == "tool_use":
-            self.ui_effects.stop_loading_animation()  # Stop loading on first chunk
-            if data.get("name") == "delegate":
-                self.tool_display.display_delegate_started(data)
-                params = data.get("input") or data.get("arguments", {})
-                agent_name = (
-                    params.get("target_agent", "Agent")
-                    if isinstance(params, dict)
-                    else "Agent"
-                )
-                self.ui_effects.start_delegate_animation(
-                    data.get("id", agent_name), agent_name
-                )
-            else:
-                self.tool_display.display_tool_use(data)  # data is the tool use object
-        elif event == "tool_result":
-            if data.get("tool_use", {}).get("name") == "delegate":
-                tool_use = data["tool_use"]
-                params = tool_use.get("input") or tool_use.get("arguments", {})
-                agent_name = (
-                    params.get("target_agent", "Agent")
-                    if isinstance(params, dict)
-                    else "Agent"
-                )
-                self.ui_effects.stop_delegate_animation(tool_use.get("id", agent_name))
-                self.tool_display.display_delegate_completed(tool_use)
-            else:
-                # Check if tool result contains image content
-                tool_result = data.get("tool_result")
-                if isinstance(tool_result, list):
-                    for item in tool_result:
-                        if isinstance(item, dict) and item.get("type") == "image_url":
-                            url = item.get("image_url", {}).get("url", "")
-                            if url.startswith("data:"):
-                                self.display_handlers.display_image_from_data_uri(url)
-                self.ui_effects.start_loading_animation()
-        elif event == "tool_error":
-            self.tool_display.display_tool_error(
-                data
-            )  # data is dict with tool_use and error
-        elif event == "tool_confirmation_required":
-            self.ui_effects.stop_loading_animation()  # Stop loading on first chunk
-            self.confirmation_handler.display_tool_confirmation_request(
-                data, self.message_handler
-            )  # data is the tool use with confirmation ID
-        elif event == "tool_denied":
-            self.tool_display.display_tool_denied(
-                data
-            )  # data is the tool use that was denied
-        elif event == "response_completed" or event == "assistant_message_added":
-            parsed = parse_agent_evaluation(data)
-            self.ui_effects.finish_response(
-                parsed["visible_content"],
-                planning_content=parsed["planning_content"],
-            )
-            if event == "response_completed":
-                self._set_voice_processing_state(False)
+    def _on_thinking_started(self, **data):
+        self.ui_effects.stop_loading_animation()
 
-        elif event == "stream_cancel_requested":
-            self.display_handlers.display_message(
-                Text("Stopping current stream...", style=RICH_STYLE_YELLOW)
-            )
-        elif event == "stream_canceled":
-            self.ui_effects.cleanup()
-            self.display_handlers.display_message(
-                Text("Stream canceled.", style=RICH_STYLE_YELLOW_BOLD)
-            )
-        elif event == "stream_open_timeout":
-            self.ui_effects.cleanup()
-            self.display_handlers.display_message(
-                Text(
-                    "Stream timed out before first chunk.", style=RICH_STYLE_YELLOW_BOLD
-                )
-            )
-        elif event == "error":
-            self.display_handlers.display_error(
-                data
-            )  # data is the error message or dict
-            self.ui_effects.cleanup()
-        elif event == "clear_requested":
-            self.display_handlers.display_message(
-                Text("🎮 Chat history cleared.", style=RICH_STYLE_YELLOW_BOLD)
-            )
-            self.display_handlers.clear_files()
-            self.session_cost = 0
-            self._token_usage = TokenUsage()
-            self._total_cost = 0
-        elif event == "debug_requested":
-            self.display_handlers.display_debug_info(
-                data
-            )  # data is the debug information
-        elif event == "think_budget_set":
-            thinking_text = Text("Thinking budget set to ", style=RICH_STYLE_YELLOW)
-            thinking_text.append(f"{data} tokens.")
-            self.display_handlers.display_message(thinking_text)
-        elif event == "models_listed":
-            self.display_handlers.display_models(
-                data
-            )  # data is dict of models by provider
-        elif event == "model_changed":
-            model_text = Text("Switched to ", style=RICH_STYLE_YELLOW)
-            model_text.append(f"{data['name']} ({data['id']})")
-            self.display_handlers.display_message(model_text)
-        elif event == "agents_listed":
-            self.display_handlers.display_agents(data)  # data is dict of agent info
-        elif event == "agent_changed":
-            agent_text = Text("Switched to ", style=RICH_STYLE_YELLOW)
-            agent_text.append(f"{data} agent")
-            self.display_handlers.display_message(agent_text)
-        elif event == "system_message":
-            self.display_handlers.display_message(data)
-        elif event == "mcp_prompt":
-            self.confirmation_handler.display_mcp_prompt_confirmation(
-                data, self.input_handler._input_queue
-            )
-        elif event == "agent_changed_by_transfer":
-            transfer_text = Text("Transfered to ", style=RICH_STYLE_YELLOW)
-            transfer_text.append(
-                f"{data['agent_name'] if 'agent_name' in data else 'other'} agent"
-            )
-            self.display_handlers.display_message(transfer_text)
-        elif event == "jump_performed":
-            jump_text = Text(
-                f"🕰️ Jumping to turn {data['turn_number']}...\n",
-                style=RICH_STYLE_YELLOW_BOLD,
-            )
-            preview_text = Text("Conversation rewound to: ", style=RICH_STYLE_YELLOW)
-            preview_text.append(data["preview"])
-            self._clear_and_reprint_chat()
+    def _on_thinking_chunk(self, chunk: str):
+        if chunk.strip():
+            self.ui_effects.update_live_display(chunk, is_thinking=True)
 
-            self.display_handlers.display_message(jump_text)
-            self.display_handlers.display_message(preview_text)
-            self.input_handler.set_current_buffer(data["message"])
-        elif event == "fork_and_switch_performed":
-            fork_text = Text(
-                f"🍴 Forked at turn {data['turn_number']}...\n",
-                style=RICH_STYLE_YELLOW_BOLD,
-            )
-            preview_text = Text("Switched to fork: ", style=RICH_STYLE_YELLOW)
-            preview_text.append(data["preview"])
-            self._clear_and_reprint_chat()
+    def _on_thinking_completed(self, content: str):
+        self.ui_effects.finish_response(content, is_thinking=True)
 
-            self.display_handlers.display_message(fork_text)
-            self.display_handlers.display_message(preview_text)
-        elif event == "evolution_summary_ready":
-            self.ui_effects.stop_evolution_animation()
-            self.display_handlers.display_evolution_summary(data)
-            self.input_handler._stop_input_thread()
-            choice = self.input_handler.get_choice_input(
-                "Review prompt evolution proposal:",
-                ["accept", "edit", "decline"],
-                default="accept",
-            )
-            if choice == "accept":
-                asyncio.run(
-                    self.message_handler.submit_pending_evolution_review("accept")
-                )
-            elif choice == "edit":
-                edited_summary = self.input_handler.get_prompt_input(
-                    "Edit approved summary (Alt+Enter or Ctrl+S to submit):",
-                    default=data.get("user_editable_summary", ""),
-                )
-                if edited_summary.strip():
-                    asyncio.run(
-                        self.message_handler.submit_pending_evolution_review(
-                            "edit", edited_summary.strip()
-                        )
-                    )
-                else:
-                    asyncio.run(
-                        self.message_handler.submit_pending_evolution_review("decline")
-                    )
-            else:
-                asyncio.run(
-                    self.message_handler.submit_pending_evolution_review("decline")
-                )
-            self.input_handler._start_input_thread()
-        elif event == "evolution_applied":
-            self.ui_effects.stop_evolution_animation()
-            result_text = Text(
-                "🧬 Prompt evolution applied for ", style=RICH_STYLE_YELLOW
-            )
-            result_text.append(data["agent_name"], style=RICH_STYLE_GREEN)
-            self.display_handlers.display_message(result_text)
-            self.display_handlers.display_prompt_evolution_result(
-                data,
-                max_width=max(30, (self.console.width // 2) - 6),
-            )
-        elif event == "evolution_declined":
-            self.display_handlers.display_message(
-                Text("Prompt evolution declined.", style=RICH_STYLE_YELLOW)
-            )
-        elif event == "evolution_started":
-            self.ui_effects.start_evolution_animation(
-                data.get("agent_name", "Agent") if data else "Agent"
-            )
-        elif event == "evolution_finished":
-            self.ui_effects.stop_evolution_animation()
-        elif event == "file_processing":
-            self.ui_effects.stop_loading_animation()  # Stop loading on first chunk
-            self.display_handlers.add_file(data["file_path"])
-            # Display image inline if the attached file is an image
-            file_path = data.get("file_path", "")
-            if file_path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
-                self.display_handlers.display_image(file_path)
-        elif event == "file_dropped":
-            self.display_handlers._added_files.remove(data["file_path"])
-        elif event == "consolidation_completed":
-            self.display_handlers.display_consolidation_result(data)
-            self.display_handlers.display_loaded_conversation(
-                self.message_handler.streamline_messages,
-                self.message_handler.agent.name,
-            )
+    def _on_response_chunk(self, chunk: str, full_response: str):
+        parsed = parse_agent_evaluation(full_response)
+        self.ui_effects.stop_loading_animation()
+        self.ui_effects.update_live_display(
+            parsed["visible_content"],
+            planning_content=parsed["planning_content"],
+        )
 
-        elif event == "unconsolidation_completed":
-            self.display_handlers.display_loaded_conversation(
-                self.message_handler.streamline_messages,
-                self.message_handler.agent.name,
+    def _on_response_completed(self, response: str):
+        parsed = parse_agent_evaluation(response)
+        self.ui_effects.finish_response(
+            parsed["visible_content"],
+            planning_content=parsed["planning_content"],
+        )
+        self._set_voice_processing_state(False)
+
+    def _on_assistant_message_added(self, response: str):
+        parsed = parse_agent_evaluation(response)
+        self.ui_effects.finish_response(
+            parsed["visible_content"],
+            planning_content=parsed["planning_content"],
+        )
+
+    def _on_stream_cancel_requested(self, **data):
+        self.display_handlers.display_message(
+            Text("Stopping current stream...", style=RICH_STYLE_YELLOW)
+        )
+
+    def _on_stream_canceled(self, **data):
+        self.ui_effects.cleanup()
+        self.display_handlers.display_message(
+            Text("Stream canceled.", style=RICH_STYLE_YELLOW_BOLD)
+        )
+
+    def _on_stream_open_timeout(self, **data):
+        self.ui_effects.cleanup()
+        self.display_handlers.display_message(
+            Text("Stream timed out before first chunk.", style=RICH_STYLE_YELLOW_BOLD)
+        )
+
+    def _on_streaming_stopped(self, **data):
+        pass
+
+    # ── Tool handlers ──
+
+    def _on_tool_use(self, **data):
+        self.ui_effects.stop_loading_animation()
+        self.tool_display.display_tool_use(data)
+
+    def _on_tool_result(self, **data):
+        tool_result = data.get("tool_result")
+        if isinstance(tool_result, list):
+            for item in tool_result:
+                if isinstance(item, dict) and item.get("type") == "image_url":
+                    url = item.get("image_url", {}).get("url", "")
+                    if url.startswith("data:"):
+                        self.display_handlers.display_image_from_data_uri(url)
+        self.ui_effects.start_loading_animation()
+
+    def _on_tool_error(self, **data):
+        self.tool_display.display_tool_error(data)
+
+    def _on_tool_confirmation(
+        self,
+        tool_use: dict,
+        confirmation_id: int,
+    ):
+        self.ui_effects.stop_loading_animation()
+        self.confirmation_handler.display_tool_confirmation_request(
+            {**tool_use, "confirmation_id": confirmation_id},
+            self.message_handler,
+        )
+
+    def _on_tool_denied(self, **data):
+        self.tool_display.display_tool_denied(data)
+
+    def _on_delegate_started(self, **data):
+        self.ui_effects.stop_loading_animation()
+        self.tool_display.display_delegate_started(data)
+        params = data.get("input") or data.get("arguments", {})
+        agent_name = (
+            params.get("target_agent", "Agent") if isinstance(params, dict) else "Agent"
+        )
+        self.ui_effects.start_delegate_animation(data.get("id", agent_name), agent_name)
+
+    def _on_delegate_result(self, **data):
+        tool_use = data.get("tool_use", {})
+        params = tool_use.get("input") or tool_use.get("arguments", {})
+        agent_name = (
+            params.get("target_agent", "Agent") if isinstance(params, dict) else "Agent"
+        )
+        self.ui_effects.stop_delegate_animation(tool_use.get("id", agent_name))
+        self.tool_display.display_delegate_completed(tool_use)
+
+    # ── Conversation handlers ──
+
+    def _on_user_message_created(self, **data):
+        pass
+
+    def _on_file_processing(self, **data):
+        self.ui_effects.stop_loading_animation()
+        file_path = data.get("file_path", "")
+        self.display_handlers.add_file(file_path)
+        if file_path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+            self.display_handlers.display_image(file_path)
+
+    def _on_file_dropped(self, **data):
+        self.display_handlers._added_files.remove(data["file_path"])
+
+    def _on_file_processed(self, **data):
+        pass
+
+    def _on_image_generated(self, **data):
+        pass
+
+    def _on_clear_requested(self, **data):
+        self.display_handlers.display_message(
+            Text("🎮 Chat history cleared.", style=RICH_STYLE_YELLOW_BOLD)
+        )
+        self.display_handlers.clear_files()
+        self.session_cost = 0
+        self._token_usage = TokenUsage()
+        self._total_cost = 0
+
+    def _on_conversations_listed(self, conversations: list[dict]):
+        self.display_handlers.display_conversations(
+            conversations,
+            get_history_callback=self.conversation_handler.get_conversation_history,
+            delete_callback=self.conversation_handler.delete_conversations,
+        )
+        self.conversation_handler.update_cached_conversations(conversations)
+
+    def _on_conversation_loaded(self, **data):
+        loaded_text = Text("Loaded conversation: ", style=RICH_STYLE_YELLOW)
+        loaded_text.append(data.get("id", "N/A"))
+        self.display_handlers.display_message(loaded_text)
+        token_usage = data.get("token_usage")
+        if token_usage is not None:
+            self._token_usage = token_usage
+        self.session_cost = 0.0
+        self._total_cost = 0.0
+
+    def _on_conversation_saved(self, **data):
+        logger.info(f"Conversation saved: {data.get('id', 'N/A')}")
+
+    def _on_conversations_changed(self, **data):
+        pass
+
+    def _on_consolidation_completed(self, result: dict):
+        self.display_handlers.display_consolidation_result(result)
+        self.display_handlers.display_loaded_conversation(
+            self.message_handler.streamline_messages,
+            self.message_handler.agent.name,
+        )
+
+    def _on_unconsolidation_completed(self, **data):
+        self.display_handlers.display_loaded_conversation(
+            self.message_handler.streamline_messages,
+            self.message_handler.agent.name,
+        )
+
+    # ── Agent / Model handlers ──
+
+    def _on_agent_changed(self, agent_name: str):
+        agent_text = Text("Switched to ", style=RICH_STYLE_YELLOW)
+        agent_text.append(f"{agent_name} agent")
+        self.display_handlers.display_message(agent_text)
+
+    def _on_agent_changed_by_transfer(self, **data):
+        transfer_text = Text("Transfered to ", style=RICH_STYLE_YELLOW)
+        transfer_text.append(f"{data.get('agent_name', 'other')} agent")
+        self.display_handlers.display_message(transfer_text)
+
+    def _on_agents_listed(self, agents: dict):
+        self.display_handlers.display_agents(agents)
+
+    def _on_agent_command_result(self, **data):
+        pass
+
+    def _on_model_changed(self, **data):
+        model_text = Text("Switched to ", style=RICH_STYLE_YELLOW)
+        model_text.append(f"{data['name']} ({data['id']})")
+        self.display_handlers.display_message(model_text)
+
+    def _on_models_listed(self, models_by_provider: dict):
+        self.display_handlers.display_models(models_by_provider)
+
+    # ── Evolution handlers ──
+
+    def _on_evolution_started(self, **data):
+        agent_name = data.get("agent_name", "Agent") if data else "Agent"
+        self.ui_effects.start_evolution_animation(agent_name)
+
+    def _on_evolution_finished(self, **data):
+        self.ui_effects.stop_evolution_animation()
+
+    def _on_evolution_summary(self, **data):
+        self.ui_effects.stop_evolution_animation()
+        self.display_handlers.display_evolution_summary(data)
+        self.input_handler._stop_input_thread()
+        choice = self.input_handler.get_choice_input(
+            "Review prompt evolution proposal:",
+            ["accept", "edit", "decline"],
+            default="accept",
+        )
+        if choice == "accept":
+            asyncio.run(self.message_handler.submit_pending_evolution_review("accept"))
+        elif choice == "edit":
+            edited = self.input_handler.get_prompt_input(
+                "Edit approved summary (Alt+Enter or Ctrl+S to submit):",
+                default=data.get("user_editable_summary", ""),
             )
-        elif event == "conversations_listed":
-            self.display_handlers.display_conversations(
-                data,
-                get_history_callback=self.conversation_handler.get_conversation_history,
-                delete_callback=self.conversation_handler.delete_conversations,
-            )
-            self.conversation_handler.update_cached_conversations(data)
-        elif event == "conversation_loaded":
-            loaded_text = Text("Loaded conversation: ", style=RICH_STYLE_YELLOW)
-            loaded_text.append(data.get("id", "N/A"))
-            self.display_handlers.display_message(loaded_text)
-            token_usage = data.get("token_usage", None)
-            if token_usage is not None:
-                self._token_usage = token_usage
-            self.session_cost = 0.0
-            self._total_cost = 0.0
-        elif event == "conversation_saved":
-            logger.info(f"Conversation saved: {data.get('id', 'N/A')}")
-        elif event == "update_token_usage":
-            self._token_usage = self._token_usage.merge(
-                TokenUsage(
-                    input_tokens=data.get("input_tokens", 0),
-                    output_tokens=data.get("output_tokens", 0),
-                    cached_tokens=data.get("cached_tokens", 0),
+            action = "edit" if edited.strip() else "decline"
+            asyncio.run(
+                self.message_handler.submit_pending_evolution_review(
+                    action, edited.strip()
                 )
             )
-            self._calculate_token_usage(self._token_usage)
-        elif event == "learn_behavior_confirmation":
-            self._handle_learn_behavior_confirmation(data)
-        elif event == "voice_recording_started":
-            self.display_handlers.display_message(
-                Text("Start recording. Press Enter to stop...", style="bold yellow")
-            )
-        elif event == "voice_activate":
-            if data:
-                self._set_voice_processing_state(True)
-                threading.Thread(
-                    target=self._process_voice_activation,
-                    args=(data,),
-                    daemon=True,
-                ).start()
+        else:
+            asyncio.run(self.message_handler.submit_pending_evolution_review("decline"))
+        self.input_handler._start_input_thread()
 
-        elif event == "voice_recording_stopping":
-            self.display_handlers.display_message(
-                Text("⏹️  Stopping recording...", style="bold yellow")
+    def _on_evolution_applied(self, **data):
+        self.ui_effects.stop_evolution_animation()
+        result_text = Text("🧬 Prompt evolution applied for ", style=RICH_STYLE_YELLOW)
+        result_text.append(data["agent_name"], style=RICH_STYLE_GREEN)
+        self.display_handlers.display_message(result_text)
+        self.display_handlers.display_prompt_evolution_result(
+            data,
+            max_width=max(30, (self.console.width // 2) - 6),
+        )
+
+    def _on_evolution_declined(self, **data):
+        self.display_handlers.display_message(
+            Text("Prompt evolution declined.", style=RICH_STYLE_YELLOW)
+        )
+
+    # ── UX handlers ──
+
+    def _on_error(self, message: str, **details):
+        self.display_handlers.display_error(message)
+        self.ui_effects.cleanup()
+
+    def _on_system_message(self, message):
+        self.display_handlers.display_message(message)
+
+    def _on_debug_requested(self, **debug_info):
+        self.display_handlers.display_debug_info(debug_info)
+
+    def _on_think_budget_set(self, budget):
+        thinking_text = Text("Thinking budget set to ", style=RICH_STYLE_YELLOW)
+        thinking_text.append(f"{budget} tokens.")
+        self.display_handlers.display_message(thinking_text)
+
+    def _on_update_token_usage(self, **data):
+        self._token_usage = self._token_usage.merge(
+            TokenUsage(
+                input_tokens=data.get("input_tokens", 0),
+                output_tokens=data.get("output_tokens", 0),
+                cached_tokens=data.get("cached_tokens", 0),
             )
-        elif event == "voice_recording_completed":
-            pass
+        )
+        self._calculate_token_usage(self._token_usage)
+
+    def _on_jump_performed(self, **data):
+        jump_text = Text(
+            f"🕰️ Jumping to turn {data['turn_number']}...\n",
+            style=RICH_STYLE_YELLOW_BOLD,
+        )
+        preview_text = Text("Conversation rewound to: ", style=RICH_STYLE_YELLOW)
+        preview_text.append(data["preview"])
+        self._clear_and_reprint_chat()
+        self.display_handlers.display_message(jump_text)
+        self.display_handlers.display_message(preview_text)
+        self.input_handler.set_current_buffer(data["message"])
+
+    def _on_fork_and_switch(self, **data):
+        fork_text = Text(
+            f"🍴 Forked at turn {data['turn_number']}...\n",
+            style=RICH_STYLE_YELLOW_BOLD,
+        )
+        preview_text = Text("Switched to fork: ", style=RICH_STYLE_YELLOW)
+        preview_text.append(data["preview"])
+        self._clear_and_reprint_chat()
+        self.display_handlers.display_message(fork_text)
+        self.display_handlers.display_message(preview_text)
+
+    def _on_learn_confirmation(self, **data):
+        self._handle_learn_behavior_confirmation(data)
+
+    def _on_mcp_prompt(self, **data):
+        self.confirmation_handler.display_mcp_prompt_confirmation(
+            data, self.input_handler._input_queue
+        )
+
+    def _on_transfer_enforce_toggled(self, **data):
+        pass
+
+    # ── Voice handlers ──
+
+    def _on_voice_recording_started(self, **data):
+        self.display_handlers.display_message(
+            Text("Start recording. Press Enter to stop...", style="bold yellow")
+        )
+
+    def _on_voice_activate(self, transcript: str):
+        if transcript:
+            self._set_voice_processing_state(True)
+            threading.Thread(
+                target=self._process_voice_activation,
+                args=(transcript,),
+                daemon=True,
+            ).start()
+
+    def _on_voice_recording_stopping(self, **data):
+        self.display_handlers.display_message(
+            Text("⏹️  Stopping recording...", style="bold yellow")
+        )
+
+    def _on_voice_recording_completed(self, **data):
+        pass
 
     def _handle_learn_behavior_confirmation(self, data: Any):
         """Handle learn behavior confirmation request from the /learn command."""
@@ -624,6 +772,7 @@ class ConsoleUI(Observer):
         self.print_welcome_message()
 
         self.session_cost = 0.0
+        self._register_subscriptions()
 
         try:
             while True:

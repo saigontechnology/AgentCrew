@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from AgentCrew.modules.events import AppEvents
 from typing import Callable, Tuple, TYPE_CHECKING
 
 from AgentCrew.modules.agents.local_agent import LocalAgent
@@ -42,7 +43,9 @@ class ConversationCommands:
                         self.message_handler.streamline_messages
                     )
 
-                    self.message_handler._notify("consolidation_completed", result)
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.CONSOLIDATION_COMPLETED, result=result
+                    )
 
                     if (
                         self.message_handler.current_conversation_id
@@ -55,9 +58,9 @@ class ConversationCommands:
                                 True,
                             )
                         except Exception as e:
-                            self.message_handler._notify(
-                                "error",
-                                f"Failed to save consolidated conversation: {str(e)}",
+                            self.message_handler.bus.emit_sync(
+                                AppEvents.ERROR,
+                                message=f"Failed to save consolidated conversation: {str(e)}",
                             )
 
                     message = (
@@ -65,29 +68,31 @@ class ConversationCommands:
                         f"preserving {result['messages_preserved']} recent messages. "
                         f"Token savings: ~{result['original_token_count'] - result['consolidated_token_count']}"
                     )
-                    self.message_handler._notify("system_message", message)
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE, message=message
+                    )
                 else:
-                    self.message_handler._notify(
-                        "system_message",
-                        f"Consolidation skipped: {result['reason']}",
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE,
+                        message=f"Consolidation skipped: {result['reason']}",
                     )
 
                 return CommandResult(handled=True, clear_flag=True)
             else:
-                self.message_handler._notify(
-                    "error",
-                    "Consolidation is only supported with LocalAgent.",
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message="Consolidation is only supported with LocalAgent.",
                 )
                 return CommandResult(handled=False, clear_flag=False)
         except ValueError as e:
-            self.message_handler._notify(
-                "error",
-                f"Invalid consolidation parameter: {str(e)}. Use /consolidate [number]",
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR,
+                message=f"Invalid consolidation parameter: {str(e)}. Use /consolidate [number]",
             )
             return CommandResult(handled=True, clear_flag=True)
         except Exception as e:
-            self.message_handler._notify(
-                "error", f"Error during consolidation: {str(e)}"
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Error during consolidation: {str(e)}"
             )
             return CommandResult(handled=True, clear_flag=True)
 
@@ -106,7 +111,9 @@ class ConversationCommands:
                         self.message_handler.streamline_messages
                     )
 
-                    self.message_handler._notify("unconsolidation_completed", result)
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.UNCONSOLIDATION_COMPLETED, result=result
+                    )
 
                     if (
                         self.message_handler.current_conversation_id
@@ -119,32 +126,34 @@ class ConversationCommands:
                                 True,
                             )
                         except Exception as e:
-                            self.message_handler._notify(
-                                "error",
-                                f"Failed to save unconsolidated conversation: {str(e)}",
+                            self.message_handler.bus.emit_sync(
+                                AppEvents.ERROR,
+                                message=f"Failed to save unconsolidated conversation: {str(e)}",
                             )
 
                     message = (
                         f"Unconsolidated last consolidated message containing "
                         f"{result['messages_restored']} original messages."
                     )
-                    self.message_handler._notify("system_message", message)
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE, message=message
+                    )
                 else:
-                    self.message_handler._notify(
-                        "system_message",
-                        f"Unconsolidation skipped: {result['reason']}",
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE,
+                        message=f"Unconsolidation skipped: {result['reason']}",
                     )
 
                 return CommandResult(handled=True, clear_flag=True)
             else:
-                self.message_handler._notify(
-                    "error",
-                    "Unconsolidation is only supported with LocalAgent.",
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message="Unconsolidation is only supported with LocalAgent.",
                 )
                 return CommandResult(handled=False, clear_flag=False)
         except Exception as e:
-            self.message_handler._notify(
-                "error", f"Error during unconsolidation: {str(e)}"
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Error during unconsolidation: {str(e)}"
             )
             return CommandResult(handled=True, clear_flag=True)
 
@@ -160,9 +169,9 @@ class ConversationCommands:
 
             if len(parts) == 1:
                 if not self.message_handler.conversation_turns:
-                    self.message_handler._notify(
-                        "system_message",
-                        "No conversation turns available for jumping.",
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE,
+                        message="No conversation turns available for jumping.",
                     )
                     return True
 
@@ -176,7 +185,9 @@ class ConversationCommands:
                     + "\n".join(turns_info)
                     + "\n\nUsage: /jump <turn_number>"
                 )
-                self.message_handler._notify("system_message", message)
+                self.message_handler.bus.emit_sync(
+                    AppEvents.SYSTEM_MESSAGE, message=message
+                )
                 return True
 
             turn_number = int(parts[1])
@@ -184,9 +195,9 @@ class ConversationCommands:
             if turn_number < 1 or turn_number > len(
                 self.message_handler.conversation_turns
             ):
-                self.message_handler._notify(
-                    "error",
-                    f"Invalid turn number. Available turns: 1-{len(self.message_handler.conversation_turns)}",
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message=f"Invalid turn number. Available turns: 1-{len(self.message_handler.conversation_turns)}",
                 )
                 return False
 
@@ -242,20 +253,18 @@ class ConversationCommands:
             else:
                 selected_content = selected_message.get("content", "")
 
-            self.message_handler._notify(
-                "jump_performed",
-                {
-                    "turn_number": turn_number,
-                    "preview": selected_turn.get_preview(100),
-                    "message": selected_content,
-                },
+            self.message_handler.bus.emit_sync(
+                AppEvents.JUMP_PERFORMED,
+                turn_number=turn_number,
+                preview=selected_turn.get_preview(100),
+                message=selected_content,
             )
 
             return True
 
         except ValueError:
-            self.message_handler._notify(
-                "error", "Invalid turn number. Please provide a number."
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message="Invalid turn number. Please provide a number."
             )
             return False
 
@@ -271,9 +280,9 @@ class ConversationCommands:
 
             if len(parts) == 1:
                 if not self.message_handler.conversation_turns:
-                    self.message_handler._notify(
-                        "system_message",
-                        "No conversation turns available for forking.",
+                    self.message_handler.bus.emit_sync(
+                        AppEvents.SYSTEM_MESSAGE,
+                        message="No conversation turns available for forking.",
                     )
                     return CommandResult(handled=True, clear_flag=True)
 
@@ -287,7 +296,9 @@ class ConversationCommands:
                     + "\n".join(turns_info)
                     + "\n\nUsage: /fork <turn_number>"
                 )
-                self.message_handler._notify("system_message", message)
+                self.message_handler.bus.emit_sync(
+                    AppEvents.SYSTEM_MESSAGE, message=message
+                )
                 return CommandResult(handled=True, clear_flag=True)
 
             turn_arg = parts[1]
@@ -296,9 +307,9 @@ class ConversationCommands:
             if turn_number < 1 or turn_number > len(
                 self.message_handler.conversation_turns
             ):
-                self.message_handler._notify(
-                    "error",
-                    f"Invalid turn number. Available turns: 1-{len(self.message_handler.conversation_turns)}",
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message=f"Invalid turn number. Available turns: 1-{len(self.message_handler.conversation_turns)}",
                 )
                 return CommandResult(handled=True, clear_flag=True)
 
@@ -309,22 +320,18 @@ class ConversationCommands:
                 turn_number
             )
             if success:
-                self.message_handler._notify(
-                    "fork_and_switch_performed",
-                    {
-                        "turn_number": turn_number,
-                        "preview": preview,
-                    },
+                self.message_handler.bus.emit_sync(
+                    AppEvents.FORK_AND_SWITCH, turn_number=turn_number, preview=preview
                 )
             return CommandResult(handled=success, clear_flag=True)
 
         except ValueError:
-            self.message_handler._notify(
-                "error", "Invalid turn number. Please provide a number."
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message="Invalid turn number. Please provide a number."
             )
             return CommandResult(handled=True, clear_flag=True)
         except Exception as e:
-            self.message_handler._notify(
-                "error", f"Failed to fork conversation: {str(e)}"
+            self.message_handler.bus.emit_sync(
+                AppEvents.ERROR, message=f"Failed to fork conversation: {str(e)}"
             )
             return CommandResult(handled=True, clear_flag=True)
