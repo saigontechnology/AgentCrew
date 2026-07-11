@@ -1,6 +1,19 @@
 # AgentCrew Plugin Development
 
-AgentCrew plugins can subscribe to application events and register `tool.execute` hooks. Plugins are discovered from local Python sources or the `agentcrew.plugins` Python entry-point group.
+AgentCrew plugins can subscribe to application events and register `tool.execute`
+hooks. Plugins are discovered from local Python sources or the `agentcrew.plugins`
+Python entry-point group.
+
+> **When to build a plugin:**
+> - You need custom behavior on every tool execution (logging, auditing, transforming)
+> - You want to react to application events (message sent, tool completed, agent changed)
+> - You are building integrations that should work across all agents without configuration
+> - You want to package and share reusable extensions with the community
+>
+> **When not to build a plugin:**
+> - A custom tool registered with a specific agent is sufficient
+> - The behavior is temporary or experimental
+> - You can achieve the same result by configuring an MCP server
 
 ## Plugin interface
 

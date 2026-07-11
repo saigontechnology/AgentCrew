@@ -2,6 +2,17 @@
 
 This guide explains how to build and run AgentCrew using Docker.
 
+> **When to use Docker:**
+> - You want to run AgentCrew on a server without a desktop environment
+> - You need isolation from your host system's Python environment
+> - You are deploying AgentCrew as a service (A2A server)
+> - You want consistent behavior across different machines
+>
+> **When not to use Docker:**
+> - You are using the desktop GUI (requires display server passthrough)
+> - You want the fastest possible startup time
+> - You are on a resource-constrained system
+
 ## Quick Start
 
 ### 1. Run AgentCrew

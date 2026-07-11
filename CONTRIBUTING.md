@@ -1,9 +1,16 @@
 # Contributing to AgentCrew
 
-Thank you for your interest in contributing to AgentCrew! 🎉 We're excited to
+Thank you for your interest in contributing to AgentCrew! 🎉 We are excited to
 collaborate with you and appreciate contributions of all kinds, no matter how
 small. AgentCrew is a community-driven project, and your participation helps
 make it better for everyone.
+
+> **When to contribute:**
+> - You found a bug and want to fix it
+> - You have an idea for a feature that would benefit other users
+> - You noticed documentation that could be clearer
+> - You want to add tests or improve test coverage
+> - You built a cool agent configuration or tool you want to share
 
 ## 🌟 Ways to Contribute
 

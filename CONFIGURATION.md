@@ -1,12 +1,22 @@
 # AgentCrew Configuration Guide
 
-This guide explains how to configure AgentCrew to work with different AI
-providers, customize agents, set up tools, and manage system settings.
+This guide explains how to configure AgentCrew for different AI providers,
+custom agents, tools, and system settings. Use it as a reference when you need
+to change providers, add a new agent, connect external tools, or tune
+performance.
+
+> **When to use this guide:**
+> - Setting up a new provider for the first time
+> - Adding a new agent with specific tools and instructions
+> - Connecting external services via MCP
+> - Troubleshooting configuration issues
+> - Sharing agent configurations with a team
 
 ## Configuration Files
 
 AgentCrew stores all configuration in `~/.AgentCrew/` (or
-`%USERPROFILE%\.AgentCrew\` on Windows):
+`%USERPROFILE%\.AgentCrew\` on Windows). You can edit these files directly
+or manage them through the GUI settings panel.
 
 ```
 ~/.AgentCrew/
@@ -18,6 +28,12 @@ AgentCrew stores all configuration in `~/.AgentCrew/` (or
 └── conversations/           # Saved conversation history
 ```
 
+> **When to edit each file:**
+> - `config.json` — changing providers, API keys, themes, global preferences
+> - `agents.toml` — creating, modifying, or removing agents
+> - `mcp_servers.json` — connecting external tools via MCP
+> - `adaptive.json` — reviewing behaviors the agent has learned (auto-managed)
+
 ## Global Configuration (config.json)
 
 The main configuration file controls API keys, UI preferences, and system
@@ -25,16 +41,17 @@ behavior.
 
 ### API Keys
 
-Add your API keys to connect AgentCrew with AI providers:
+Add your API keys to connect AgentCrew with AI providers. Open-source friendly
+and budget options are listed first:
 
 ```json
 {
   "api_keys": {
-    "ANTHROPIC_API_KEY": "sk-ant-...",
+    "CROFAI_API_KEY": "your-key",
+    "DEEPINFRA_API_KEY": "your-key",
     "OPENAI_API_KEY": "sk-proj-...",
     "GEMINI_API_KEY": "AIza...",
-    "GITHUB_COPILOT_API_KEY": "",
-    "DEEPINFRA_API_KEY": "",
+    "ANTHROPIC_API_KEY": "sk-ant-...",
     "TAVILY_API_KEY": "tvly-...",
     "VOYAGE_API_KEY": "pa-...",
     "ELEVENLABS_API_KEY": ""
@@ -44,27 +61,29 @@ Add your API keys to connect AgentCrew with AI providers:
 
 **Required Keys:**
 
-- At least one AI provider key (Anthropic, OpenAI, Gemini, etc.)
+- At least one AI provider key (CrofAI, DeepInfra, OpenAI, Gemini, Anthropic, etc.)
 
 **Optional Keys:**
 
-- `CROFAI_API_KEY` - For CrofAI's OpenAI-compatible LLM provider
-- `CROFAI_BASE_URL` - Optional CrofAI endpoint override (defaults to `https://crof.ai/v1`)
-- `TAVILY_API_KEY` - For web search capabilities
-- `VOYAGE_API_KEY` - For alternative embedding provider
-- `ELEVENLABS_API_KEY` - For voice synthesis
+- `CROFAI_API_KEY` — For CrofAI, an open-source friendly OpenAI-compatible provider
+- `CROFAI_BASE_URL` — Optional CrofAI endpoint override (defaults to `https://crof.ai/v1`)
+- `TAVILY_API_KEY` — For web search capabilities
+- `VOYAGE_API_KEY` — For alternative embedding provider
+- `ELEVENLABS_API_KEY` — For voice synthesis
 
 **Getting API Keys:**
 
-- Anthropic Claude: <https://console.anthropic.com/>
-- OpenAI: <https://platform.openai.com/api-keys>
-- Google Gemini: <https://aistudio.google.com/apikey>
-- GitHub Copilot: Authenticate using `agentcrew copilot-auth`
-- DeepInfra: <https://deepinfra.com/dash/api_keys>
-- CrofAI: <https://crof.ai/>
-- Tavily: <https://tavily.com/>
-- Voyage AI: <https://www.voyageai.com/>
-- ElevenLabs: <https://elevenlabs.io/>
+- **CrofAI:** <https://crof.ai/> — open-source friendly, low-cost
+- **DeepInfra:** <https://deepinfra.com/dash/api_keys> — open models (LLaMA, Qwen)
+- **OpenCode Go:** Subscription-based, no API key — run `agentcrew chat --provider opencode_go`
+- **Command Code:** Subscription-based — curated frontier models
+- **OpenAI:** <https://platform.openai.com/api-keys>
+- **Google Gemini:** <https://aistudio.google.com/apikey> — free tier available
+- **Anthropic Claude:** <https://console.anthropic.com/>
+- **GitHub Copilot:** Authenticate using `agentcrew copilot-auth`
+- **Tavily:** <https://tavily.com/>
+- **Voyage AI:** <https://www.voyageai.com/>
+- **ElevenLabs:** <https://elevenlabs.io/>
 
 ### CrofAI
 
@@ -168,34 +187,50 @@ Add OpenAI-compatible providers like llama.cpp, Ollama, or LM Studio:
 
 ### Global Settings
 
-Control UI appearance and system behavior:
+Control UI appearance, system behavior, and context management:
 
 ```json
 {
   "global_settings": {
     "theme": "saigontech",
     "yolo_mode": false,
-    "auto_context_shrink": true
+    "auto_context_shrink": true,
+    "shrink_excluded": []
   }
 }
 ```
 
 **Settings:**
 
-- `theme` - UI color scheme
+- `theme` — UI color scheme
   - Options: `"saigontech"`, `"dracula"`, `"nord"`, `"catppuccin"`, `"unicorn"`,
     `"atom_light"`
   - Default: `"saigontech"`
 
-- `yolo_mode` - Auto-approve all tool usage without prompts
-  - `true` - Tools execute automatically (use with caution)
-  - `false` - Prompt for approval before each tool use (safer)
+- `yolo_mode` — Auto-approve all tool usage without prompts
+  - `true` — Tools execute automatically (use with caution)
+  - `false` — Prompt for approval before each tool use (safer)
   - Default: `false`
 
-- `auto_context_shrink` - Automatically consolidate conversation history
-  - `true` - Reduce token usage by summarizing old messages
-  - `false` - Keep full conversation history
+- `auto_context_shrink` — Automatically shrink tool results to stay within the model's context window
+  - **How it works:** When the total input tokens exceed 85% of the model's maximum
+    context limit, AgentCrew starts replacing verbose tool result content with a
+    compact placeholder that shows only the tool name and its arguments (e.g.,
+    `[tool:web_search(query=latest python ...) was truncated]`). The last 10
+    messages are always kept intact regardless of token usage.
+  - `true` — Enable automatic shrinking (recommended for long conversations)
+  - `false` — Keep all tool results in full (may hit context limits)
   - Default: `true`
+
+- `shrink_excluded` — List of tool names that should never have their results
+  shrunk, even when `auto_context_shrink` is enabled
+  - **When to use:** Some tools return critical data that the agent needs in full
+    (e.g., `search_memory`, `read_file`, `web_search`). Adding them here preserves
+    their results.
+  - **Note:** `activate_skill` and `search_memory` are always excluded
+    automatically and do not need to be listed here.
+  - Example: `["web_search", "read_file", "code_analysis"]`
+  - Default: `[]` (empty list)
 
 ### Plugins
 
@@ -610,9 +645,22 @@ export AGENTCREW_FAST_CODEX="1"
 
 # Enable debug logging
 export LOGURU_LEVEL="DEBUG"
+
+# Context shrinking — override the 85% default max context threshold (token count)
+export AGENTCREW_DEFAULT_MAX_CONTEXT="120000"
+
+# Context shrinking — keep more (or fewer) recent messages untouched (default: 10)
+export AGENTCREW_CONTEXT_SHRINK_THRESHOLD="10"
 ```
 
 > **NOTED**: config.json values take priority over environment variables.
+
+### Context Shrinking Environment Variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `AGENTCREW_DEFAULT_MAX_CONTEXT` | Overrides the token threshold at which shrinking activates. Set to a number of tokens (e.g., `120000`). The default is 85% of the model's maximum context window. | `85% of model max context` |
+| `AGENTCREW_CONTEXT_SHRINK_THRESHOLD` | Controls how many of the most recent messages are always preserved in full, regardless of token usage. | `10` |
 
 ## Configuration Priority
 
