@@ -53,7 +53,7 @@ def cli():
 
 
 def cli_prod():
-    if sys.argv[1] == "--version":
+    if len(sys.argv) > 1 and sys.argv[1] == "--version":
         click.echo(f"AgentCrew version: {get_current_version()}")
         exit(0)
     os.environ["AGENTCREW_LOG_PATH"] = os.getenv(
