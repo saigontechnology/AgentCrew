@@ -58,7 +58,7 @@ class TavilySearchService:
             print(f"❌ Search error: {str(e)}")
             return {"error": str(e)}
 
-    def extract(self, url: str, include_images: bool = True) -> dict[str, Any]:
+    def extract(self, url: str, include_images: bool = False) -> dict[str, Any]:
         """
         Extract content from a specific URL using Tavily API.
 

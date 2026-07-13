@@ -54,7 +54,12 @@ def get_web_extract_tool_definition():
         "url": {
             "type": "string",
             "description": "The complete HTTP or HTTPS web address to retrieve content from (e.g., 'https://example.com/page'). Ensure the URL is valid and accessible. Verify the URL's relevance to the user's request before fetching.",
-        }
+        },
+        "include_images": {
+            "type": "boolean",
+            "description": "Whether to include extracted images from the page in the results. Set to True when the page may contain graphs, product images, diagrams, or other visual content that would be useful.",
+            "default": False,
+        },
     }
     tool_required = ["url"]
     return {
@@ -145,7 +150,8 @@ def get_web_extract_tool_handler(tavily_service: TavilySearchService):
         if not url:
             return "Error: No URL provided."
 
-        results = tavily_service.extract(url=url, include_images=True)
+        include_images = params.get("include_images", False)
+        results = tavily_service.extract(url=url, include_images=include_images)
 
         if "failed_results" in results and results["failed_results"]:
             err = results["failed_results"][0]
