@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from datetime import datetime
 from typing import Any
 
@@ -8,9 +9,33 @@ from loguru import logger
 
 class GlobalConfig:
     """
-    Manages the global config file (~/.agentcrew/config.json).
+    Singleton that manages the global config file (~/.agentcrew/config.json).
     Covers: last-used settings, API keys, auto-approval tools, custom LLM providers.
+
+    Config is cached in-memory after the first read and only re-read from disk
+    when the file's modification time changes. This avoids repeated file I/O
+    from the many call sites that access global config across the application.
     """
+
+    _instance: "GlobalConfig | None" = None
+    _instance_lock: threading.Lock = threading.Lock()
+
+    _cached_config: dict[str, Any] | None = None
+    _cached_mtime: float | None = None
+    _cache_lock: threading.Lock = threading.Lock()
+
+    def __new__(cls) -> "GlobalConfig":
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self) -> None:
+        if self._initialized:
+            return
+        self._initialized = True
 
     @property
     def _path(self) -> str:
@@ -20,8 +45,9 @@ class GlobalConfig:
         return os.path.expanduser(path)
 
     def read(self) -> dict[str, Any]:
-        """Reads data from the global config.json file."""
+        """Reads data from the global config.json file, using cached data when possible."""
         config_path = self._path
+
         default_config = {
             "api_keys": {},
             "auto_approval_tools": [],
@@ -31,35 +57,59 @@ class GlobalConfig:
                 "yolo_mode": False,
                 "auto_context_shrink": True,
                 "shrink_excluded": [],
+                "trusted_project_plugins": False,
             },
         }
-        try:
+
+        with self._cache_lock:
+            # Return cached data if the file hasn't changed since last read
+            if self._cached_config is not None and self._cached_mtime is not None:
+                try:
+                    current_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
+                    if current_mtime == self._cached_mtime:
+                        return self._cached_config
+                except OSError:
+                    pass
+
+            # File doesn't exist — cache default and return
             if not os.path.exists(config_path):
-                return default_config
-            with open(config_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if not isinstance(data, dict):
-                    logger.warning(
-                        f"Warning: Global config file {config_path} does not contain a valid JSON object. Returning default."
-                    )
-                    return default_config
-                if "api_keys" not in data or not isinstance(data.get("api_keys"), dict):
-                    data["api_keys"] = {}
-                if "auto_approval_tools" not in data or not isinstance(
-                    data.get("auto_approval_tools"), list
-                ):
-                    data["auto_approval_tools"] = []
-                return data
-        except json.JSONDecodeError:
-            logger.warning(
-                f"Warning: Error decoding global config file {config_path}. Returning default config."
-            )
-            return default_config
-        except Exception as e:
-            logger.warning(
-                f"Warning: Could not read global config file {config_path}: {e}. Returning default config."
-            )
-            return default_config
+                self._cached_config = dict(default_config)
+                self._cached_mtime = 0
+                return self._cached_config
+
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if not isinstance(data, dict):
+                        logger.warning(
+                            f"Warning: Global config file {config_path} does not contain a valid JSON object. Returning default."
+                        )
+                        self._cached_config = dict(default_config)
+                        self._cached_mtime = os.path.getmtime(config_path)
+                        return self._cached_config
+                    if "api_keys" not in data or not isinstance(data.get("api_keys"), dict):
+                        data["api_keys"] = {}
+                    if "auto_approval_tools" not in data or not isinstance(
+                        data.get("auto_approval_tools"), list
+                    ):
+                        data["auto_approval_tools"] = []
+                    self._cached_config = data
+                    self._cached_mtime = os.path.getmtime(config_path)
+                    return data
+            except json.JSONDecodeError:
+                logger.warning(
+                    f"Warning: Error decoding global config file {config_path}. Returning default config."
+                )
+                self._cached_config = dict(default_config)
+                self._cached_mtime = 0
+                return self._cached_config
+            except Exception as e:
+                logger.warning(
+                    f"Warning: Could not read global config file {config_path}: {e}. Returning default config."
+                )
+                self._cached_config = dict(default_config)
+                self._cached_mtime = 0
+                return self._cached_config
 
     def write(self, config_data: dict[str, Any]) -> None:
         """Writes data to the global config.json file."""
@@ -72,6 +122,15 @@ class GlobalConfig:
                 os.makedirs(dir_path, exist_ok=True)
             with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(config_data, f, indent=2)
+
+            # Update cache and mtime immediately so subsequent reads don't re-read
+            with self._cache_lock:
+                self._cached_config = config_data
+                try:
+                    self._cached_mtime = os.path.getmtime(config_path)
+                except OSError:
+                    self._cached_mtime = None
+
             agent_manager = AgentManager.get_instance()
             agent_manager.context_shrink_enabled = config_data.get(
                 "global_settings", {}
