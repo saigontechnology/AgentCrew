@@ -291,7 +291,7 @@ class InputHandler:
         default=None,
         tab_forward: str | None = None,
         tab_backward: str | None = None,
-        bottom_toolbar = None,
+        bottom_toolbar=None,
     ) -> str:
         from prompt_toolkit.shortcuts.choice_input import ChoiceInput
         from prompt_toolkit.styles import Style
@@ -311,11 +311,13 @@ class InputHandler:
             event.app.exit(result="", style="class:accepted")
 
         if tab_forward is not None:
+
             @kb.add(Keys.Tab)
             def _(event):
                 event.app.exit(result=tab_forward, style="class:accepted")
 
         if tab_backward is not None:
+
             @kb.add(Keys.Backspace)
             def _(event):
                 event.app.exit(result=tab_backward, style="class:accepted")

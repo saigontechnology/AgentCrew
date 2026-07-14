@@ -49,12 +49,9 @@ class _ConversationEvents:
     """Events related to conversation lifecycle."""
 
     USER_MESSAGE_CREATED = "user_message_created"
-    USER_CONTEXT_REQUEST = "user_context_request"
     FILE_PROCESSING = "file_processing"
     FILE_PROCESSED = "file_processed"
     FILE_DROPPED = "file_dropped"
-    IMAGE_GENERATED = "image_generated"
-    CONVERSATIONS_LISTED = "conversations_listed"
     CONVERSATION_LOADED = "conversation_loaded"
     CONVERSATION_SAVED = "conversation_saved"
     CONVERSATIONS_CHANGED = "conversations_changed"
@@ -228,15 +225,6 @@ class FileDroppedPayload(TypedDict):
     file_path: str
 
 
-class ImageGeneratedPayload(TypedDict):
-    image_source: str
-    is_base64: bool
-
-
-class ConversationsListedPayload(TypedDict):
-    conversations: list[dict[str, Any]]
-
-
 class ConversationLoadedPayload(TypedDict):
     id: str
     history: list[dict[str, Any]]
@@ -401,7 +389,7 @@ class ToolExecuteResult(TypedDict, total=False):
 #  Event → Payload mapping (runtime introspection)
 # ──────────────────────────────────────────────
 
-EVENT_PAYLOAD_MAP: dict[str, type[TypedDict] | None] = {
+EVENT_PAYLOAD_MAP: dict[str, type[Any] | None] = {
     AppEvents.THINKING_STARTED: ThinkingStartedPayload,
     AppEvents.THINKING_CHUNK: ThinkingChunkPayload,
     AppEvents.THINKING_COMPLETED: ThinkingCompletedPayload,
@@ -418,12 +406,9 @@ EVENT_PAYLOAD_MAP: dict[str, type[TypedDict] | None] = {
     AppEvents.TOOL_DENIED: ToolDeniedPayload,
     AppEvents.TOOL_CONFIRMATION_REQ: ToolConfirmationPayload,
     AppEvents.USER_MESSAGE_CREATED: UserMessageCreatedPayload,
-    AppEvents.USER_CONTEXT_REQUEST: None,
     AppEvents.FILE_PROCESSING: FileProcessingPayload,
     AppEvents.FILE_PROCESSED: FileProcessedPayload,
     AppEvents.FILE_DROPPED: FileDroppedPayload,
-    AppEvents.IMAGE_GENERATED: ImageGeneratedPayload,
-    AppEvents.CONVERSATIONS_LISTED: ConversationsListedPayload,
     AppEvents.CONVERSATION_LOADED: ConversationLoadedPayload,
     AppEvents.CONVERSATION_SAVED: ConversationSavedPayload,
     AppEvents.CONVERSATIONS_CHANGED: None,

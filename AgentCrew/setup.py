@@ -42,17 +42,25 @@ class ApplicationSetup:
         self.services: dict[str, Any] | None = None
         self.agent_manager: AgentManager | None = None
 
+        # Read config early (before setup_services) so PluginManager can
+        # respect the user's trust decision for project plugins.
+        _global_config = GlobalConfig().read()
+        _trusted = _global_config.get("global_settings", {}).get(
+            "trusted_project_plugins", False
+        )
+
         # Initialize events infrastructure
-        self.plugin_manager = PluginManager()
+        self.plugin_manager = PluginManager(
+            trusted_project_plugins=_trusted
+        )
         self._plugins_initialized = False
 
     async def initialize_plugins(self) -> None:
         """Discover and load all plugins transactionally."""
         if self._plugins_initialized:
             return
-        global_config = GlobalConfig().read()
         try:
-            await self.plugin_manager.load_all(config_json=global_config)
+            await self.plugin_manager.load_all()
         except BaseException:
             try:
                 await self.plugin_manager.unload_all()

@@ -3,7 +3,7 @@ from typing import Any
 from AgentCrew.modules.events import Hook, HookPhase, HookPoints, Plugin
 
 EVENT_NAME = "example.local.event"
-STATE = {"activations": 0, "deactivations": 0, "events": 0, "hooks": 0, "config": None}
+STATE = {"activations": 0, "deactivations": 0, "events": 0, "hooks": 0}
 
 
 class LocalExamplePlugin(Plugin):
@@ -15,11 +15,8 @@ class LocalExamplePlugin(Plugin):
     def version(self) -> str:
         return "1.0.0"
 
-    async def activate(
-        self, bus, hooks, plugin_config: dict[str, Any] | None = None
-    ) -> None:
+    async def activate(self, bus, hooks) -> None:
         STATE["activations"] += 1
-        STATE["config"] = plugin_config
         bus.on(EVENT_NAME, self._on_event)
         hooks.register(
             Hook(HookPoints.TOOL_EXECUTE, HookPhase.BEFORE, self._before_tool)

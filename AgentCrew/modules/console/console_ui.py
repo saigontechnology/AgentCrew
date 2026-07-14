@@ -174,7 +174,6 @@ class ConsoleUI:
             self.bus.on(AppEvents.CLEAR_REQUESTED, self._on_clear_requested),
             self.bus.on(AppEvents.FILE_PROCESSING, self._on_file_processing),
             self.bus.on(AppEvents.FILE_DROPPED, self._on_file_dropped),
-            self.bus.on(AppEvents.CONVERSATIONS_LISTED, self._on_conversations_listed),
             self.bus.on(AppEvents.CONVERSATION_LOADED, self._on_conversation_loaded),
             self.bus.on(AppEvents.CONVERSATION_SAVED, self._on_conversation_saved),
             self.bus.on(
@@ -226,7 +225,6 @@ class ConsoleUI:
             ),
             self.bus.on(AppEvents.AGENT_COMMAND_RESULT, self._on_agent_command_result),
             self.bus.on(AppEvents.FILE_PROCESSED, self._on_file_processed),
-            self.bus.on(AppEvents.IMAGE_GENERATED, self._on_image_generated),
             self.bus.on(AppEvents.USER_MESSAGE_CREATED, self._on_user_message_created),
         ]
 
@@ -358,9 +356,6 @@ class ConsoleUI:
     def _on_file_processed(self, **data):
         pass
 
-    def _on_image_generated(self, **data):
-        pass
-
     def _on_clear_requested(self, **data):
         self.display_handlers.display_message(
             Text("🎮 Chat history cleared.", style=RICH_STYLE_YELLOW_BOLD)
@@ -369,14 +364,6 @@ class ConsoleUI:
         self.session_cost = 0
         self._token_usage = TokenUsage()
         self._total_cost = 0
-
-    def _on_conversations_listed(self, conversations: list[dict]):
-        self.display_handlers.display_conversations(
-            conversations,
-            get_history_callback=self.conversation_handler.get_conversation_history,
-            delete_callback=self.conversation_handler.delete_conversations,
-        )
-        self.conversation_handler.update_cached_conversations(conversations)
 
     def _on_conversation_loaded(self, **data):
         loaded_text = Text("Loaded conversation: ", style=RICH_STYLE_YELLOW)

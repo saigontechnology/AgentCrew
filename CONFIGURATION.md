@@ -234,28 +234,19 @@ Control UI appearance, system behavior, and context management:
 
 ### Plugins
 
-Load plugins from local Python files or package directories through `config.json`:
+AgentCrew discovers plugins by scanning two filesystem directories:
 
-```json
-{
-  "plugins": {
-    "sources": [
-      {
-        "name": "example",
-        "path": "./plugins/example.py"
-      }
-    ],
-    "config": {
-      "example": {
-        "enabled": true,
-        "settings": {}
-      }
-    }
-  }
-}
-```
+- `.agentcrew/plugins/` — **project-based plugins** (higher precedence)
+- `~/.AgentCrew/plugins/` — **global plugins** (fallback)
 
-Installed packages can also expose plugins through the `agentcrew.plugins` Python entry-point group. Local sources take precedence when names conflict. See [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for lifecycle, EventBus, hook, cleanup, packaging, and verification details.
+Each entry may be a ``.py`` file (single-file plugin) or a subdirectory
+containing ``main.py`` (project plugin). Plugin directories are
+auto-created on first discovery. No configuration file is required.
+
+**Security**: Project plugins are **not activated automatically** unless
+``trusted_project_plugins=True`` is enabled. See
+[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for lifecycle, EventBus, hook,
+cleanup, and security details.
 
 ### Auto-Approval Tools
 

@@ -1,8 +1,19 @@
 # AgentCrew Plugin Development
 
 AgentCrew plugins can subscribe to application events and register `tool.execute`
-hooks. Plugins are discovered from local Python sources or the `agentcrew.plugins`
-Python entry-point group.
+hooks. Plugins are discovered by scanning two filesystem directories:
+
+1. `.agentcrew/plugins/` — **project-based plugins** (higher precedence)
+2. `~/.AgentCrew/plugins/` — **global plugins** (fallback)
+
+Each entry in these directories may be a `.py` file (single-file plugin) or a
+subdirectory containing `main.py` (project plugin).
+
+> **Security**: Project plugins are **not activated automatically** unless
+> `trusted_project_plugins=True` is passed to `PluginManager`. This prevents
+> automatic code execution when AgentCrew is run from an untrusted project
+> directory. Symlinked plugin entries are rejected. All resolved source paths
+> are logged before import.
 
 > **When to build a plugin:**
 > - You need custom behavior on every tool execution (logging, auditing, transforming)
@@ -24,11 +35,19 @@ from AgentCrew.modules.events import AppEvents, Hook, HookPhase, HookPoints, Plu
 
 
 class ExamplePlugin(Plugin):
-    name = "example"
-    version = "1.0.0"
-    dependencies = []
+    @property
+    def name(self):
+        return "example"
 
-    async def activate(self, bus, hooks, plugin_config=None):
+    @property
+    def version(self):
+        return "1.0.0"
+
+    @property
+    def dependencies(self):
+        return []
+
+    async def activate(self, bus, hooks):
         bus.on(AppEvents.SYSTEM_MESSAGE, self.on_system_message)
         hooks.register(
             Hook(
@@ -50,57 +69,119 @@ class ExamplePlugin(Plugin):
 
 `activate()` receives plugin-owned EventBus and HookRegistry facades. AgentCrew automatically removes registrations made through these facades on unload, failed activation, and reload. `deactivate()` must still release resources outside EventBus and HookRegistry, such as files, subprocesses, sockets, and background tasks.
 
+### Plugin identity enforcement
+
+The **discovered key** (the filename without ``.py``, or the directory name)
+is the authoritative plugin identity. The declared ``name`` property of your
+``Plugin`` subclass **must match** this key exactly. If they differ, loading
+fails with an error. This ensures dependency references are unambiguous.
+
+```
+# Valid:
+my_plugin.py           → class name = "my_plugin"
+my_project/main.py     → class name = "my_project"
+
+# Invalid (will fail to load):
+my_plugin.py           → class name = "my_plugin" ✗
+```
+
+### Dependencies
+
+Dependencies are referenced by the discovered key (the filesystem name),
+not the class name or any other identifier.
+
 ## Discovery
 
-### Local source
+Plugin directories are auto-created on first discovery. No configuration file is needed.
 
-Configure a Python file or package directory in `config.json`:
+### Single-file plugin
 
-```json
-{
-  "plugins": {
-    "sources": [
-      {
-        "name": "example",
-        "path": "./plugins/example.py"
-      }
-    ],
-    "config": {
-      "example": {
-        "enabled": true,
-        "settings": {
-          "level": "verbose"
-        }
-      }
-    }
-  }
-}
+Place a `.py` file directly in the plugins directory. The plugin name is derived
+from the filename (without the `.py` extension).
+
+```
+.agentcrew/plugins/
+  my_plugin.py          ← key: my_plugin
 ```
 
-A package directory must contain `__init__.py`. Relative paths are resolved from the current process directory; `~` is expanded.
+The module is loaded from its exact filesystem path under a private AgentCrew
+namespace. It will **never** collide with an installed package of the same name.
 
-### Python entry point
+### Project plugin
 
-Declare the plugin in its package:
+Create a subdirectory containing `main.py`. The plugin name is the directory name.
 
-```toml
-[project.entry-points."agentcrew.plugins"]
-example = "example_plugin:ExamplePlugin"
+```
+.agentcrew/plugins/
+  my_project/
+    main.py             ← key: my_project
+    helper.py           ← importable as ``from .helper import value``
 ```
 
-Local sources take precedence when the same plugin name is discovered from both mechanisms.
+Project plugins **do not require** ``__init__.py``. Relative imports work because
+AgentCrew synthesizes a private package for the plugin directory. This is useful
+for plugins that need multiple files or have dependencies.
+
+### Supported naming rules
+
+Plugin names must match the following pattern:
+
+```
+^[A-Za-z0-9][A-Za-z0-9_-]*$
+```
+
+- Must start with a letter or digit.
+- May contain letters, digits, underscores, and hyphens.
+- Dotted names (``foo.bar.py``), hidden names (``.secret.py``), and names with
+  spaces are rejected with a warning.
+
+### Duplicate handling
+
+If both ``foo.py`` and ``foo/main.py`` exist **in the same root**, the duplicate
+is rejected and a warning is logged. Precedence only applies across scopes
+(global vs project), not within one scope.
+
+### Project vs global precedence
+
+When the same plugin name exists in both locations, the project-based version
+(in ``.agentcrew/plugins/``) takes precedence over the global version
+(in ``~/.AgentCrew/plugins/``).
+
+### Trust boundary
+
+Project plugins execute arbitrary Python code. To prevent automatic code
+execution from untrusted directories, project plugins are **not activated**
+unless ``trusted_project_plugins=True`` is passed to the ``PluginManager``
+constructor:
+
+```python
+# Safe default — project plugins are discovered but NOT loaded:
+pm = PluginManager()
+
+# Opt in explicitly:
+pm = PluginManager(trusted_project_plugins=True)
+```
+
+When a project plugin is skipped, a log message explains how to enable it.
+Discovered metadata is still recorded, but ``load()`` and ``load_all()``
+skip activation.
 
 ## Dependencies and lifecycle
 
 - Dependencies activate before dependents.
-- Missing, disabled, cyclic, or failed dependencies prevent dependent activation.
+- Missing, cyclic, or failed dependencies prevent dependent activation.
 - A failed plugin does not prevent unrelated plugins from loading.
 - Unloading a dependency unloads active dependents first.
 - `unload_all()` deactivates plugins in reverse activation order and continues after failures.
-- Reload means unload, deterministic registration cleanup, then activation. It does not reload Python module code.
+- ``reload()`` unloads the plugin, removes its cached module from ``sys.modules``, invalidates
+  import caches, then re-imports from the stored source path. Source changes are reflected
+  without requiring a process restart.
 - Plugins activate and deactivate within the interactive console and GUI lifecycles, where application events and `tool.execute` hooks are integrated.
 - A2A server, ACP, and job modes do not load plugins automatically.
 - Activation and deactivation are async. Plugins should not assume the short-lived console activation event loop remains available for persistent background tasks.
+- AgentCrew **does not install plugin dependencies**. Plugins execute inside the AgentCrew
+  Python environment. Third-party dependencies must already be installed. ``pyproject.toml``
+  or ``requirements.txt`` inside a plugin directory is not processed automatically.
 
 ## EventBus
 
@@ -146,15 +227,4 @@ After hooks run for both successful execution and executor errors. They may repl
 
 PluginManager rolls back owned registrations after constructor or activation failure. Cleanup also occurs in a `finally` block when deactivation raises. Plugin authors should make `deactivate()` idempotent for their external resources.
 
-## Verification
 
-No API key or network service is required:
-
-```bash
-uv run python examples/plugins/verify_local_plugin.py
-uv run --with ./examples/plugins/entry_point_plugin \
-  python examples/plugins/verify_entry_point_plugin.py
-uv run python examples/plugins/verify_event_payload_map.py
-```
-
-See `examples/plugins/README.md` for fixture details.

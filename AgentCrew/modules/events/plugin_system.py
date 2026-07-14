@@ -3,20 +3,29 @@
 from __future__ import annotations
 
 import importlib
-import importlib.metadata
+import importlib.machinery
+import importlib.util
 import inspect
 import logging
 import os
 import sys
+import types
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from .event_bus import EventBus, Subscription
 from .hooks import Hook, HookRegistration, HookRegistry
 
 logger = logging.getLogger(__name__)
+
+# ── Private namespace for all plugin modules ─────────────────────
+_GLOBAL_NS = "_agentcrew_plugins.global"
+_PROJECT_NS = "_agentcrew_plugins.project"
+
+# ── Safe name pattern ────────────────────────────────────────────
+_VALID_PLUGIN_NAME_RE = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
 
 
 class Plugin(ABC):
@@ -40,14 +49,15 @@ class Plugin(ABC):
         """Return plugin names that must be active first."""
         return []
 
+    @abstractmethod
     async def activate(
         self,
         bus: _OwnedEventBus,
         hooks: _OwnedHookRegistry,
-        plugin_config: dict[str, Any] | None = None,
     ) -> None:
         """Activate the plugin and register its integrations."""
 
+    @abstractmethod
     async def deactivate(self) -> None:
         """Release resources owned outside EventBus and HookRegistry."""
         return None
@@ -59,17 +69,9 @@ class PluginMeta:
 
     name: str
     module_path: str
-    entry_point: str | None = None
-    source: str = "entry_point"
-
-
-@dataclass
-class PluginConfig:
-    """Runtime configuration for a plugin."""
-
-    name: str
-    enabled: bool = True
-    config: dict[str, Any] = field(default_factory=dict)
+    resolved_path: Path
+    scope: Literal["global", "project"]
+    source: str = ""
 
 
 class _OwnedEventBus:
@@ -147,79 +149,341 @@ class _OwnedHookRegistry:
 
 
 class PluginManager:
-    """Discover, activate, reload, and unload plugins deterministically."""
+    """Discover, activate, reload, and unload plugins deterministically.
+
+    Plugins are discovered from two filesystem directories:
+
+    * ``.agentcrew/plugins/`` — project-based plugins (higher precedence)
+    * ``~/.AgentCrew/plugins/`` — global plugins (fallback)
+
+    Each entry may be a ``.py`` file (single-file plugin) or a subdirectory
+    containing ``main.py`` (project plugin).
+
+    Project plugins are NOT activated automatically unless
+    ``trusted_project_plugins=True`` is passed to the constructor. This
+    establishes a security boundary: project plugins execute arbitrary Python
+    code, and activating them from an untrusted project directory is equivalent
+    to automatic code execution.
+    """
 
     def __init__(
         self,
-        config_dir: str | None = None,
+        project_plugins_dir: str | None = None,
+        global_plugins_dir: str | None = None,
+        *,
+        trusted_project_plugins: bool = False,
     ) -> None:
         self._bus = EventBus.get_instance()
         self._hooks = HookRegistry.get_instance()
-        self._config_dir = Path(config_dir or os.path.expanduser("~/.agentcrew"))
+        self._project_plugins_dir = (
+            Path(project_plugins_dir or ".agentcrew/plugins").expanduser().resolve()
+        )
+        self._global_plugins_dir = (
+            Path(global_plugins_dir or os.path.expanduser("~/.AgentCrew/plugins"))
+            .expanduser()
+            .resolve()
+        )
+        self._trusted_project_plugins = trusted_project_plugins
+
         self._plugins: dict[str, Plugin] = {}
         self._metas: dict[str, PluginMeta] = {}
-        self._configs: dict[str, PluginConfig] = {}
+        self._modules: dict[str, types.ModuleType] = {}
         self._activation_order: list[str] = []
         self._loading_stack: list[str] = []
         self._unloading: set[str] = set()
 
-    def discover(self, config_json: dict[str, Any] | None = None) -> list[PluginMeta]:
-        """Discover plugins from explicit paths followed by entry points."""
-        discovered: dict[str, PluginMeta] = {}
-        config_sources: list[Any] = []
-        if config_json and isinstance(config_json, dict):
-            plugin_section = config_json.get("plugins", {})
-            config_sources = plugin_section.get("sources", [])
-            for name, config in plugin_section.get("config", {}).items():
-                self._configs[name] = PluginConfig(
-                    name=name,
-                    enabled=config.get("enabled", True),
-                    config=config.get("settings", {}),
-                )
+    # ── Plugin directory helpers ────────────────────────────────────
 
-        for source_entry in config_sources:
-            try:
-                if isinstance(source_entry, str):
-                    path = source_entry
-                    name = self._infer_name_from_path(path)
-                elif isinstance(source_entry, dict):
-                    path = source_entry.get("path", "")
-                    name = source_entry.get("name", self._infer_name_from_path(path))
-                else:
-                    raise TypeError("plugin source must be a path string or object")
-                module_path = self._resolve_config_path(path)
-                if module_path and name not in discovered:
-                    discovered[name] = PluginMeta(
-                        name=name,
-                        module_path=module_path,
-                        source="config_path",
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to discover plugin from config source %r: %s",
-                    source_entry,
-                    exc,
-                )
+    @staticmethod
+    def _init_plugins_dir(plugins_dir: Path) -> bool:
+        """Create the plugins directory if it does not exist.
 
+        Returns True on success, False on failure.
+        """
         try:
-            for entry_point in importlib.metadata.entry_points(
-                group="agentcrew.plugins"
-            ):
-                if entry_point.name not in discovered:
-                    discovered[entry_point.name] = PluginMeta(
-                        name=entry_point.name,
-                        module_path=entry_point.value,
-                        entry_point=str(entry_point),
-                        source="entry_point",
-                    )
-        except Exception as exc:
-            logger.warning("Failed to discover plugins from entry points: %s", exc)
+            plugins_dir.mkdir(parents=True, exist_ok=True)
+            return True
+        except OSError as exc:
+            logger.warning("Failed to initialise plugin dir %s: %s", plugins_dir, exc)
+            return False
 
-        self._metas.update(discovered)
+    @staticmethod
+    def _validate_plugin_name(name: str, entry: Path) -> bool:
+        """Validate a filesystem-derived plugin name.
+
+        Returns True if valid, False with a logged warning otherwise.
+        """
+        import re as _re
+
+        if not _re.match(_VALID_PLUGIN_NAME_RE, name):
+            logger.warning(
+                "Skipping plugin %r at %s: name does not match pattern "
+                r"'^[A-Za-z0-9][A-Za-z0-9_-]*$'",
+                name,
+                entry,
+            )
+            return False
+        return True
+
+    def _scan_plugins_dir(
+        self,
+        plugins_dir: Path,
+        discovered: dict[str, PluginMeta],
+        scope: Literal["global", "project"],
+        *,
+        precedence: bool = False,
+    ) -> None:
+        """Scan a single plugins directory and populate ``discovered``.
+
+        Args:
+            plugins_dir: The directory to scan.
+            discovered: Accumulator dict keyed by plugin name.
+            scope: ``"global"`` or ``"project"``.
+            precedence: If True, entries from this dir override existing ones.
+        """
+        if not plugins_dir.is_dir():
+            return
+
+        for entry in sorted(plugins_dir.iterdir()):
+            # Reject symlinks
+            if entry.is_symlink():
+                logger.warning(
+                    "Skipping symlink plugin entry %s — symlinks are not supported",
+                    entry,
+                )
+                continue
+
+            name = entry.stem
+
+            # ── Single-file plugin: <dir>/<name>.py ──
+            if entry.is_file() and entry.suffix == ".py":
+                if not self._validate_plugin_name(name, entry):
+                    continue
+
+                # Reject same-root duplicate: foo.py vs foo/main.py
+                if (
+                    name in discovered
+                    and discovered[name].resolved_path.parent == plugins_dir
+                ):
+                    conflict = discovered[name].resolved_path
+                    logger.warning(
+                        "Duplicate plugin name %r in %s: both %s and %s exist. "
+                        "Skipping %s.",
+                        name,
+                        plugins_dir,
+                        conflict,
+                        entry,
+                        entry,
+                    )
+                    continue
+
+                meta = PluginMeta(
+                    name=name,
+                    module_path=str(entry),
+                    resolved_path=entry,
+                    scope=scope,
+                    source="file",
+                )
+                if name not in discovered or precedence:
+                    discovered[name] = meta
+
+            # ── Project plugin: <dir>/<name>/main.py ──
+            elif entry.is_dir():
+                if not self._validate_plugin_name(entry.name, entry):
+                    continue
+
+                main_file = entry / "main.py"
+                if not main_file.is_file():
+                    continue
+
+                # Reject same-root duplicate
+                if (
+                    entry.name in discovered
+                    and discovered[entry.name].resolved_path.parent == plugins_dir
+                ):
+                    conflict = discovered[entry.name].resolved_path
+                    logger.warning(
+                        "Duplicate plugin name %r in %s: both %s and %s exist. "
+                        "Skipping %s.",
+                        entry.name,
+                        plugins_dir,
+                        conflict,
+                        entry,
+                        entry,
+                    )
+                    continue
+
+                meta = PluginMeta(
+                    name=entry.name,
+                    module_path=str(main_file),
+                    resolved_path=entry,
+                    scope=scope,
+                    source="project",
+                )
+                if entry.name not in discovered or precedence:
+                    discovered[entry.name] = meta
+
+    def discover(self) -> list[PluginMeta]:
+        """Discover plugins by scanning project and global plugin directories.
+
+        Scans two locations:
+        1. ``.agentcrew/plugins/`` (project-based, takes precedence)
+        2. ``~/.AgentCrew/plugins/`` (global, fallback)
+
+        A plugin may be:
+        - A ``.py`` file directly in the plugins directory (single-file plugin).
+        - A subdirectory containing ``main.py`` (project plugin).
+
+        Plugin directories are automatically initialised if they do not exist.
+        The returned metadata is an authoritative snapshot — removed plugin
+        files no longer appear after the next call to ``discover()``.
+        """
+        discovered: dict[str, PluginMeta] = {}
+
+        # Global: lower precedence
+        if self._init_plugins_dir(self._global_plugins_dir):
+            try:
+                self._scan_plugins_dir(
+                    self._global_plugins_dir, discovered, "global", precedence=False
+                )
+            except OSError as exc:
+                logger.warning("Failed to scan global plugin dir: %s", exc)
+        else:
+            logger.warning(
+                "Skipping global plugin discovery — directory could not be created"
+            )
+
+        # Project: higher precedence
+        if self._init_plugins_dir(self._project_plugins_dir):
+            try:
+                self._scan_plugins_dir(
+                    self._project_plugins_dir,
+                    discovered,
+                    "project",
+                    precedence=True,
+                )
+            except OSError as exc:
+                logger.warning("Failed to scan project plugin dir: %s", exc)
+        else:
+            logger.warning(
+                "Skipping project plugin discovery — directory could not be created"
+            )
+
+        # Authoritative snapshot: replace, do not merge
+        self._metas = discovered
         return list(discovered.values())
 
+    # ── Module loading (source-path, private namespace) ─────────────
+
+    @staticmethod
+    def _safe_id(name: str) -> str:
+        """Derive a Python-safe module identifier from a plugin name."""
+        return name.replace("-", "_")
+
+    def _load_module_from_source(self, meta: PluginMeta) -> types.ModuleType | None:
+        """Import a plugin module from its exact filesystem path.
+
+        Plugins are loaded under the reserved namespace
+        ``_agentcrew_plugins.<scope>.<safe_name>``, which prevents collisions
+        with installed packages and other application modules.
+        """
+        ns_base = _GLOBAL_NS if meta.scope == "global" else _PROJECT_NS
+        safe = self._safe_id(meta.name)
+        resolved = meta.resolved_path
+
+        if meta.source == "project":
+            # Directory plugin: load main.py under <ns_base>.<safe>.main
+            main_file = resolved / "main.py"
+
+            # Create a namespace package for the plugin directory so that
+            # relative imports (``from .helper import value``) work.
+            pkg_name = f"{ns_base}.{safe}"
+            pkg_spec = importlib.machinery.ModuleSpec(
+                pkg_name,
+                None,
+                is_package=True,
+            )
+            pkg_spec.submodule_search_locations = [str(resolved)]
+            pkg = importlib.util.module_from_spec(pkg_spec)
+            sys.modules[pkg_name] = pkg
+
+            # Load main.py as a submodule of the package
+            mod_name = f"{pkg_name}.main"
+            spec = importlib.util.spec_from_file_location(mod_name, str(main_file))
+            if spec is None or spec.loader is None:
+                logger.error(
+                    "Could not create module spec for %s (%s)", meta.name, main_file
+                )
+                return None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = module
+            spec.loader.exec_module(module)
+            return module
+
+        else:
+            # Single-file plugin
+            mod_name = f"{ns_base}.{safe}"
+            spec = importlib.util.spec_from_file_location(mod_name, str(resolved))
+            if spec is None or spec.loader is None:
+                logger.error(
+                    "Could not create module spec for %s (%s)",
+                    meta.name,
+                    meta.module_path,
+                )
+                return None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = module
+            spec.loader.exec_module(module)
+            return module
+
+    @staticmethod
+    def _import_plugin_class(
+        meta: PluginMeta, module: types.ModuleType
+    ) -> type[Plugin] | None:
+        """Locate exactly one locally-defined ``Plugin`` subclass in *module*.
+
+        Only classes whose ``__module__ == module.__name__`` are considered.
+        This prevents imported ``Plugin`` subclasses from being mistaken for
+        the module's own plugin class.
+        """
+        candidates: list[type[Plugin]] = []
+        for _, candidate in inspect.getmembers(module, inspect.isclass):
+            if (
+                issubclass(candidate, Plugin)
+                and candidate is not Plugin
+                and candidate.__module__ == module.__name__
+            ):
+                candidates.append(candidate)
+
+        if len(candidates) == 1:
+            return candidates[0]
+
+        if len(candidates) == 0:
+            logger.error(
+                "No locally defined Plugin subclass found in %s for plugin %r",
+                meta.module_path,
+                meta.name,
+            )
+            return None
+
+        names = ", ".join(c.__name__ for c in candidates)
+        logger.error(
+            "Expected exactly one Plugin subclass in %s for plugin %r; found %d: %s",
+            meta.module_path,
+            meta.name,
+            len(candidates),
+            names,
+        )
+        return None
+
+    # ── Lifecycle ───────────────────────────────────────────────────
+
     async def load(self, name: str) -> Plugin | None:
-        """Activate one plugin after all dependencies are active."""
+        """Activate one plugin after all dependencies are active.
+
+        Project-scope plugins are only activated when
+        ``trusted_project_plugins=True`` was set at construction time.
+        """
         if name in self._plugins:
             return self._plugins[name]
         if name in self._loading_stack:
@@ -232,26 +496,49 @@ class PluginManager:
             logger.error("Plugin %r was not discovered", name)
             return None
 
-        plugin_config = self._configs.get(name, PluginConfig(name=name))
-        if not plugin_config.enabled:
-            logger.info("Plugin %r is disabled", name)
+        # ── Trust boundary: skip untrusted project plugins ──
+        if meta.scope == "project" and not self._trusted_project_plugins:
+            logger.info(
+                "Skipping project plugin %r (%s) — "
+                "trusted_project_plugins is not enabled. "
+                "Set trusted_project_plugins=True to activate project plugins.",
+                name,
+                meta.resolved_path,
+            )
             return None
 
         self._loading_stack.append(name)
         instance: Plugin | None = None
         try:
-            plugin_class = self._import_plugin_class(meta)
+            logger.info("Loading plugin %r from %s", name, meta.resolved_path)
+
+            # Import from exact source path (not global module name)
+            module = self._load_module_from_source(meta)
+            if module is None:
+                return None
+            self._modules[meta.name] = module
+
+            plugin_class = self._import_plugin_class(meta, module)
             if plugin_class is None:
                 return None
+
             instance = plugin_class()
+
+            # Enforce identity: discovered key === declared name
             if instance.name != name:
-                logger.warning(
-                    "Plugin source %r declares name %r; using configured name %r",
+                logger.error(
+                    "Plugin %r declares name %r which does not match the "
+                    "discovered key %r. Dependencies also use the discovered "
+                    "key; a mismatch would cause identity confusion. "
+                    "Rename the file/directory to match the declared name, "
+                    "or change the declared name to match the file/directory.",
                     meta.module_path,
                     instance.name,
                     name,
                 )
+                return None
 
+            # Activate dependencies
             for dependency in instance.dependencies:
                 loaded_dependency = await self.load(dependency)
                 if loaded_dependency is None or dependency not in self._plugins:
@@ -262,13 +549,13 @@ class PluginManager:
                     )
                     return None
 
+            # Clean stale registrations before activation
             self._cleanup_owned(name)
             owned_bus = _OwnedEventBus(self._bus, name)
             owned_hooks = _OwnedHookRegistry(self._hooks, name)
             await instance.activate(
                 bus=owned_bus,
                 hooks=owned_hooks,
-                plugin_config=plugin_config.config,
             )
             self._plugins[name] = instance
             self._activation_order.append(name)
@@ -283,6 +570,7 @@ class PluginManager:
                     logger.exception("Failed to roll back plugin %r deactivation", name)
             self._cleanup_owned(name)
             self._plugins.pop(name, None)
+            self._modules.pop(name, None)
             self._remove_activation_record(name)
             return None
         finally:
@@ -291,12 +579,16 @@ class PluginManager:
             elif name in self._loading_stack:
                 self._loading_stack.remove(name)
 
-    async def load_all(
-        self,
-        config_json: dict[str, Any] | None = None,
-    ) -> dict[str, Plugin]:
-        """Discover and activate every enabled plugin independently."""
-        self.discover(config_json)
+    async def load_all(self) -> dict[str, Plugin]:
+        """Discover and activate every enabled plugin independently.
+
+        This is an idempotent operation: already active plugins are returned
+        without being reactivated.
+
+        Project-scope plugins are only activated when
+        ``trusted_project_plugins=True`` was set at construction time.
+        """
+        self.discover()
         for name in list(self._metas):
             await self.load(name)
         return dict(self._plugins)
@@ -339,8 +631,31 @@ class PluginManager:
             await self.unload(name)
 
     async def reload(self, name: str) -> Plugin | None:
-        """Unload and reactivate a plugin without duplicate registrations."""
+        """Unload and reactivate a plugin, including re-reading its source.
+
+        Unlike :meth:`load`, this method:
+        1. Unloads the active plugin.
+        2. Removes the cached module from ``sys.modules``.
+        3. Calls ``importlib.invalidate_caches()``.
+        4. Re-imports from the stored source path.
+
+        This ensures source changes are reflected without requiring
+        a process restart.
+        """
         await self.unload(name)
+
+        # Remove the cached module under the private namespace
+        safe = self._safe_id(name)
+        for prefix in (_GLOBAL_NS, _PROJECT_NS):
+            pkg_key = f"{prefix}.{safe}"
+            if pkg_key in sys.modules:
+                del sys.modules[pkg_key]
+            main_key = f"{prefix}.{safe}.main"
+            if main_key in sys.modules:
+                del sys.modules[main_key]
+
+        importlib.invalidate_caches()
+        self._modules.pop(name, None)
         return await self.load(name)
 
     def get(self, name: str) -> Plugin | None:
@@ -366,74 +681,3 @@ class PluginManager:
             return self._activation_order.index(name)
         except ValueError:
             return -1
-
-    @staticmethod
-    def _import_plugin_class(meta: PluginMeta) -> type[Plugin] | None:
-        """Import a plugin class from a module or ``module:Class`` target."""
-        module_path, separator, class_name = meta.module_path.partition(":")
-        try:
-            module = importlib.import_module(module_path)
-        except ImportError as exc:
-            logger.error(
-                "Failed to import plugin %r (%s): %s",
-                meta.name,
-                meta.module_path,
-                exc,
-            )
-            return None
-
-        if separator:
-            plugin_class = getattr(module, class_name, None)
-            if (
-                inspect.isclass(plugin_class)
-                and issubclass(plugin_class, Plugin)
-                and plugin_class is not Plugin
-            ):
-                return plugin_class
-            logger.error(
-                "Plugin target %r does not reference a Plugin subclass",
-                meta.module_path,
-            )
-            return None
-
-        for _, candidate in inspect.getmembers(module, inspect.isclass):
-            if issubclass(candidate, Plugin) and candidate is not Plugin:
-                return candidate
-
-        logger.error(
-            "No Plugin subclass found in module %r for plugin %r",
-            meta.module_path,
-            meta.name,
-        )
-        return None
-
-    @staticmethod
-    def _resolve_config_path(path: str) -> str | None:
-        """Resolve a Python file or package directory to a module path."""
-        resolved = Path(path).expanduser().resolve()
-        if not resolved.exists():
-            logger.warning("Plugin path %r does not exist", path)
-            return None
-
-        if resolved.is_dir():
-            if not (resolved / "__init__.py").exists():
-                logger.warning("Plugin directory %r has no __init__.py", resolved)
-                return None
-            parent = resolved.parent
-            if str(parent) not in sys.path:
-                sys.path.insert(0, str(parent))
-            return resolved.name
-
-        if resolved.is_file() and resolved.suffix == ".py":
-            parent = resolved.parent
-            if str(parent) not in sys.path:
-                sys.path.insert(0, str(parent))
-            return resolved.stem
-
-        logger.warning("Plugin path %r is not a Python file or package", path)
-        return None
-
-    @staticmethod
-    def _infer_name_from_path(path: str) -> str:
-        resolved = Path(path)
-        return resolved.stem if resolved.suffix == ".py" else resolved.name

@@ -517,8 +517,6 @@ class ChatWindow(QMainWindow):
             self.bus.on(AppEvents.FILE_PROCESSING, self._on_file_processing),
             self.bus.on(AppEvents.FILE_PROCESSED, self._on_file_processed),
             self.bus.on(AppEvents.FILE_DROPPED, self._on_file_dropped),
-            self.bus.on(AppEvents.IMAGE_GENERATED, self._on_image_generated),
-            self.bus.on(AppEvents.CONVERSATIONS_LISTED, self._on_conversations_listed),
             self.bus.on(AppEvents.CONVERSATION_LOADED, self._on_conversation_loaded),
             self.bus.on(AppEvents.CONVERSATION_SAVED, self._on_conversation_saved),
             self.bus.on(
@@ -636,17 +634,6 @@ class ChatWindow(QMainWindow):
         self._queue_ui(self._handle_file_processed, data)
 
     def _on_file_dropped(self, **data):
-        return None
-
-    def _on_image_generated(self, image_source: str, is_base64: bool):
-        self._queue_ui(
-            self.chat_components.append_file,
-            image_source,
-            False,
-            is_base64,
-        )
-
-    def _on_conversations_listed(self, conversations: list[dict]):
         return None
 
     def _on_conversation_loaded(self, **data):

@@ -226,7 +226,7 @@ class EventBus:
                 continue
 
             try:
-                if asyncio.iscoroutinefunction(self._unwrap(entry.handler)):
+                if inspect.iscoroutinefunction(self._unwrap(entry.handler)):
                     await entry.handler(**data)
                 else:
                     await asyncio.to_thread(entry.handler, **data)
@@ -253,7 +253,7 @@ class EventBus:
                 continue
 
             try:
-                if asyncio.iscoroutinefunction(self._unwrap(entry.handler)):
+                if inspect.iscoroutinefunction(self._unwrap(entry.handler)):
                     try:
                         loop = asyncio.get_running_loop()
                         loop.create_task(entry.handler(**data))
