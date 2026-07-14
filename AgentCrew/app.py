@@ -55,6 +55,12 @@ def common_options(func):
     @click.option(
         "--memory-path", default=None, help="Path to the memory database location"
     )
+    @click.option(
+        "--trusted-project-plugins",
+        is_flag=True,
+        default=False,
+        help="Enable project plugins from .agentcrew/plugins/ (disabled by default)",
+    )
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         return func(*args, **kwargs)
@@ -63,9 +69,9 @@ def common_options(func):
 
 
 class AgentCrewApplication:
-    def __init__(self):
+    def __init__(self, trusted_project_plugins: bool | None = None):
         self.config_manager = ConfigManagement()
-        self.setup = ApplicationSetup(self.config_manager)
+        self.setup = ApplicationSetup(self.config_manager, trusted_project_plugins)
         self.setup.load_api_keys_from_config()
 
     @property
@@ -594,9 +600,3 @@ class AgentCrewApplication:
             raise
         finally:
             MCPSessionManager.get_instance().cleanup()
-
-    def login(self) -> bool:
-        return self.setup.login()
-
-    def chatgpt_login(self) -> bool:
-        return self.setup.chatgpt_login()

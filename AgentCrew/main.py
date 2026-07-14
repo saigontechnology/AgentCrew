@@ -295,6 +295,7 @@ def chat(
     console,
     with_voice,
     model_id,
+    trusted_project_plugins,
 ):
     """Start an interactive chat session with LLM"""
     check_and_update()
@@ -303,7 +304,7 @@ def chat(
     if memory_path:
         os.environ["MEMORYDB_PATH"] = memory_path
 
-    app = AgentCrewApplication()
+    app = AgentCrewApplication(trusted_project_plugins)
 
     try:
         from PySide6 import __version__
@@ -354,6 +355,7 @@ def a2a_server(
     api_key,
     store_type,
     store_option,
+    trusted_project_plugins,
 ):
     """Start an A2A server exposing all SwissKnife agents"""
     from AgentCrew.app import AgentCrewApplication
@@ -367,7 +369,7 @@ def a2a_server(
             k, v = opt.split("=", 1)
             store_options[k.strip()] = v.strip()
 
-    app = AgentCrewApplication()
+    app = AgentCrewApplication(trusted_project_plugins)
     app.run_server(
         host=host,
         port=port,
@@ -398,6 +400,7 @@ def acp_agent(
     memory_llm,
     memory_path,
     model_id,
+    trusted_project_plugins,
 ):
     """Start an ACP stdio agent exposing a local AgentCrew agent"""
     from AgentCrew.app import AgentCrewApplication
@@ -405,7 +408,7 @@ def acp_agent(
     if memory_path:
         os.environ["MEMORYDB_PATH"] = memory_path
 
-    app = AgentCrewApplication()
+    app = AgentCrewApplication(trusted_project_plugins)
     app.run_acp(
         provider=provider,
         model_id=model_id,
@@ -453,6 +456,7 @@ def job(
     token_usage_file,
     task,
     files,
+    trusted_project_plugins,
 ):
     """Run a single job/task with an agent"""
     from AgentCrew.app import AgentCrewApplication
@@ -461,7 +465,7 @@ def job(
         os.environ["MEMORYDB_PATH"] = memory_path
 
     try:
-        app = AgentCrewApplication()
+        app = AgentCrewApplication(trusted_project_plugins)
         response = app.run_job(
             task=task,
             agent=agent,
@@ -487,19 +491,17 @@ def job(
 @cli.command()
 def copilot_auth():
     """Authenticate with GitHub Copilot and save the API key to config"""
-    from AgentCrew.app import AgentCrewApplication
+    from AgentCrew.setup import ApplicationSetup
 
-    app = AgentCrewApplication()
-    app.login()
+    ApplicationSetup.login()
 
 
 @cli.command()
 def chatgpt_auth():
     """Authenticate with ChatGPT subscription (Plus/Pro) for API access via Codex OAuth"""
-    from AgentCrew.app import AgentCrewApplication
+    from AgentCrew.setup import ApplicationSetup
 
-    app = AgentCrewApplication()
-    app.chatgpt_login()
+    ApplicationSetup.chatgpt_login()
 
 
 @cli.command("create-agent")

@@ -37,17 +37,25 @@ PROVIDER_LIST = [
 
 
 class ApplicationSetup:
-    def __init__(self, config_manager: ConfigManagement | None = None):
+    def __init__(
+        self,
+        config_manager: ConfigManagement | None = None,
+        trusted_project_plugins: bool | None = None,
+    ):
         self.config_manager = config_manager or ConfigManagement()
         self.services: dict[str, Any] | None = None
         self.agent_manager: AgentManager | None = None
 
         # Read config early (before setup_services) so PluginManager can
         # respect the user's trust decision for project plugins.
-        _global_config = GlobalConfig().read()
-        _trusted = _global_config.get("global_settings", {}).get(
-            "trusted_project_plugins", False
-        )
+        # CLI --trusted-project-plugins flag overrides config.json value.
+        if trusted_project_plugins is None:
+            _global_config = GlobalConfig().read()
+            _trusted = _global_config.get("global_settings", {}).get(
+                "trusted_project_plugins", False
+            )
+        else:
+            _trusted = trusted_project_plugins
 
         # Initialize events infrastructure
         self.plugin_manager = PluginManager(
@@ -610,7 +618,8 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
                     f"\u26a0\ufe0f Unknown agent: {first_agent_name}. Using default agent. Available agents: {available_agents}"
                 )
 
-    def login(self) -> bool:
+    @staticmethod
+    def login() -> bool:
         try:
             click.echo("\U0001f510 Starting GitHub Copilot authentication...")
 
@@ -714,7 +723,8 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
             click.echo(f"\u274c Authentication failed: {str(e)}", err=True)
             return False
 
-    def chatgpt_login(self) -> bool:
+    @staticmethod
+    def chatgpt_login() -> bool:
         try:
             click.echo("\U0001f510 Starting ChatGPT subscription authentication...")
             click.echo(
