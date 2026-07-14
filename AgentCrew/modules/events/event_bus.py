@@ -14,12 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 import weakref
 from dataclasses import dataclass, field
 from typing import Any, Callable
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class StopPropagation(BaseException):

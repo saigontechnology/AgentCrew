@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import sys
+import types
 import importlib
 import importlib.machinery
 import importlib.util
 import inspect
-import logging
-import os
-import sys
-import types
+from loguru import logger
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +18,6 @@ from typing import Any, Callable, Literal
 from .event_bus import EventBus, Subscription
 from .hooks import Hook, HookRegistration, HookRegistry
 
-logger = logging.getLogger(__name__)
 
 # ── Private namespace for all plugin modules ─────────────────────
 _GLOBAL_NS = "_agentcrew_plugins.global"

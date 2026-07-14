@@ -12,12 +12,10 @@ to intercept and extend application behaviour at well-defined points.
 from __future__ import annotations
 
 import inspect
-import logging
+from loguru import logger
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
-
-logger = logging.getLogger(__name__)
 
 
 class CancelOperation(BaseException):

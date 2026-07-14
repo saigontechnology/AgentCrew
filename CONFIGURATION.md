@@ -244,9 +244,18 @@ containing ``main.py`` (project plugin). Plugin directories are
 auto-created on first discovery. No configuration file is required.
 
 **Security**: Project plugins are **not activated automatically** unless
-``trusted_project_plugins=True`` is enabled. See
-[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for lifecycle, EventBus, hook,
-cleanup, and security details.
+``trusted_project_plugins`` is enabled in ``global_settings``:
+
+```json
+{
+  "global_settings": {
+    "trusted_project_plugins": true
+  }
+}
+```
+
+See [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for lifecycle, EventBus,
+hook, cleanup, and security details.
 
 ### Auto-Approval Tools
 

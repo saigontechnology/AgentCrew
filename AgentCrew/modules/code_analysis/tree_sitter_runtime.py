@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import logging
 import os
 from typing import TYPE_CHECKING, Set
-
+from loguru import logger
 from tree_sitter_language_pack import (
     available_languages,
     download,
@@ -15,8 +14,6 @@ from tree_sitter_language_pack import (
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Parser
-
-logger = logging.getLogger(__name__)
 
 
 ALIAS_TO_PACK: dict[str, str] = {

@@ -151,20 +151,25 @@ When the same plugin name exists in both locations, the project-based version
 
 Project plugins execute arbitrary Python code. To prevent automatic code
 execution from untrusted directories, project plugins are **not activated**
-unless ``trusted_project_plugins=True`` is passed to the ``PluginManager``
-constructor:
+by default when stored in ``.agentcrew/plugins/``.
 
-```python
-# Safe default — project plugins are discovered but NOT loaded:
-pm = PluginManager()
+You can enable project plugins by adding the following to
+``~/.AgentCrew/config.json`` (or ``./config.json``):
 
-# Opt in explicitly:
-pm = PluginManager(trusted_project_plugins=True)
+```json
+{
+  "global_settings": {
+    "trusted_project_plugins": true
+  }
+}
 ```
 
-When a project plugin is skipped, a log message explains how to enable it.
-Discovered metadata is still recorded, but ``load()`` and ``load_all()``
-skip activation.
+When a project plugin is skipped, AgentCrew logs a message explaining
+how to enable them. Global plugins (in ``~/.AgentCrew/plugins/``) are
+always trusted and do not require this setting.
+
+For programmatic usage, you can also pass ``trusted_project_plugins=True``
+directly to the ``PluginManager`` constructor.
 
 ## Dependencies and lifecycle
 
