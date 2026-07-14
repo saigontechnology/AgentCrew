@@ -10,7 +10,7 @@ from loguru import logger
 
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
-from AgentCrew.modules.events import EventBus, HookRegistry, PluginManager
+from AgentCrew.modules.events import PluginManager
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.service_manager import ServiceManager
 from AgentCrew.modules.agents import AgentManager, LocalAgent, RemoteAgent
@@ -43,9 +43,7 @@ class ApplicationSetup:
         self.agent_manager: AgentManager | None = None
 
         # Initialize events infrastructure
-        self.bus = EventBus.get_instance()
-        self.hooks = HookRegistry(self.bus)
-        self.plugin_manager = PluginManager(self.bus, self.hooks)
+        self.plugin_manager = PluginManager()
         self._plugins_initialized = False
 
     async def initialize_plugins(self) -> None:

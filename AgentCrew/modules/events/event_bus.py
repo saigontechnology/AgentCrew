@@ -57,14 +57,14 @@ class _WeakMethod:
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         if self._is_bound:
-            obj = self._self()
+            obj = self._self()  # type: ignore
             if obj is None:
                 return None  # object was garbage collected
             return self._func(obj, *args, **kwargs)
         return self._func(*args, **kwargs)
 
     def dead(self) -> bool:
-        return self._is_bound and self._self() is None
+        return self._is_bound and self._self() is None  # type: ignore
 
     def __eq__(self, other: Any) -> bool:
         return (

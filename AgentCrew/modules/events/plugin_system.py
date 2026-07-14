@@ -42,8 +42,8 @@ class Plugin(ABC):
 
     async def activate(
         self,
-        bus: EventBus,
-        hooks: HookRegistry,
+        bus: _OwnedEventBus,
+        hooks: _OwnedHookRegistry,
         plugin_config: dict[str, Any] | None = None,
     ) -> None:
         """Activate the plugin and register its integrations."""
@@ -151,12 +151,10 @@ class PluginManager:
 
     def __init__(
         self,
-        bus: EventBus,
-        hooks: HookRegistry,
         config_dir: str | None = None,
     ) -> None:
-        self._bus = bus
-        self._hooks = hooks
+        self._bus = EventBus.get_instance()
+        self._hooks = HookRegistry.get_instance()
         self._config_dir = Path(config_dir or os.path.expanduser("~/.agentcrew"))
         self._plugins: dict[str, Plugin] = {}
         self._metas: dict[str, PluginMeta] = {}

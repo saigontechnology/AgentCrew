@@ -57,7 +57,6 @@ class MessageHandler:
         context_persistent_service: ContextPersistenceService | None = None,
         with_voice: bool = False,
         voice_service=None,
-        hooks: HookRegistry | None = None,
     ):
         """
         Initializes the MessageHandler.
@@ -67,7 +66,7 @@ class MessageHandler:
             context_persistent_service: Service for persistent conversation storage.
         """
         self.bus = EventBus.get_instance()
-        self.hooks = hooks or HookRegistry(self.bus)
+        self.hooks = HookRegistry.get_instance()
         self.agent_manager = AgentManager.get_instance()
         self.mcp_manager = MCPSessionManager.get_instance()
         self.agent = self.agent_manager.get_current_agent()
@@ -100,7 +99,7 @@ class MessageHandler:
 
         # Initialize components
         self.command_processor = CommandProcessor(self)
-        self.tool_manager = ToolManager(self, self.hooks)
+        self.tool_manager = ToolManager(self)
         self.conversation_manager = ConversationManager(self)
 
         self.conversation_manager.start_new_conversation()  # Initialize first conversation

@@ -18,7 +18,7 @@ class AgentToolRegistrar:
     - Clearing tools from the LLM service
     """
 
-    def __init__(self, agent: "LocalAgent") -> None:
+    def __init__(self, agent: LocalAgent) -> None:
         self._agent = agent
 
     def register_tools(self) -> None:

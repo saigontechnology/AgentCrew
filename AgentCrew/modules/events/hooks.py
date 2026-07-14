@@ -1,5 +1,5 @@
 """
-Lifecycle hook system built on top of the EventBus.
+Lifecycle hook system for application operations.
 
 Hooks extend plain events with before/after semantics:
   - **before**: Receives context, can modify and return it, or return None to cancel
@@ -16,8 +16,6 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
-
-from .event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -116,10 +114,34 @@ class Hook:
 class HookRegistry:
     """Manages before/after hooks at named lifecycle points."""
 
-    def __init__(self, bus: EventBus) -> None:
-        self._bus = bus
+    _instance: HookRegistry | None = None
+
+    def __new__(cls) -> HookRegistry:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self) -> None:
+        if self._initialized:
+            return
         self._hooks: dict[str, list[Hook]] = {}
         self._registration_counter = 0
+        self._initialized = True
+
+    @classmethod
+    def get_instance(cls) -> HookRegistry:
+        """Get the singleton HookRegistry instance."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Clear and discard the singleton registry."""
+        if cls._instance is not None:
+            cls._instance.clear()
+        cls._instance = None
 
     # ── Registration ──
 

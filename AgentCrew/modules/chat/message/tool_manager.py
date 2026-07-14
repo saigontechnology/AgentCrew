@@ -19,14 +19,10 @@ from AgentCrew.modules.tools.parallel_executor import (
 class ToolManager:
     """Manages tool execution and confirmation."""
 
-    def __init__(
-        self,
-        message_handler,
-        hooks: HookRegistry | None = None,
-    ):
+    def __init__(self, message_handler):
         self.message_handler = message_handler
         self.bus = EventBus.get_instance()
-        self.hooks = hooks or HookRegistry(self.bus)
+        self.hooks = HookRegistry.get_instance()
         self._auto_approved_tools = self._load_persistent_auto_approved_tools()
 
         self._pending_confirmations = {}  # Store futures for confirmation requests

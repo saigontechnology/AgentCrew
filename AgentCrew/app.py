@@ -122,7 +122,6 @@ class AgentCrewApplication:
                 services["context_persistent"],
                 with_voice,
                 services.get("voice"),
-                hooks=self.setup.hooks,
             )
             global_config = GlobalConfig().read()
 
@@ -194,7 +193,6 @@ class AgentCrewApplication:
                 services["context_persistent"],
                 with_voice,
                 services.get("voice"),
-                hooks=self.setup.hooks,
             )
 
             # Pre-initialize the ChromaDB memory collection on the main thread.
