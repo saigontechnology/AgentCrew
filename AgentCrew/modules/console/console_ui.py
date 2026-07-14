@@ -455,7 +455,7 @@ class ConsoleUI:
             asyncio.run(self.message_handler.submit_pending_evolution_review("accept"))
         elif choice == "edit":
             edited = self.input_handler.get_prompt_input(
-                "Edit approved summary (Alt+Enter or Ctrl+S to submit):",
+                f"Edit approved summary {self.input_handler.prompt_submit_hint}:",
                 default=data.get("user_editable_summary", ""),
             )
             action = "edit" if edited.strip() else "decline"

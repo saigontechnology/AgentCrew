@@ -9,6 +9,8 @@ from rich.text import Text
 from rich.panel import Panel
 from rich.box import HORIZONTALS
 from rich.console import Group
+from prompt_toolkit.formatted_text import HTML
+import textwrap
 import time
 
 from .diff_display import DiffDisplay
@@ -131,22 +133,40 @@ class ConfirmationHandler:
                 )
             )
 
-            # Determine choices: answers + navigation + submit
-            choices = list(guided_answers)
-            if total > 1:
-                if current_idx > 0:
-                    choices.append("← Back")
-                if current_idx < total - 1:
-                    choices.append("Next →")
-                choices.append("Submit all answers")
+            # Determine choices: guided answers + submit only (nav via keyboard)
+            max_width = self.console.width - 4
+            choices = [
+                "\n".join(textwrap.wrap(a, width=max_width)) for a in guided_answers
+            ]
+            choices.append("Submit all answers")
+
+            has_next = total > 1 and current_idx < total - 1
+            has_prev = total > 1 and current_idx > 0
+
+            bottom_toolbar = None
+            if has_next or has_prev:
+                parts = []
+                if has_next:
+                    parts.append("<b>[Tab]</b> next")
+                if has_prev:
+                    parts.append("<b>[Bksp]</b> back")
+                bottom_toolbar = HTML(", ".join(parts))
+
+            wrapped = "\n".join(
+                textwrap.wrap(f"{nav_prefix}{question_text}", width=max_width)
+            )
 
             response = self.input_handler.get_choice_input(
-                f"{nav_prefix}{question_text}", choices
+                wrapped,
+                choices,
+                tab_forward="Next →" if has_next else None,
+                tab_backward="← Back" if has_prev else None,
+                bottom_toolbar=bottom_toolbar,
             )
 
             if response == "Custom your answer":
                 custom_answer = self.input_handler.get_prompt_input(
-                    "Input your answer (Alt+Enter or Ctrl+S to submit):"
+                    f"Input your answer {self.input_handler.prompt_submit_hint}:"
                 )
                 if custom_answer:
                     answers[str(current_idx)] = custom_answer
@@ -237,7 +257,7 @@ class ConfirmationHandler:
             )
         elif response == choices[1]:
             deny_reason = self.input_handler.get_prompt_input(
-                "Please tell me why you are denying this tool (Alt+Enter or Ctrl+S to submit): "
+                f"Please tell me why you are denying this tool {self.input_handler.prompt_submit_hint}: "
             )
             message_handler.resolve_tool_confirmation(
                 confirmation_id, {"action": "deny", "reason": deny_reason}

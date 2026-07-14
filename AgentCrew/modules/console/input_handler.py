@@ -284,7 +284,15 @@ class InputHandler:
             if not self.is_message_processing and not self._is_voice_recording_active():
                 self.display_handlers.print_divider("👤 YOU: ", with_time=True)
 
-    def get_choice_input(self, message: str, values: list[str], default=None) -> str:
+    def get_choice_input(
+        self,
+        message: str,
+        values: list[str],
+        default=None,
+        tab_forward: str | None = None,
+        tab_backward: str | None = None,
+        bottom_toolbar = None,
+    ) -> str:
         from prompt_toolkit.shortcuts.choice_input import ChoiceInput
         from prompt_toolkit.styles import Style
 
@@ -292,6 +300,7 @@ class InputHandler:
             {
                 "frame.border": "#884444",
                 "selected-option": "bold",
+                "bottom-toolbar": "#ffffff bg:#444444 noreverse",
             }
         )
         kb = KeyBindings()
@@ -301,6 +310,16 @@ class InputHandler:
         def _(event):
             event.app.exit(result="", style="class:accepted")
 
+        if tab_forward is not None:
+            @kb.add(Keys.Tab)
+            def _(event):
+                event.app.exit(result=tab_forward, style="class:accepted")
+
+        if tab_backward is not None:
+            @kb.add(Keys.Backspace)
+            def _(event):
+                event.app.exit(result=tab_backward, style="class:accepted")
+
         choice_input = ChoiceInput(
             message=HTML(f"<ansiyellow>{message}</ansiyellow> "),
             options=[(v, v) for v in values],
@@ -308,6 +327,7 @@ class InputHandler:
             style=style,
             key_bindings=kb,
             show_frame=True,
+            bottom_toolbar=bottom_toolbar,
         )
         app = choice_input._create_application()
         original_exit = app.exit
@@ -319,6 +339,16 @@ class InputHandler:
 
         app.exit = safe_exit
         return app.run()
+
+    @property
+    def prompt_submit_hint(self) -> str:
+        """Return the key-binding hint for submit/newline based on swap_enter mode."""
+        if self.swap_enter:
+            # swap_enter=True: Enter=submit, Alt+Enter=newline
+            return "\n(Press Alt+Enter for new line, Ctrl+S or Enter to submit)"
+        else:
+            # swap_enter=False: Enter=newline, Alt+Enter=submit
+            return "\n(Press Enter for new line, Alt+Enter or Ctrl+S to submit)"
 
     def get_prompt_input(self, prompt_message: str, default: str = "") -> str:
         from prompt_toolkit import prompt
@@ -335,6 +365,21 @@ class InputHandler:
         def _(event):
             """Submit on Ctrl+S."""
             event.current_buffer.validate_and_handle()
+
+        @kb.add(Keys.Enter)
+        def _(event):
+            """Submit on Enter when swap_enter=True; newline when swap_enter=False."""
+            if self.swap_enter:
+                event.current_buffer.validate_and_handle()
+            # If not swap_enter, let default multiline behavior handle Enter (insert newline)
+
+        @kb.add("escape", "enter")
+        def _(event):
+            """Alt+Enter: newline when swap_enter=True; submit when swap_enter=False."""
+            if self.swap_enter:
+                event.current_buffer.insert_text("\n")
+            else:
+                event.current_buffer.validate_and_handle()
 
         return prompt(
             HTML(f"<ansiblue>{prompt_message}</ansiblue> "),

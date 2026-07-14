@@ -16,12 +16,11 @@ def get_ask_tool_definition() -> dict[str, Any]:
     """
     tool_description = (
         "PRIMARY tool for gathering missing information — use when the request is "
-        "ambiguous, details are unclear, you hit a blocker, or need direction.\n\n"
+        "ambiguous, details are unclear, you hit a blocker, or need direction.\n"
         "When the user presents a plan/design/proposal, interview relentlessly: "
         "walk down each branch of the design tree, resolve dependencies one-by-one, "
-        "and provide your recommended answer as the first guided option.\n\n"
-        "Bundle up to 10 related questions in the `questions` array. "
-        "The user answers them one at a time and submits all at once."
+        "and provide your recommended answer as the first guided option.\n"
+        "Bundle up to 10 related, independent questions in the `questions` array."
     )
 
     tool_arguments = {
@@ -85,13 +84,13 @@ def ask_tool_prompt() -> str:
       resolve dependencies one-by-one, and provide your recommended answer as the first option
     - Clarify specs, constraints, or choices where context is insufficient
 
-    Bundle up to 10 related questions in one call. The user sees them one at a time
-    and submits all answers together — reducing round trips.
+    Bundle up to 10 related questions in one call. 
   </Purpose>
 
   <Best_Practices>
     - Default to `ask` when unclear — do not guess or assume
     - Bundle related questions (up to 10), resolve one dependency at a time
+    - If questions depend on other question, split into different ask tool calls
     - Put your recommended answer first; provide 2-6 clear, mutually exclusive options
     - Ask the smallest useful question — don't bundle unrelated decisions
   </Best_Practices>
