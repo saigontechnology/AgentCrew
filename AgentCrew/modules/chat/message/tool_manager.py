@@ -194,15 +194,32 @@ class ToolManager:
                     else "Immediately Pause the response and WAIT for user reason and adjustment."
                 )
                 tool_result = f"Tool: {tool_name} with {tool_id} has been rejected and nothing has been changed. {reason_message}"
-                error_message = self.message_handler.agent.format_message(
-                    MessageType.ToolResult,
-                    {
-                        "tool_use": tool_use,
-                        "tool_result": tool_result,
-                        "is_rejected": True,
-                        "is_error": True,
-                    },
-                )
+                if tool_name == "transfer":
+                    error_message = {
+                        "role": "user",
+                        "agent": self.message_handler.agent.name,
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "You were trying to transfer the request to "
+                                    f"{tool_use['input']['target_agent']} with the task: "
+                                    f"{tool_use['input']['task_description']}. The transfer "
+                                    f"was rejected. {reason_message}"
+                                ),
+                            }
+                        ],
+                    }
+                else:
+                    error_message = self.message_handler.agent.format_message(
+                        MessageType.ToolResult,
+                        {
+                            "tool_use": tool_use,
+                            "tool_result": tool_result,
+                            "is_rejected": True,
+                            "is_error": True,
+                        },
+                    )
                 self.message_handler._messages_append(error_message)
                 await self.bus.emit(
                     AppEvents.TOOL_DENIED,
