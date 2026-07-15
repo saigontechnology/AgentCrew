@@ -534,6 +534,194 @@ As you get more comfortable with AgentCrew, here is a natural progression:
 
 ---
 
+# AgentCrew Lifecycle Flow
+
+## Lifecycle — Event Emission Flow
+
+The diagram below shows the sequential flow of event emissions through the
+application lifecycle. Each box is a lifecycle phase that emits one or more
+events as it executes.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#0d1b2a',
+  'primaryTextColor': '#e0e0e0',
+  'lineColor': '#5388b8',
+  'primaryBorderColor': '#3a7a9a',
+  'secondaryColor': '#1a2a3a',
+  'tertiaryColor': '#1a3a2a'
+}}}%%
+
+flowchart TD
+    STARTUP["Application Startup"]:::phase
+    SHUTDOWN["Application Shutdown"]:::phase
+    USER_INPUT["User Input"]:::phase
+    STREAM_OPEN["Stream Open"]:::phase
+    THINKING["Thinking (optional)"]:::phase
+    RESPONSE_STREAM["Response Streaming"]:::phase
+    TOOL_CONFIRM["Tool Confirmation"]:::phase
+    TOOL_EXEC["Tool Execution"]:::phase
+    TOOL_RESULT_PHASE["Tool Result"]:::phase
+    RESPONSE_DONE["Response Completed"]:::phase
+    TURN_FINALIZE["Turn Finalization"]:::phase
+    AGENT_OPS["Agent / Model Ops"]:::phase
+    CONV_OPS["Conversation Ops"]:::phase
+    FILE_OPS["File Ops"]:::phase
+    EVOLUTION["Prompt Evolution"]:::phase
+    LEARNING["Behavior Learning"]:::phase
+    VOICE["Voice Recording"]:::phase
+    UX_FEEDBACK["UX Feedback"]:::phase
+
+    STARTUP -->|"(hooks: app.startup)"| USER_INPUT
+    USER_INPUT -->|"emit: user_message_created"| STREAM_OPEN
+    STREAM_OPEN -->|"emit: stream_open_timeout⎮normal"| THINKING
+    THINKING -->|"emit: thinking_started/chunk/completed⎮no thinking"| RESPONSE_STREAM
+    RESPONSE_STREAM -->|"emit: response_chunk / streaming_stopped / stream_canceled"| TOOL_CONFIRM
+    RESPONSE_STREAM -->|"emit: response_completed / assistant_message_added"| RESPONSE_DONE
+    TOOL_CONFIRM -->|"emit: tool_confirmation_required / tool_denied⎮auto-approved"| TOOL_EXEC
+    TOOL_EXEC -->|"emit: tool_use + tool.execute hooks"| TOOL_RESULT_PHASE
+    TOOL_RESULT_PHASE -->|"emit: tool_result / tool_error / agent_changed_by_transfer"| TOOL_EXEC
+    TOOL_RESULT_PHASE -->|"no more tool uses"| RESPONSE_DONE
+    RESPONSE_DONE -->|"emit: response_completed"| TURN_FINALIZE
+    TURN_FINALIZE -->|"emit: conversation_saved ⎮ error"| USER_INPUT
+
+    AGENT_OPS -.->|"agent/model events"| USER_INPUT
+    CONV_OPS -.->|"conversation events"| USER_INPUT
+    FILE_OPS -.->|"file events"| USER_INPUT
+    USER_INPUT -.->|"/evolve command"| EVOLUTION
+    USER_INPUT -.->|"/learn command"| LEARNING
+    USER_INPUT -.->|"error / system_message"| UX_FEEDBACK
+    EVOLUTION -.->|"evolution events"| UX_FEEDBACK
+    LEARNING -.->|"learn events"| UX_FEEDBACK
+    USER_INPUT -.->|"emit: exit_requested<br/>(hooks: app.shutdown)"| SHUTDOWN
+    VOICE -.->|"voice events"| USER_INPUT
+
+    classDef phase fill:#16213e,stroke:#4a7a9a,color:#e0e0e0,stroke-width:2px;
+```
+
+---
+
+## Event Reference
+
+### Stream Events — `MessageHandler._run_stream_response()`
+
+| Event | When | Payload |
+|-------|------|---------|
+| `stream_open_timeout` | First chunk not received within timeout | `session_id`, `timeout` |
+| `streaming_stopped` | User requested stop mid-stream | `response` |
+| `stream_cancel_requested` | Cancel signal sent | `session_id` |
+| `stream_canceled` | Stream fully canceled | `session_id`, `assistant_response` |
+| `thinking_started` | First thinking chunk received | `agent_name` |
+| `thinking_chunk` | Each subsequent thinking chunk | `chunk` |
+| `thinking_completed` | Thinking phase ended, response begins | `content` |
+| `response_chunk` | Each text chunk from LLM | `chunk`, `full_response` |
+| `response_completed` | Full response ready (no tool uses) | `response` |
+| `assistant_message_added` | Message appended to history | `response` |
+
+### Tool Events — `ToolManager.execute_tool()`, `ToolManager._execute_parallel_batch()`
+
+| Event | When | Payload |
+|-------|------|---------|
+| `tool_confirmation_required` | Tool needs user approval | `tool_use`, `confirmation_id` |
+| `tool_denied` | User rejected tool | `tool_use`, `message` |
+| `tool_use` | Tool approved and about to execute | `id`, `name`, `input` |
+| `tool_result` | Tool executed successfully | `tool_use`, `tool_result`, `message` |
+| `tool_error` | Tool execution failed | `tool_use`, `error`, `message` |
+
+> **Hook point**: `tool.execute` — the only actively wired hook. `before` hooks
+> can modify/cancel tool calls, `after` hooks can modify results.
+
+### Conversation Events — `MessageHandler`, Command Handlers
+
+| Event | When | Payload |
+|-------|------|---------|
+| `user_message_created` | User message added to history | `message`, `display_text`, `with_files` |
+| `file_processing` | File processing started | `file_path` |
+| `file_processed` | File processing completed | `file_path`, `message` |
+| `file_dropped` | File removed from queue | `file_path` |
+| `conversation_loaded` | Conversation restored from storage | `id`, `history`, `token_usage` |
+| `conversation_saved` | Turn persisted to storage | `id` |
+| `conversations_changed` | Conversation list updated | — |
+| `clear_requested` | `/clear` command | — |
+| `exit_requested` | `/exit` command | — |
+| `consolidation_completed` | Context consolidation done | `result` |
+| `unconsolidation_completed` | Context unconsolidation done | `result` |
+
+### Agent / Model Events — Command Handlers
+
+| Event | When | Payload |
+|-------|------|---------|
+| `agent_changed` | Active agent switched | `agent_name` |
+| `agent_changed_by_transfer` | Transfer tool switched agent | `tool_use`, `agent_name` |
+| `agents_listed` | Agent list displayed | `agents` |
+| `model_changed` | Active model switched | `id`, `name`, `provider` |
+| `models_listed` | Model list displayed | `models_by_provider` |
+| `transfer_enforce_toggled` | Transfer enforcement toggled | `status` |
+| `agent_command_result` | Agent command completed | `success`, `message` |
+
+### Evolution Events — `PromptEvolutionCoordinator`
+
+| Event | When | Payload |
+|-------|------|---------|
+| `evolution_started` | `/evolve` initiated | `agent_name` |
+| `evolution_summary_ready` | Analysis complete, waiting for user | `agent_name`, `analysis_summary`, `generated_summary`, etc. |
+| `evolution_applied` | User approved revision | `agent_name`, previous/revised prompts |
+| `evolution_declined` | User declined revision | — |
+| `evolution_finished` | Evolution flow ended | — |
+
+### Other Events
+
+| Domain | Events | Emitted From |
+|--------|--------|-------------|
+| **Learning** | `learn_behavior_confirmation` | `LearnReviewCoordinator` |
+| **Voice** | `voice_recording_started`, `voice_recording_stopping`, `voice_recording_completed`, `voice_activate` | Voice command handlers |
+| **UX** | `error`, `system_message`, `debug_requested`, `think_budget_set`, `update_token_usage`, `jump_performed`, `fork_and_switch_performed`, `fork_created`, `mcp_prompt` | Various handlers |
+
+---
+
+## Hook Points Reference
+
+| Hook Point | Status | Signature | Purpose |
+|-----------|--------|-----------|---------|
+| **tool.execute** ★ | ✅ Active | before: `(ctx) → ctx⎮None` | Modify/cancel tool calls |
+| agent.process | 🔄 Develop | before/after | Intercept agent processing |
+| user.message | 🔄 Develop | before/after | Intercept user input |
+| response.stream | 🔄 Develop | before/after | Modify stream chunks |
+| response.complete | 🔄 Develop | before/after | Post-process response |
+| app.startup | 🔄 Develop | before/after | Plugin init |
+| app.shutdown | 🔄 Develop | before/after | Plugin cleanup |
+| memory.store | 🔄 Develop | before/after | Intercept persistence |
+| memory.retrieve | 🔄 Develop | before/after | Intercept retrieval |
+| context.build | 🔄 Develop | before/after | Modify built context |
+| agent.transfer | 🔄 Develop | before/after | Intercept hand-offs |
+| agent.delegate | 🔄 Develop | before/after | Intercept delegation |
+
+---
+
+## Event Consumers
+
+| Consumer | Subscriptions | Type |
+|----------|--------------|------|
+| **ConsoleUI** | ~55 | Rich-text terminal via `_register_subscriptions()` |
+| **Qt GUI** | ~50 | PyQt6 desktop UI |
+| **ACP ClientCommunication** | Direct calls | ACP protocol updates |
+| **Plugins** | Via `_OwnedEventBus` | External Python modules |
+
+---
+
+## Key Design Points
+
+- **Events ≠ Hooks**: Events are one-way broadcasts for UI/logging. Hooks are
+  interception points with before/after semantics and cancellation.
+- **Only `tool.execute` is wired**: All other hooks are in development awaiting
+  plugin implementations.
+- **Plugins get owned facades**: `_OwnedEventBus` and `_OwnedHookRegistry`
+  auto-assign ownership for deterministic cleanup.
+- **Events defined in `events/constants.py`**: Each needs a constant +
+  TypedDict payload + `EVENT_PAYLOAD_MAP` entry.
+
+---
+
 ## Reference
 
 - [GUIDE_GETTING_STARTED.md](GUIDE_GETTING_STARTED.md) — Installation and first steps
