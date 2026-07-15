@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 import asyncio
 
+from AgentCrew.modules.events.hooks import CancelOperation
+
 
 SEQUENTIAL_TOOLS = frozenset({"transfer", "ask"})
 SEQUENTIAL_PREFIXES = ("browser_",)
@@ -26,7 +28,7 @@ class ToolResult:
 
 async def execute_tools_in_parallel(
     tool_uses: list[dict[str, Any]],
-    executor: Callable[[str, dict], Awaitable[Any]],
+    executor: Callable[[dict], Awaitable[Any]],
 ) -> list[ToolResult]:
     if len(tool_uses) == 1:
         return [await _safe_execute(executor, tool_uses[0])]
@@ -46,11 +48,19 @@ async def execute_tool_tasks_in_parallel(
 
 
 async def _safe_execute(
-    executor: Callable[[str, dict], Awaitable[Any]],
+    executor: Callable[[dict], Awaitable[Any]],
     tool_use: dict[str, Any],
 ) -> ToolResult:
     try:
-        result = await executor(tool_use["name"], tool_use["input"])
+        result = await executor(tool_use)
         return ToolResult(tool_use=tool_use, result=result, is_error=False)
+    except CancelOperation:
+        return ToolResult(
+            tool_use=tool_use,
+            result="Tool execution cancelled by a hook",
+            is_error=True,
+            is_rejected=True,
+            was_executed=False,
+        )
     except Exception as e:
         return ToolResult(tool_use=tool_use, result=str(e), is_error=True)

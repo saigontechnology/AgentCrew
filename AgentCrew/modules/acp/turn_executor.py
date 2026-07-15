@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from AgentCrew.modules.acp.session_state import AcpSessionState
 from AgentCrew.modules.acp.tools.permission_broker import AcpPermissionBroker
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.tools.parallel_executor import (
     execute_tools_in_parallel,
     is_sequential_tool,
@@ -242,12 +243,19 @@ class TurnExecutor:
                         )
                         continue
                 try:
-                    tool_result = await agent.execute_tool_call(
-                        tool_use["name"],
-                        tool_use.get("input", {}),
-                    )
+                    tool_result = await agent.execute_tool_call(tool_use)
                     await self.append_tool_result(
                         session_id, state, agent, tool_use, tool_result
+                    )
+                except CancelOperation:
+                    await self.append_tool_result(
+                        session_id,
+                        state,
+                        agent,
+                        tool_use,
+                        "Tool execution cancelled by a hook",
+                        True,
+                        True,
                     )
                 except Exception as e:
                     await self.append_tool_result(

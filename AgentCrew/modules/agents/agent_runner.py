@@ -2,6 +2,7 @@ from typing import Any, Callable
 
 from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.llm.token_usage import TokenUsage
 from AgentCrew.modules.tools.parallel_executor import (
     execute_tools_in_parallel,
@@ -105,9 +106,20 @@ async def run_agent_loop(
                 parallel_buffer = []
 
             try:
-                tool_result = await agent.execute_tool_call(
-                    tool_use["name"], tool_use["input"]
+                tool_result = await agent.execute_tool_call(tool_use)
+            except CancelOperation:
+                cancelled_msg = agent.format_message(
+                    MessageType.ToolResult,
+                    {
+                        "tool_use": tool_use,
+                        "tool_result": "Tool execution cancelled by a hook",
+                        "is_error": True,
+                        "is_rejected": True,
+                    },
                 )
+                if cancelled_msg:
+                    history.append(cancelled_msg)
+                continue
             except Exception as e:
                 tool_result = str(e)
                 error_msg = agent.format_message(

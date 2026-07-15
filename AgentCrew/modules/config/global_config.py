@@ -65,7 +65,11 @@ class GlobalConfig:
             # Return cached data if the file hasn't changed since last read
             if self._cached_config is not None and self._cached_mtime is not None:
                 try:
-                    current_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
+                    current_mtime = (
+                        os.path.getmtime(config_path)
+                        if os.path.exists(config_path)
+                        else 0
+                    )
                     if current_mtime == self._cached_mtime:
                         return self._cached_config
                 except OSError:
@@ -87,7 +91,9 @@ class GlobalConfig:
                         self._cached_config = dict(default_config)
                         self._cached_mtime = os.path.getmtime(config_path)
                         return self._cached_config
-                    if "api_keys" not in data or not isinstance(data.get("api_keys"), dict):
+                    if "api_keys" not in data or not isinstance(
+                        data.get("api_keys"), dict
+                    ):
                         data["api_keys"] = {}
                     if "auto_approval_tools" not in data or not isinstance(
                         data.get("auto_approval_tools"), list

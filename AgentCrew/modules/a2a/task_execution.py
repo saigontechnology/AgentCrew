@@ -14,6 +14,7 @@ from a2a.types import (
     TaskArtifactUpdateEvent,
 )
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.tools.parallel_executor import (
     execute_tools_in_parallel,
     is_sequential_tool,
@@ -371,9 +372,7 @@ class TaskExecutionEngine:
             return await self._handle_ask_tool(agent, task, tool_use, task_history)
         else:
             try:
-                tool_result = await agent.execute_tool_call(
-                    tool_name, tool_use["input"]
-                )
+                tool_result = await agent.execute_tool_call(tool_use)
                 tool_result_message = agent.format_message(
                     MessageType.ToolResult,
                     {"tool_use": tool_use, "tool_result": tool_result},
@@ -381,6 +380,20 @@ class TaskExecutionEngine:
                 if tool_result_message:
                     await self._append_history_message(
                         task.context_id, tool_result_message, task_history
+                    )
+            except CancelOperation:
+                cancelled_message = agent.format_message(
+                    MessageType.ToolResult,
+                    {
+                        "tool_use": tool_use,
+                        "tool_result": "Tool execution cancelled by a hook",
+                        "is_error": True,
+                        "is_rejected": True,
+                    },
+                )
+                if cancelled_message:
+                    await self._append_history_message(
+                        task.context_id, cancelled_message, task_history
                     )
             except Exception as e:
                 error_message = agent.format_message(

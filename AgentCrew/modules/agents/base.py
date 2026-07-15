@@ -76,7 +76,7 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    async def execute_tool_call(self, tool_name: str, tool_input: dict) -> Any:
+    async def execute_tool_call(self, tool_use: dict) -> Any:
         pass
 
     @abstractmethod

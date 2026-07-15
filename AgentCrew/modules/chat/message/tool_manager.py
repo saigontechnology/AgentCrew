@@ -8,7 +8,8 @@ from loguru import logger
 from AgentCrew.modules.config.global_config import GlobalConfig
 
 from AgentCrew.modules.agents.base import MessageType
-from AgentCrew.modules.events import AppEvents, EventBus, HookRegistry, HookPoints
+from AgentCrew.modules.events import AppEvents, EventBus
+from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.tools.parallel_executor import (
     ToolResult,
     execute_tool_tasks_in_parallel,
@@ -22,7 +23,6 @@ class ToolManager:
     def __init__(self, message_handler):
         self.message_handler = message_handler
         self.bus = EventBus.get_instance()
-        self.hooks = HookRegistry.get_instance()
         self._auto_approved_tools = self._load_persistent_auto_approved_tools()
 
         self._pending_confirmations = {}  # Store futures for confirmation requests
@@ -44,17 +44,16 @@ class ToolManager:
     ) -> ToolResult:
         requested_name = tool_use["name"]
         requested_input = copy.deepcopy(tool_use["input"])
-        context = await self.hooks.run_before(
-            HookPoints.TOOL_EXECUTE,
-            agent_name=self.message_handler.agent.name,
-            tool_id=tool_use["id"],
-            tool_use=copy.deepcopy(tool_use),
-            requested_tool_name=requested_name,
-            requested_tool_input=copy.deepcopy(requested_input),
-            tool_name=requested_name,
-            tool_input=copy.deepcopy(requested_input),
-        )
-        if context is None:
+
+        try:
+            tool_result = await self.message_handler.agent.execute_tool_call(tool_use)
+            return ToolResult(
+                tool_use=tool_use,
+                result=tool_result,
+                resolved_name=requested_name,
+                resolved_input=requested_input,
+            )
+        except CancelOperation:
             message = (
                 f"Tool: {requested_name} with {tool_use['id']} was cancelled "
                 "by a tool.execute hook and was not executed."
@@ -68,46 +67,14 @@ class ToolManager:
                 resolved_name=requested_name,
                 resolved_input=requested_input,
             )
-
-        resolved_name = context.get("tool_name", requested_name)
-        resolved_input = context.get("tool_input", requested_input)
-        context["resolved_tool_name"] = resolved_name
-        context["resolved_tool_input"] = copy.deepcopy(resolved_input)
-
-        try:
-            result_envelope: dict[str, Any] = {
-                "tool_result": await self.message_handler.agent.execute_tool_call(
-                    resolved_name, resolved_input
-                ),
-                "is_error": False,
-            }
         except Exception as exc:
-            result_envelope = {
-                "tool_result": str(exc),
-                "is_error": True,
-            }
-
-        final_envelope = await self.hooks.run_after(
-            HookPoints.TOOL_EXECUTE,
-            result=result_envelope,
-            **context,
-        )
-        if isinstance(final_envelope, dict):
-            tool_result = final_envelope.get(
-                "tool_result", result_envelope["tool_result"]
+            return ToolResult(
+                tool_use=tool_use,
+                result=str(exc),
+                is_error=True,
+                resolved_name=requested_name,
+                resolved_input=requested_input,
             )
-            is_error = bool(final_envelope.get("is_error", result_envelope["is_error"]))
-        else:
-            tool_result = final_envelope
-            is_error = result_envelope["is_error"]
-
-        return ToolResult(
-            tool_use=tool_use,
-            result=tool_result,
-            is_error=is_error,
-            resolved_name=resolved_name,
-            resolved_input=resolved_input,
-        )
 
     def _record_tool_result(self, result: ToolResult) -> None:
         tool_use = result.tool_use

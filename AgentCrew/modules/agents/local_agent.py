@@ -366,8 +366,62 @@ class LocalAgent(BaseAgent):
         if self.llm:
             self.llm.set_think(think_setting)
 
-    async def execute_tool_call(self, tool_name: str, tool_input: dict) -> Any:
-        return await self.llm.execute_tool(tool_name, tool_input) if self.llm else None
+    async def execute_tool_call(self, tool_use: dict) -> Any:
+        from AgentCrew.modules.events.hooks import (
+            HookRegistry,
+            HookPoints,
+            CancelOperation,
+        )
+
+        hooks = HookRegistry.get_instance()
+        tool_name = tool_use["name"]
+        tool_input = tool_use.get("input", {})
+
+        # Run before hooks — can cancel or modify the tool call
+        context = await hooks.run_before(
+            HookPoints.TOOL_EXECUTE,
+            agent_name=self.name,
+            tool_id=tool_use.get("id", ""),
+            tool_use=copy.deepcopy(tool_use),
+            requested_tool_name=tool_name,
+            requested_tool_input=copy.deepcopy(tool_input),
+            tool_name=tool_name,
+            tool_input=copy.deepcopy(tool_input),
+        )
+
+        if context is None:
+            raise CancelOperation(
+                f"Tool {tool_name} was cancelled by a tool.execute hook"
+            )
+
+        resolved_name = context.get("tool_name", tool_name)
+        resolved_input = context.get("tool_input", tool_input)
+
+        result = (
+            await self.llm.execute_tool(resolved_name, resolved_input)
+            if self.llm
+            else None
+        )
+
+        # Run after hooks — can modify the result
+        result_envelope = {"tool_result": result, "is_error": False}
+        modified = await hooks.run_after(
+            HookPoints.TOOL_EXECUTE,
+            result=result_envelope,
+            agent_name=self.name,
+            tool_id=tool_use.get("id", ""),
+            tool_use=copy.deepcopy(tool_use),
+            requested_tool_name=tool_name,
+            requested_tool_input=copy.deepcopy(tool_input),
+            tool_name=resolved_name,
+            tool_input=copy.deepcopy(resolved_input),
+            resolved_tool_name=resolved_name,
+            resolved_tool_input=copy.deepcopy(resolved_input),
+        )
+
+        if isinstance(modified, dict):
+            return modified.get("tool_result", result)
+        return modified
 
     def calculate_usage_cost(
         self, input_tokens, output_tokens, cached_tokens=0

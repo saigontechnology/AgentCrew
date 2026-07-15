@@ -58,9 +58,7 @@ class ApplicationSetup:
             _trusted = trusted_project_plugins
 
         # Initialize events infrastructure
-        self.plugin_manager = PluginManager(
-            trusted_project_plugins=_trusted
-        )
+        self.plugin_manager = PluginManager(trusted_project_plugins=_trusted)
         self._plugins_initialized = False
 
     async def initialize_plugins(self) -> None:

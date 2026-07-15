@@ -81,7 +81,15 @@ def get_current_version():
 @cli.command()
 @common_options
 @click.option("--model-id", default=None, help="Model ID from provider")
-def chat(provider, agent_config, mcp_config, memory_llm, memory_path, model_id, trusted_project_plugins):
+def chat(
+    provider,
+    agent_config,
+    mcp_config,
+    memory_llm,
+    memory_path,
+    model_id,
+    trusted_project_plugins,
+):
     """Start an interactive chat session with LLM"""
     from AgentCrew.app import AgentCrewApplication
 
