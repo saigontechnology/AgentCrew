@@ -37,13 +37,13 @@ class MCPCommands:
                 if prompts
                 else "No MCP prompts found."
             )
-            self.message_handler.bus.emit_sync(AppEvents.SYSTEM_MESSAGE, message=msg)
+            await self.message_handler.bus.emit(AppEvents.SYSTEM_MESSAGE, message=msg)
             return False, True
         # /mcp <server_id.prompt_name>: fetch and show the prompt
         elif len(parts) == 2:
             full_name = parts[1]
             if "/" not in full_name:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR,
                     message="Please use format: /mcp server_id/prompt_name",
                 )
@@ -54,21 +54,21 @@ class MCPCommands:
                 prompt_content = prompt.get("content", [])
                 if len(prompt_content) > 0:
                     prompt_text = prompt_content[0].content.text
-                    self.message_handler.bus.emit_sync(
+                    await self.message_handler.bus.emit(
                         AppEvents.MCP_PROMPT, name=prompt_name, content=f"{prompt_text}"
                     )
                 else:
-                    self.message_handler.bus.emit_sync(
+                    await self.message_handler.bus.emit(
                         AppEvents.ERROR,
                         message=f"Prompt {server_id}.{prompt_name} not found.",
                     )
             except Exception as e:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR, message=f"Error fetching prompt: {str(e)}"
                 )
             return False, True
         else:
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.ERROR, message="Usage: /mcp [server_id.prompt_name]"
             )
             return False, True

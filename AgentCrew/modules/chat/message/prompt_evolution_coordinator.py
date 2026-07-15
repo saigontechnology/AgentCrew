@@ -35,7 +35,7 @@ class PromptEvolutionCoordinator:
     async def start_review(self) -> bool:
         agent = self._agent_getter()
         if not self._is_local_agent(agent):
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.ERROR, message="/evolve is only supported with LocalAgent."
             )
             return True
@@ -45,23 +45,23 @@ class PromptEvolutionCoordinator:
             persistence_service=self._persistence_service,
         )
 
-        self._bus.emit_sync(AppEvents.EVOLUTION_STARTED, agent_name=agent.name)
+        await self._bus.emit(AppEvents.EVOLUTION_STARTED, agent_name=agent.name)
         try:
             proposal = await self._service.create_evolution_proposal(agent)
         except Exception as e:
-            self._bus.emit_sync(AppEvents.EVOLUTION_FINISHED)
-            self._bus.emit_sync(
+            await self._bus.emit(AppEvents.EVOLUTION_FINISHED)
+            await self._bus.emit(
                 AppEvents.ERROR, message=f"Prompt evolution failed: {str(e)}"
             )
             return True
 
         proposal = self._session.start(proposal)
-        self._bus.emit_sync(AppEvents.EVOLUTION_SUMMARY, **proposal)
+        await self._bus.emit(AppEvents.EVOLUTION_SUMMARY, **proposal)
         return True
 
     async def approve(self) -> bool:
         if not self._session.has_pending():
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.ERROR, message="No pending evolution proposal to accept."
             )
             return True
@@ -73,20 +73,20 @@ class PromptEvolutionCoordinator:
         try:
             normalized_summary = self._session.update_approved_summary(approved_summary)
         except ValueError as e:
-            self._bus.emit_sync(AppEvents.ERROR, message=str(e))
+            await self._bus.emit(AppEvents.ERROR, message=str(e))
             return True
 
         return await self._apply(normalized_summary, edited_by_user=True)
 
     async def decline(self) -> bool:
         if not self._session.has_pending():
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.ERROR, message="No pending evolution proposal to decline."
             )
             return True
         self._session.clear()
-        self._bus.emit_sync(AppEvents.EVOLUTION_DECLINED)
-        self._bus.emit_sync(
+        await self._bus.emit(AppEvents.EVOLUTION_DECLINED)
+        await self._bus.emit(
             AppEvents.SYSTEM_MESSAGE, message="Prompt evolution declined."
         )
         return True
@@ -101,7 +101,7 @@ class PromptEvolutionCoordinator:
         if action == "decline":
             return await self.decline()
 
-        self._bus.emit_sync(
+        await self._bus.emit(
             AppEvents.ERROR, message=f"Unknown evolution review action: {action}"
         )
         return True
@@ -109,22 +109,22 @@ class PromptEvolutionCoordinator:
     async def _apply(self, approved_summary: str, edited_by_user: bool) -> bool:
         proposal = self._session.get()
         if not proposal:
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.ERROR, message="No pending evolution proposal to apply."
             )
             return True
         if not self._service:
-            self._bus.emit_sync(AppEvents.ERROR, message="Evolution is not available")
+            await self._bus.emit(AppEvents.ERROR, message="Evolution is not available")
             return True
 
         agent = self._agent_getter()
         if not self._is_local_agent(agent):
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.ERROR, message="/evolve is only supported with LocalAgent."
             )
             return True
 
-        self._bus.emit_sync(AppEvents.EVOLUTION_STARTED, agent_name=agent.name)
+        await self._bus.emit(AppEvents.EVOLUTION_STARTED, agent_name=agent.name)
         try:
             revised_prompt = await self._service.build_revised_prompt(
                 agent, approved_summary
@@ -139,16 +139,16 @@ class PromptEvolutionCoordinator:
                 edited_by_user=edited_by_user,
             )
         except Exception as e:
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.ERROR, message=f"Prompt evolution failed: {str(e)}"
             )
             return True
         finally:
-            self._bus.emit_sync(AppEvents.EVOLUTION_FINISHED)
+            await self._bus.emit(AppEvents.EVOLUTION_FINISHED)
 
         self._session.clear()
-        self._bus.emit_sync(AppEvents.EVOLUTION_APPLIED, **result)
-        self._bus.emit_sync(
+        await self._bus.emit(AppEvents.EVOLUTION_APPLIED, **result)
+        await self._bus.emit(
             AppEvents.SYSTEM_MESSAGE,
             message=f"Updated persisted system prompt for {result['agent_name']}.",
         )

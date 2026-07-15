@@ -34,7 +34,7 @@ class CommandProcessor:
     async def process_command(self, user_input: str) -> CommandResult:
         """Process a command and return the result."""
         if self._is_exit_command(user_input):
-            self.message_handler.bus.emit_sync(AppEvents.EXIT_REQUESTED)
+            await self.message_handler.bus.emit(AppEvents.EXIT_REQUESTED)
             return CommandResult(handled=True, exit_flag=True)
         elif user_input.lower() == "/clear":
             self.message_handler.start_new_conversation()
@@ -65,7 +65,7 @@ class CommandProcessor:
             return self.agent_commands.handle_agent_mode(user_input)
         elif user_input.lower().startswith("/agent"):
             success, message = self.agent_commands.handle_agent(user_input)
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.AGENT_COMMAND_RESULT, success=success, message=message
             )
             return CommandResult(handled=True, clear_flag=True)
@@ -92,7 +92,7 @@ class CommandProcessor:
 
         # Catch-all: any unrecognised /command should not fall through to the LLM
         if user_input.startswith("/"):
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.ERROR,
                 message="Invalid command: type /help to view all available commands",
             )

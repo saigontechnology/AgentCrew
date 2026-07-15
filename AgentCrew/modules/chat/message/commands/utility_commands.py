@@ -163,12 +163,12 @@ class UtilityCommands:
                 return CommandResult(handled=True, clear_flag=True)
             usage = await llm.get_usage()
             message = self._format_usage_message(usage)
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.SYSTEM_MESSAGE, message=message
             )
         except Exception as e:
             logger.debug(f"Usage retrieval failed: {e}")
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.ERROR, message=f"Failed to retrieve usage: {str(e)}"
             )
         return CommandResult(handled=True, clear_flag=True)
@@ -177,7 +177,7 @@ class UtilityCommands:
         try:
             context_service = self.message_handler.persistent_service
             if not context_service:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR, message="Context persistence service not available"
                 )
                 return CommandResult(handled=True, clear_flag=True)
@@ -185,7 +185,7 @@ class UtilityCommands:
             parts = user_input.split(maxsplit=1)
             scope = parts[1].strip().lower() if len(parts) > 1 else "global"
             if scope not in ("global", "project"):
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.SYSTEM_MESSAGE,
                     message="⚠️  Scope must be 'global' or 'project'. Defaulting to 'global'.",
                 )
@@ -198,7 +198,7 @@ class UtilityCommands:
             )
 
             if not behaviors:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.SYSTEM_MESSAGE,
                     message=f"ℹ️  No {scope} behaviors to clean.",
                 )
@@ -206,12 +206,12 @@ class UtilityCommands:
 
             llm_service = self.message_handler.agent.llm
             if not llm_service:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR, message="LLM service not available"
                 )
                 return CommandResult(handled=True, clear_flag=True)
 
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.SYSTEM_MESSAGE,
                 message=f"🔄 Normalizing {len(behaviors)} {scope} behavior(s)...",
             )
@@ -225,12 +225,12 @@ class UtilityCommands:
             message = f"✅ Cleaned {scope} behaviors: {len(old_behaviors)} → {len(normalized)} entries"
             if removed or added:
                 message += f" (merged/removed: {len(removed)}, new IDs: {len(added)})"
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.SYSTEM_MESSAGE, message=message
             )
         except Exception as e:
             logger.error(f"clean behaviors error: {str(e)}", exc_info=True)
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.ERROR, message=f"Error cleaning behaviors: {str(e)}"
             )
         return CommandResult(handled=True, clear_flag=True)

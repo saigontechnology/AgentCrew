@@ -43,7 +43,7 @@ class ConversationCommands:
                         self.message_handler.streamline_messages
                     )
 
-                    self.message_handler.bus.emit_sync(
+                    await self.message_handler.bus.emit(
                         AppEvents.CONSOLIDATION_COMPLETED, result=result
                     )
 
@@ -58,7 +58,7 @@ class ConversationCommands:
                                 True,
                             )
                         except Exception as e:
-                            self.message_handler.bus.emit_sync(
+                            await self.message_handler.bus.emit(
                                 AppEvents.ERROR,
                                 message=f"Failed to save consolidated conversation: {str(e)}",
                             )
@@ -68,30 +68,30 @@ class ConversationCommands:
                         f"preserving {result['messages_preserved']} recent messages. "
                         f"Token savings: ~{result['original_token_count'] - result['consolidated_token_count']}"
                     )
-                    self.message_handler.bus.emit_sync(
+                    await self.message_handler.bus.emit(
                         AppEvents.SYSTEM_MESSAGE, message=message
                     )
                 else:
-                    self.message_handler.bus.emit_sync(
+                    await self.message_handler.bus.emit(
                         AppEvents.SYSTEM_MESSAGE,
                         message=f"Consolidation skipped: {result['reason']}",
                     )
 
                 return CommandResult(handled=True, clear_flag=True)
             else:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR,
                     message="Consolidation is only supported with LocalAgent.",
                 )
                 return CommandResult(handled=False, clear_flag=False)
         except ValueError as e:
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.ERROR,
                 message=f"Invalid consolidation parameter: {str(e)}. Use /consolidate [number]",
             )
             return CommandResult(handled=True, clear_flag=True)
         except Exception as e:
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.ERROR, message=f"Error during consolidation: {str(e)}"
             )
             return CommandResult(handled=True, clear_flag=True)
@@ -111,7 +111,7 @@ class ConversationCommands:
                         self.message_handler.streamline_messages
                     )
 
-                    self.message_handler.bus.emit_sync(
+                    await self.message_handler.bus.emit(
                         AppEvents.UNCONSOLIDATION_COMPLETED, result=result
                     )
 
@@ -126,7 +126,7 @@ class ConversationCommands:
                                 True,
                             )
                         except Exception as e:
-                            self.message_handler.bus.emit_sync(
+                            await self.message_handler.bus.emit(
                                 AppEvents.ERROR,
                                 message=f"Failed to save unconsolidated conversation: {str(e)}",
                             )
@@ -135,24 +135,24 @@ class ConversationCommands:
                         f"Unconsolidated last consolidated message containing "
                         f"{result['messages_restored']} original messages."
                     )
-                    self.message_handler.bus.emit_sync(
+                    await self.message_handler.bus.emit(
                         AppEvents.SYSTEM_MESSAGE, message=message
                     )
                 else:
-                    self.message_handler.bus.emit_sync(
+                    await self.message_handler.bus.emit(
                         AppEvents.SYSTEM_MESSAGE,
                         message=f"Unconsolidation skipped: {result['reason']}",
                     )
 
                 return CommandResult(handled=True, clear_flag=True)
             else:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR,
                     message="Unconsolidation is only supported with LocalAgent.",
                 )
                 return CommandResult(handled=False, clear_flag=False)
         except Exception as e:
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.ERROR, message=f"Error during unconsolidation: {str(e)}"
             )
             return CommandResult(handled=True, clear_flag=True)

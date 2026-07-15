@@ -180,7 +180,7 @@ class MessageHandler:
         )
         self.current_user_input = self.agent.history[-1]
         self.current_user_input_idx = len(self.streamline_messages) - 1
-        self.bus.emit_sync(
+        await self.bus.emit(
             AppEvents.USER_MESSAGE_CREATED,
             message=self.agent.history[-1],
             display_text=display_text,
@@ -383,7 +383,7 @@ class MessageHandler:
                     )
                 except asyncio.TimeoutError:
                     session.finalize("timed_out")
-                    self.bus.emit_sync(
+                    await self.bus.emit(
                         AppEvents.STREAM_OPEN_TIMEOUT,
                         session_id=session.session_id,
                         timeout=session.first_chunk_timeout,
@@ -407,7 +407,7 @@ class MessageHandler:
                 ) = next_item
                 if session.cancel_requested:
                     has_stop_interupted = True
-                    self.bus.emit_sync(
+                    await self.bus.emit(
                         AppEvents.STREAMING_STOPPED,
                         response=assistant_response,
                     )
@@ -423,7 +423,7 @@ class MessageHandler:
                                 },
                             )
                         )
-                        self.bus.emit_sync(
+                        await self.bus.emit(
                             AppEvents.RESPONSE_COMPLETED,
                             response=assistant_response,
                         )
@@ -431,7 +431,7 @@ class MessageHandler:
                         token_usage,
                         store_memory=False,
                     )
-                    self.bus.emit_sync(
+                    await self.bus.emit(
                         AppEvents.STREAM_CANCELED,
                         session_id=session.session_id,
                         assistant_response=assistant_response,
@@ -444,7 +444,7 @@ class MessageHandler:
 
                     if not start_thinking:
                         # Notify about thinking process
-                        self.bus.emit_sync(
+                        await self.bus.emit(
                             AppEvents.THINKING_STARTED,
                             agent_name=self.agent.name,
                         )
@@ -454,7 +454,7 @@ class MessageHandler:
                         start_thinking = True
                     if think_text_chunk:
                         thinking_content += think_text_chunk
-                        self.bus.emit_sync(
+                        await self.bus.emit(
                             AppEvents.THINKING_CHUNK,
                             chunk=think_text_chunk,
                         )
@@ -463,7 +463,7 @@ class MessageHandler:
                 if chunk_text:
                     # End thinking when chunk_text start
                     if not end_thinking and start_thinking:
-                        self.bus.emit_sync(
+                        await self.bus.emit(
                             AppEvents.THINKING_COMPLETED,
                             content=thinking_content,
                         )
@@ -472,7 +472,7 @@ class MessageHandler:
                     if not self.agent.is_streaming():
                         # Delays it a bit when using without stream
                         await asyncio.sleep(0.3)
-                    self.bus.emit_sync(
+                    await self.bus.emit(
                         AppEvents.RESPONSE_CHUNK,
                         chunk=chunk_text,
                         full_response=assistant_response,
@@ -484,7 +484,7 @@ class MessageHandler:
 
             # End thinking when break the response stream
             if not end_thinking and start_thinking:
-                self.bus.emit_sync(
+                await self.bus.emit(
                     AppEvents.THINKING_COMPLETED,
                     content=thinking_content,
                 )
@@ -519,7 +519,7 @@ class MessageHandler:
                         {"message": assistant_response, "thinking": thinking_data},
                     )
                     self._messages_append(assistant_message)
-                self.bus.emit_sync(
+                await self.bus.emit(
                     AppEvents.ASSISTANT_MESSAGE_ADDED,
                     response=assistant_response,
                 )
@@ -532,14 +532,14 @@ class MessageHandler:
                 # check the stop earlier to prevent double token merge
                 if has_stop_interupted:
                     # return as soon as possible
-                    self.bus.emit_sync(
+                    await self.bus.emit(
                         AppEvents.RESPONSE_COMPLETED,
                         response=assistant_response,
                     )
                     return assistant_response, token_usage
 
                 if token_usage:
-                    self.bus.emit_sync(
+                    await self.bus.emit(
                         AppEvents.UPDATE_TOKEN_USAGE,
                         input_tokens=token_usage.input_tokens,
                         output_tokens=token_usage.output_tokens,
@@ -555,7 +555,7 @@ class MessageHandler:
                         f"times consecutively. Max retry limit ({self.MAX_EMPTY_RESPONSE_RETRIES}) reached."
                     )
                     logger.error(error_msg)
-                    self.bus.emit_sync(AppEvents.ERROR, message=error_msg)
+                    await self.bus.emit(AppEvents.ERROR, message=error_msg)
                     return None, token_usage
                 logger.warning(
                     f"Empty assistant response (attempt {_empty_response_retry_count + 1}), retrying..."
@@ -574,7 +574,7 @@ class MessageHandler:
                     },
                 )
             )
-            self.bus.emit_sync(
+            await self.bus.emit(
                 AppEvents.RESPONSE_COMPLETED,
                 response=assistant_response,
             )
@@ -620,7 +620,7 @@ class MessageHandler:
                         },
                     )
                 )
-                self.bus.emit_sync(
+                await self.bus.emit(
                     AppEvents.RESPONSE_COMPLETED,
                     response=assistant_response,
                 )
@@ -628,7 +628,7 @@ class MessageHandler:
                 token_usage,
                 store_memory=False,
             )
-            self.bus.emit_sync(
+            await self.bus.emit(
                 AppEvents.STREAM_CANCELED,
                 session_id=session.session_id,
                 assistant_response=assistant_response,
@@ -685,7 +685,7 @@ class MessageHandler:
                         self.current_conversation_id,
                         messages_for_this_turn,
                     )
-                    self.bus.emit_sync(
+                    await self.bus.emit(
                         AppEvents.CONVERSATION_SAVED, id=self.current_conversation_id
                     )
             self.last_assisstant_response_idx = len(self.streamline_messages)
@@ -693,7 +693,7 @@ class MessageHandler:
             error_message = str(e)
             traceback_str = traceback.format_exc()
             logger.error(f"{error_message} \n {traceback_str}")
-            self.bus.emit_sync(
+            await self.bus.emit(
                 AppEvents.ERROR,
                 message=error_message,
                 messages=self.agent.history,

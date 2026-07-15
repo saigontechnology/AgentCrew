@@ -37,24 +37,24 @@ class LearnReviewCoordinator:
             streamline_messages: The conversation messages to analyze.
         """
         if not self._persistence_service:
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.ERROR, message="Context persistence service not available"
             )
             return True
 
         agent = self._agent_getter()
         if not agent or not getattr(agent, "llm", None):
-            self._bus.emit_sync(AppEvents.ERROR, message="LLM service not available")
+            await self._bus.emit(AppEvents.ERROR, message="LLM service not available")
             return True
 
         compact_history = self._build_compact_conversation_history(streamline_messages)
         if not compact_history.strip():
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.SYSTEM_MESSAGE, message="ℹ️  No conversation to learn from."
             )
             return True
 
-        self._bus.emit_sync(
+        await self._bus.emit(
             AppEvents.SYSTEM_MESSAGE,
             message="🔄 Analyzing conversation for behaviors...",
         )
@@ -75,19 +75,19 @@ class LearnReviewCoordinator:
             behaviors = self._parse_behaviors_response(response)
         except Exception as e:
             logger.error(f"Learn behavior extraction failed: {e}", exc_info=True)
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.ERROR, message=f"Failed to extract behaviors: {str(e)}"
             )
             return True
 
         if not behaviors:
-            self._bus.emit_sync(
+            await self._bus.emit(
                 AppEvents.SYSTEM_MESSAGE,
                 message="ℹ️  No behaviors found in the conversation.",
             )
             return True
 
-        self._bus.emit_sync(
+        await self._bus.emit(
             AppEvents.SYSTEM_MESSAGE,
             message=f"Found {len(behaviors)} behavior(s). Please confirm each one.",
         )
@@ -109,24 +109,24 @@ class LearnReviewCoordinator:
                     )
                     if success:
                         stored_count += 1
-                        self._bus.emit_sync(
+                        await self._bus.emit(
                             AppEvents.SYSTEM_MESSAGE,
                             message=f"✅ Stored behavior '{behavior_data['id']}' ({scope} scope)",
                         )
                     else:
-                        self._bus.emit_sync(
+                        await self._bus.emit(
                             AppEvents.ERROR,
                             message=f"❌ Failed to store behavior '{behavior_data['id']}'",
                         )
                 except ValueError as e:
-                    self._bus.emit_sync(
+                    await self._bus.emit(
                         AppEvents.ERROR,
                         message=f"❌ Invalid behavior format for '{behavior_data['id']}': {str(e)}",
                     )
             else:
                 skipped_count += 1
 
-        self._bus.emit_sync(
+        await self._bus.emit(
             AppEvents.SYSTEM_MESSAGE,
             message=f"✅ Learn complete: {stored_count} behavior(s) stored, {skipped_count} skipped.",
         )
@@ -150,7 +150,7 @@ class LearnReviewCoordinator:
         self._next_confirmation_id += 1
         self._pending_confirmations[confirmation_id] = {"resolved": False}
 
-        self._bus.emit_sync(
+        await self._bus.emit(
             AppEvents.LEARN_CONFIRMATION,
             confirmation_id=confirmation_id,
             **behavior_data,

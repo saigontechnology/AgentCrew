@@ -20,21 +20,21 @@ class VoiceCommands:
         try:
             # Check if already recording
             if self.message_handler.voice_service is None:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR,
                     message="Voice service not available. Start AgentCrew with --with-voice and set ELEVENLABS_API_KEY or DEEPINFRA_API_KEY.",
                 )
                 return CommandResult(handled=True, clear_flag=True)
 
             if self.message_handler.voice_service.is_recording():
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR,
                     message="Already recording. Use /end_voice to stop current recording.",
                 )
                 return CommandResult(handled=True, clear_flag=True)
 
             if self.message_handler.has_active_stream():
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.SYSTEM_MESSAGE,
                     message="🎤 Voice input is unavailable while the assistant is still responding.",
                 )
@@ -46,7 +46,7 @@ class VoiceCommands:
                 transcript = await self._voice_transcript(audio_data, sample_rate)
                 if self.message_handler.has_active_stream():
                     return
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.VOICE_ACTIVATE, transcript=transcript
                 )
 
@@ -56,20 +56,20 @@ class VoiceCommands:
             )
 
             if result["success"]:
-                self.message_handler.bus.emit_sync(AppEvents.VOICE_RECORDING_STARTED)
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(AppEvents.VOICE_RECORDING_STARTED)
+                await self.message_handler.bus.emit(
                     AppEvents.SYSTEM_MESSAGE,
                     message="🎤 Recording started. Press Enter to stop.",
                 )
             else:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR, message=result["error"]
                 )
 
             return CommandResult(handled=True, clear_flag=True)
 
         except Exception as e:
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.ERROR, message=f"Voice command failed: {str(e)}"
             )
             return CommandResult(handled=True, clear_flag=True)
@@ -85,13 +85,13 @@ class VoiceCommands:
                 confidence = transcribe_result.get("confidence", 1.0)
 
                 # Notify about transcription
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.SYSTEM_MESSAGE,
                     message=f"✅ Transcribed (confidence: {confidence:.0%}): {transcribed_text}",
                 )
 
             else:
-                self.message_handler.bus.emit_sync(
+                await self.message_handler.bus.emit(
                     AppEvents.ERROR, message=transcribe_result["error"]
                 )
 
@@ -107,18 +107,18 @@ class VoiceCommands:
             if not self.message_handler.voice_service.is_recording():
                 return CommandResult(handled=True, clear_flag=True)
 
-            self.message_handler.bus.emit_sync(AppEvents.VOICE_RECORDING_STOPPING)
+            await self.message_handler.bus.emit(AppEvents.VOICE_RECORDING_STOPPING)
             stop_result = self.message_handler.voice_service.stop_voice_recording()
 
             if not stop_result["success"]:
                 return CommandResult(handled=True, clear_flag=True)
 
-            self.message_handler.bus.emit_sync(AppEvents.VOICE_RECORDING_COMPLETED)
+            await self.message_handler.bus.emit(AppEvents.VOICE_RECORDING_COMPLETED)
             return CommandResult(handled=True, clear_flag=True)
 
         except Exception as e:
-            self.message_handler.bus.emit_sync(
+            await self.message_handler.bus.emit(
                 AppEvents.ERROR, message=f"End voice command failed: {str(e)}"
             )
-            self.message_handler.bus.emit_sync(AppEvents.VOICE_RECORDING_COMPLETED)
+            await self.message_handler.bus.emit(AppEvents.VOICE_RECORDING_COMPLETED)
             return CommandResult(handled=True, clear_flag=True)

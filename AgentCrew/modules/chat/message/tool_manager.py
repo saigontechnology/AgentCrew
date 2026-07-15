@@ -187,7 +187,7 @@ class ToolManager:
                     {"tool_use": tool_use, "tool_result": tool_result},
                 )
                 self.message_handler._messages_append(tool_result_message)
-                self.bus.emit_sync(
+                await self.bus.emit(
                     AppEvents.TOOL_RESULT,
                     tool_use=tool_use,
                     tool_result=tool_result,
@@ -203,7 +203,7 @@ class ToolManager:
                     },
                 )
                 self.message_handler._messages_append(error_message)
-                self.bus.emit_sync(
+                await self.bus.emit(
                     AppEvents.TOOL_ERROR,
                     tool_use=tool_use,
                     error=str(e),
@@ -237,7 +237,7 @@ class ToolManager:
                     },
                 )
                 self.message_handler._messages_append(error_message)
-                self.bus.emit_sync(
+                await self.bus.emit(
                     AppEvents.TOOL_DENIED,
                     tool_use=tool_use,
                     message=tool_result,
@@ -248,7 +248,7 @@ class ToolManager:
                 # Remember this tool for auto-approval
                 self._auto_approved_tools.add(tool_name)
 
-        self.bus.emit_sync(AppEvents.TOOL_USE, **tool_use)
+        await self.bus.emit(AppEvents.TOOL_USE, **tool_use)
         result = await self._execute_approved_tool(tool_use)
         self._record_tool_result(result)
 
@@ -269,7 +269,7 @@ class ToolManager:
         self._pending_confirmations[confirmation_id] = {"approval": "pending"}
 
         # Notify UI that confirmation is required
-        self.bus.emit_sync(
+        await self.bus.emit(
             AppEvents.TOOL_CONFIRMATION_REQ,
             tool_use=tool_use,
             confirmation_id=confirmation_id,
@@ -390,7 +390,7 @@ class ToolManager:
             return
 
         for tool_use in approved:
-            self.bus.emit_sync(AppEvents.TOOL_USE, **tool_use)
+            await self.bus.emit(AppEvents.TOOL_USE, **tool_use)
 
         results = await execute_tool_tasks_in_parallel(
             approved,
@@ -428,7 +428,7 @@ class ToolManager:
                 },
             )
             self.message_handler._messages_append(error_message)
-            self.bus.emit_sync(
+            await self.bus.emit(
                 AppEvents.TOOL_DENIED,
                 tool_use=tool_use,
                 message=tool_result,
