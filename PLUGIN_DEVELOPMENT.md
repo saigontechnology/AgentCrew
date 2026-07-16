@@ -1,9 +1,9 @@
 # AgentCrew Plugin Development
 
 AgentCrew plugins can subscribe to application events and register lifecycle
-hooks. `tool.execute`, `agent.process`, and `context.build` are currently wired
-into runtime execution; contracts for the other declared hook points are available for
-forward-compatible plugin development. Plugins are discovered by scanning
+hooks. `tool.execute`, `agent.process`, `context.build`, and `memory.store` are
+currently wired into runtime execution. Contracts for the other declared hook
+points are available for forward-compatible plugin development. Plugins are discovered by scanning
 two filesystem directories:
 
 1. `.agentcrew/plugins/` — **project-based plugins** (higher precedence)
@@ -223,8 +223,9 @@ passed to an after hook. After handlers continue to receive both
 The declared contracts cover `tool.execute`, `agent.process`, `user.message`,
 `response.complete`, `memory.store`, `memory.retrieve`, `context.build`,
 `agent.transfer`, and `agent.delegate`. The `tool.execute`, `agent.process`,
-and `context.build` points are actively invoked by AgentCrew runtime code;
-the remainder are declared for forward-compatible plugin development.
+`context.build`, and `memory.store` points are actively invoked by AgentCrew
+runtime code. The remainder are declared for forward-compatible plugin
+development.
 
 Payloads are plain dictionary boundaries. They may contain provider-specific
 values typed as `Any`, but must not include credentials, authorization headers,
@@ -413,6 +414,55 @@ class ContextLoggerPlugin(Plugin):
         print(f"After enhancement: {len(result['messages'])} messages")
         return result
 ```
+
+## `memory.store` hooks
+
+Memory storage is an optional branch after a response completes. The worker
+runs both phases before writing the generated memory to the collection.
+
+```mermaid
+flowchart LR
+    RESPONSE["Response Completed"] --> FINALIZE["Turn Finalization"]
+    RESPONSE -.->|"optional memory branch"| BEFORE["memory.store.before"]
+    BEFORE --> CREATE["Create memory_data"]
+    CREATE --> AFTER["memory.store.after"]
+    AFTER --> STORE["Persist to memory collection"]
+```
+
+### Before hook
+
+The before hook receives a `MemoryStoreContext` envelope:
+
+```python
+{
+  "operation_data": {
+    "operation_id": str,
+    "user_message": str,
+    "assistant_messages": list[str],
+    "agent_name": str,
+    "session_id": str,
+  }
+}
+```
+
+A hook may replace or modify `operation_data`. Return the context to continue.
+Returning `None` or raising `CancelOperation` cancels memory creation and no
+collection write occurs.
+
+### After hook
+
+The after hook receives the final `operation_data` as context and a
+`MemoryStoreResult` envelope:
+
+```python
+{
+  "memory_data": dict,
+}
+```
+
+It runs immediately after `memory_data` is created and before the worker derives
+the header, serialized document, context cache, embedding, and metadata. Changes
+to `memory_data` therefore affect the object persisted to the collection.
 
 ## Failure isolation and cleanup
 

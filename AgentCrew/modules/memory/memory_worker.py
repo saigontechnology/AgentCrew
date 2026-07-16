@@ -138,6 +138,26 @@ class MemoryWorker:
                 logger.error("Cannot find embedding_function")
                 return
 
+            # ── memory.store.before hook ────────────────────────────────
+            from AgentCrew.modules.events.hooks import (
+                HookRegistry,
+                HookPoints,
+            )
+
+            _hooks = HookRegistry.get_instance()
+            _before_ctx = await _hooks.run_before(
+                HookPoints.MEMORY_STORE,
+                operation_data=operation_data,
+            )
+            if _before_ctx is None:
+                logger.info(
+                    "memory.store cancelled by before hook: %s",
+                    operation_data.get("operation_id", ""),
+                )
+                return
+            operation_data = _before_ctx["operation_data"]
+            # ─────────────────────────────────────────────────────────────
+
             user_message = operation_data["user_message"]
             assistant_messages = operation_data.get("assistant_messages") or []
             assistant_messages = [
@@ -217,6 +237,25 @@ class MemoryWorker:
                         },
                     }
                 }
+
+            # ── memory.store.after hook ─────────────────────────────────
+            # Run immediately after final memory_data creation (LLM or
+            # fallback) and BEFORE deriving any state from it so that
+            # after-hook mutations affect all derived values: header,
+            # serialized document, embedding, cache, and metadata.
+            _after_envelope: dict[str, Any] = {
+                "memory_data": memory_data,
+            }
+            _modified = await _hooks.run_after(
+                HookPoints.MEMORY_STORE,
+                result=_after_envelope,
+                operation_data=operation_data,
+            )
+            if isinstance(_modified, dict) and isinstance(
+                _modified.get("memory_data"), dict
+            ):
+                memory_data = _modified["memory_data"]
+            # ─────────────────────────────────────────────────────────────
 
             timestamp = datetime.now().timestamp()
 

@@ -102,24 +102,35 @@ class ResponseCompleteResult(BaseHookResult, total=False):
 
 
 class MemoryStoreContext(BaseHookContext, total=False):
-    """Conversation content prepared for memory storage."""
+    """Context passed to ``memory.store.before`` hooks.
 
-    content: Any
-    user_message: Any
-    assistant_messages: list[Any]
-    current_response: Any
-    metadata: dict[str, Any]
-    tags: list[str]
-    scope: str
+    The ``operation_data`` dict is the same dict queued by
+    :meth:`ChromaMemoryService.store_conversation` and contains
+    ``operation_id``, ``user_message``, ``assistant_messages``,
+    ``agent_name``, ``session_id``, ``timestamp``, etc.
+
+    Before hooks receive this via ``run_before(HookPoints.MEMORY_STORE,
+    operation_data=operation_data)`` and must return a dict with an
+    ``"operation_data"`` key whose value is used for subsequent
+    memory creation.
+    """
+
+    operation_data: dict[str, Any]
 
 
 class MemoryStoreResult(BaseHookResult, total=False):
-    """Memory storage outcome."""
+    """Memory storage outcome.
+
+    ``memory_data`` is the parsed memory dict (the ``<MEMORY>`` XML dict)
+    created by the memory worker.  After hooks may mutate it to affect the
+    object that is actually serialised and persisted.
+    """
 
     stored: bool
     memory_ids: list[str]
     stored_count: int
     skipped_reason: str | None
+    memory_data: Any
 
 
 class MemoryRetrieveContext(BaseHookContext, total=False):

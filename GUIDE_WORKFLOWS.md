@@ -547,6 +547,7 @@ flowchart TD
     TOOL_EXEC["Tool Execution"]:::phase
     TOOL_RESULT_PHASE["Tool Result"]:::phase
     RESPONSE_DONE["Response Completed"]:::phase
+    MEMORY_STORE["Memory Store (optional)"]:::phase
     TURN_FINALIZE["Turn Finalization"]:::phase
     AGENT_OPS["Agent / Model Ops"]:::phase
     CONV_OPS["Conversation Ops"]:::phase
@@ -569,6 +570,8 @@ flowchart TD
     TOOL_RESULT_PHASE -->|"emit: tool_result / tool_error / agent_changed_by_transfer"| TOOL_EXEC
     TOOL_RESULT_PHASE -->|"no more tool uses"| RESPONSE_DONE
     RESPONSE_DONE -->|"emit: response_completed"| TURN_FINALIZE
+    RESPONSE_DONE -.->|"optional: memory.store before/after hooks"| MEMORY_STORE
+    MEMORY_STORE -.->|"queue and persist conversation memory"| TURN_FINALIZE
     TURN_FINALIZE -->|"emit: conversation_saved ⎮ error"| USER_INPUT
 
     AGENT_OPS -.->|"agent/model events"| USER_INPUT
@@ -614,12 +617,12 @@ flowchart TD
 | `tool_result`                | Tool executed successfully         | `tool_use`, `tool_result`, `message` |
 | `tool_error`                 | Tool execution failed              | `tool_use`, `error`, `message`       |
 
-> **Hook points**: `tool.execute`, `context.build`, and `agent.process` are currently wired.
-> `tool.execute` before/after hooks can modify/cancel tool calls;
-> `context.build` before/after hooks can modify the message list and system
-> prompt before the LLM request is sent;
-> `agent.process` before/after hooks can modify the ``model_id`` and ``messages``
-> before the LLM call, and modify the resulting ``tool_uses`` and ``token_usage``.
+> **Hook points**: `tool.execute`, `context.build`, `agent.process`, and
+> `memory.store` are currently wired. `tool.execute` hooks can modify or cancel
+> tool calls. `context.build` hooks can modify the message list and system
+> prompt. `agent.process` hooks can modify the model input and result.
+> `memory.store` hooks can modify or cancel queued memory input, then modify the
+> generated memory immediately before its derived data is persisted.
 
 ### Conversation Events — `MessageHandler`, Command Handlers
 
@@ -680,7 +683,8 @@ flowchart TD
 |                     |            | after:  `(ctx, res) → res`  |                                    |
 | user.message        | 🔄 Develop | before/after               | Intercept user input               |
 | response.complete   | 🔄 Develop | before/after               | Post-process response              |
-| memory.store        | 🔄 Develop | before/after               | Intercept persistence              |
+| **memory.store** ★ | ✅ Active  | before: `(ctx) → ctx⎮None` | Modify/cancel memory input          |
+|                     |            | after: `(ctx, res) → res`  | Modify generated memory before persistence |
 | memory.retrieve     | 🔄 Develop | before/after               | Intercept retrieval                 |
 | agent.transfer      | 🔄 Develop | before/after               | Intercept hand-offs                |
 | agent.delegate      | 🔄 Develop | before/after               | Intercept delegation               |
@@ -702,8 +706,8 @@ flowchart TD
 
 - **Events ≠ Hooks**: Events are one-way broadcasts for UI/logging. Hooks are
   interception points with before/after semantics and cancellation.
-- **`tool.execute`, `agent.process`, and `context.build` are wired**: The remaining hooks are in
-  development awaiting plugin implementations.
+- **`tool.execute`, `agent.process`, `context.build`, and `memory.store` are wired**:
+  The remaining hooks are in development awaiting runtime integration.
 - **Plugins get owned facades**: `_OwnedEventBus` and `_OwnedHookRegistry`
   auto-assign ownership for deterministic cleanup.
 - **Events defined in `events/constants.py`**: Each needs a constant + TypedDict

@@ -165,7 +165,9 @@ async def test_before_hook_replaces_system_prompt(hooks):
 async def test_after_hook_modifies_messages_in_envelope(hooks):
     """After hook receives a ContextBuildResult via result= and can modify messages."""
 
-    async def modify_envelope(ctx: dict, result: ContextBuildResult) -> ContextBuildResult:
+    async def modify_envelope(
+        ctx: dict, result: ContextBuildResult
+    ) -> ContextBuildResult:
         result["messages"] = [{"role": "assistant", "content": "modified after"}]
         return result
 

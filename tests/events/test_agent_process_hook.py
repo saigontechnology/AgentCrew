@@ -251,9 +251,7 @@ async def test_after_hook_modifies_token_usage(hooks):
 async def test_after_hook_modifies_both(hooks):
     """After hook can modify both tool_uses and token_usage in one pass."""
 
-    async def modify_both(
-        ctx: dict, result: AgentProcessResult
-    ) -> AgentProcessResult:
+    async def modify_both(ctx: dict, result: AgentProcessResult) -> AgentProcessResult:
         result["tool_uses"] = []
         result["token_usage"] = TokenUsage(input_tokens=0, output_tokens=0)
         return result

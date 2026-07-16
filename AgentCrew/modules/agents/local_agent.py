@@ -873,4 +873,3 @@ class LocalAgent(BaseAgent):
             logger.error(f"Error during message processing: {e}")
             logger.debug(f"Final messages at error time: {final_messages}")
             raise e
-
