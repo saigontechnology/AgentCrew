@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime
 import os
 import copy
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from .base import BaseAgent, MessageType
 from AgentCrew.modules.llm.token_usage import TokenUsage
@@ -367,6 +367,10 @@ class LocalAgent(BaseAgent):
             self.llm.set_think(think_setting)
 
     async def execute_tool_call(self, tool_use: dict) -> Any:
+        from AgentCrew.modules.events.hook_payloads import (
+            ToolExecuteContext,
+            ToolExecuteResult,
+        )
         from AgentCrew.modules.events.hooks import (
             HookRegistry,
             HookPoints,
@@ -378,22 +382,26 @@ class LocalAgent(BaseAgent):
         tool_input = tool_use.get("input", {})
 
         # Run before hooks — can cancel or modify the tool call
-        context = await hooks.run_before(
+        before_payload: ToolExecuteContext = {
+            "agent_name": self.name,
+            "tool_id": tool_use.get("id", ""),
+            "tool_use": copy.deepcopy(tool_use),
+            "requested_tool_name": tool_name,
+            "requested_tool_input": copy.deepcopy(tool_input),
+            "tool_name": tool_name,
+            "tool_input": copy.deepcopy(tool_input),
+        }
+        context_result = await hooks.run_before(
             HookPoints.TOOL_EXECUTE,
-            agent_name=self.name,
-            tool_id=tool_use.get("id", ""),
-            tool_use=copy.deepcopy(tool_use),
-            requested_tool_name=tool_name,
-            requested_tool_input=copy.deepcopy(tool_input),
-            tool_name=tool_name,
-            tool_input=copy.deepcopy(tool_input),
+            **before_payload,
         )
 
-        if context is None:
+        if context_result is None:
             raise CancelOperation(
                 f"Tool {tool_name} was cancelled by a tool.execute hook"
             )
 
+        context = cast(ToolExecuteContext, context_result)
         resolved_name = context.get("tool_name", tool_name)
         resolved_input = context.get("tool_input", tool_input)
 
@@ -404,19 +412,25 @@ class LocalAgent(BaseAgent):
         )
 
         # Run after hooks — can modify the result
-        result_envelope = {"tool_result": result, "is_error": False}
+        after_context: ToolExecuteContext = {
+            "agent_name": self.name,
+            "tool_id": tool_use.get("id", ""),
+            "tool_use": copy.deepcopy(tool_use),
+            "requested_tool_name": tool_name,
+            "requested_tool_input": copy.deepcopy(tool_input),
+            "tool_name": resolved_name,
+            "tool_input": copy.deepcopy(resolved_input),
+            "resolved_tool_name": resolved_name,
+            "resolved_tool_input": copy.deepcopy(resolved_input),
+        }
+        result_envelope: ToolExecuteResult = {
+            "tool_result": result,
+            "is_error": False,
+        }
         modified = await hooks.run_after(
             HookPoints.TOOL_EXECUTE,
             result=result_envelope,
-            agent_name=self.name,
-            tool_id=tool_use.get("id", ""),
-            tool_use=copy.deepcopy(tool_use),
-            requested_tool_name=tool_name,
-            requested_tool_input=copy.deepcopy(tool_input),
-            tool_name=resolved_name,
-            tool_input=copy.deepcopy(resolved_input),
-            resolved_tool_name=resolved_name,
-            resolved_tool_input=copy.deepcopy(resolved_input),
+            **after_context,
         )
 
         if isinstance(modified, dict):

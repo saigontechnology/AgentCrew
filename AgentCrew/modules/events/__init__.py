@@ -29,6 +29,35 @@ from .hooks import Hook as Hook
 from .hooks import HookPhase as HookPhase
 from .hooks import HookRegistration as HookRegistration
 from .hooks import CancelOperation as CancelOperation
+from .hook_payloads import (
+    HOOK_PAYLOAD_MAP as HOOK_PAYLOAD_MAP,
+    AgentDelegateContext as AgentDelegateContext,
+    AgentDelegateResult as AgentDelegateResult,
+    AgentProcessContext as AgentProcessContext,
+    AgentProcessResult as AgentProcessResult,
+    AgentTransferContext as AgentTransferContext,
+    AgentTransferResult as AgentTransferResult,
+    AppShutdownContext as AppShutdownContext,
+    AppShutdownResult as AppShutdownResult,
+    AppStartupContext as AppStartupContext,
+    AppStartupResult as AppStartupResult,
+    BaseHookContext as BaseHookContext,
+    BaseHookResult as BaseHookResult,
+    ContextBuildContext as ContextBuildContext,
+    ContextBuildResult as ContextBuildResult,
+    MemoryRetrieveContext as MemoryRetrieveContext,
+    MemoryRetrieveResult as MemoryRetrieveResult,
+    MemoryStoreContext as MemoryStoreContext,
+    MemoryStoreResult as MemoryStoreResult,
+    ResponseCompleteContext as ResponseCompleteContext,
+    ResponseCompleteResult as ResponseCompleteResult,
+    ResponseStreamContext as ResponseStreamContext,
+    ResponseStreamResult as ResponseStreamResult,
+    ToolExecuteContext as ToolExecuteContext,
+    ToolExecuteResult as ToolExecuteResult,
+    UserMessageContext as UserMessageContext,
+    UserMessageResult as UserMessageResult,
+)
 from .plugin_system import Plugin as Plugin
 from .plugin_system import PluginManager as PluginManager
 from .plugin_system import PluginMeta as PluginMeta

@@ -361,30 +361,6 @@ class McpPromptPayload(TypedDict):
     content: str
 
 
-# ── Hook-specific payloads ──
-
-
-class ToolExecuteContext(TypedDict, total=False):
-    """Context passed to tool.execute hooks."""
-
-    agent_name: str
-    tool_id: str
-    tool_use: dict[str, Any]
-    requested_tool_name: str
-    requested_tool_input: dict[str, Any]
-    tool_name: str
-    tool_input: dict[str, Any]
-    resolved_tool_name: str
-    resolved_tool_input: dict[str, Any]
-
-
-class ToolExecuteResult(TypedDict, total=False):
-    """Result that tool.execute hooks can modify."""
-
-    tool_result: Any
-    is_error: bool
-
-
 # ──────────────────────────────────────────────
 #  Event → Payload mapping (runtime introspection)
 # ──────────────────────────────────────────────

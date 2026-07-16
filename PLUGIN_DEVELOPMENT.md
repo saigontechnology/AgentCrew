@@ -1,7 +1,9 @@
 # AgentCrew Plugin Development
 
-AgentCrew plugins can subscribe to application events and register `tool.execute`
-hooks. Plugins are discovered by scanning two filesystem directories:
+AgentCrew plugins can subscribe to application events and register lifecycle
+hooks. Only `tool.execute` is currently wired into runtime execution; contracts
+for the other declared hook points are available for forward-compatible plugin
+development. Plugins are discovered by scanning two filesystem directories:
 
 1. `.agentcrew/plugins/` — **project-based plugins** (higher precedence)
 2. `~/.AgentCrew/plugins/` — **global plugins** (fallback)
@@ -199,9 +201,35 @@ bus.emit_sync(AppEvents.SYSTEM_MESSAGE, message="Plugin activated")
 
 Plugin-owned EventBus subscriptions are removed automatically. Explicit `off()` is still available for early removal.
 
-## `tool.execute` hooks
+## Hook payload contracts
 
 Only `before` and `after` phases are supported. Around hooks are not supported.
+Every declared `HookPoints` value has a context and result `TypedDict` exported
+from `AgentCrew.modules.events`. `HOOK_PAYLOAD_MAP` exposes those contracts for
+runtime introspection:
+
+```python
+from AgentCrew.modules.events import HOOK_PAYLOAD_MAP, HookPhase, HookPoints
+
+before_type = HOOK_PAYLOAD_MAP[HookPoints.TOOL_EXECUTE][HookPhase.BEFORE]
+after_type = HOOK_PAYLOAD_MAP[HookPoints.TOOL_EXECUTE][HookPhase.AFTER]
+```
+
+The map describes the context passed to a before hook and the result envelope
+passed to an after hook. After handlers continue to receive both
+`(context, result)`.
+
+The declared contracts cover `tool.execute`, `agent.process`, `user.message`,
+`response.stream`, `response.complete`, `app.startup`, `app.shutdown`,
+`memory.store`, `memory.retrieve`, `context.build`, `agent.transfer`, and
+`agent.delegate`. These declarations do not mean every point is active:
+`tool.execute` is the only hook currently invoked by AgentCrew runtime code.
+
+Payloads are plain dictionary boundaries. They may contain provider-specific
+values typed as `Any`, but must not include credentials, authorization headers,
+or live service objects.
+
+## `tool.execute` hooks
 
 ### Before hook
 
@@ -226,7 +254,7 @@ An after hook receives the context and this result envelope:
 }
 ```
 
-After hooks run for both successful execution and executor errors. They may replace the result or recover from an error by returning a modified envelope. Sequential and parallel approved tools use the same hook pipeline. The special `ask` interaction remains outside `tool.execute`.
+After hooks currently run only after successful executor completion. If the executor raises, the exception escapes before after-hook dispatch. Executor-error after-hook coverage is planned for a later runtime-wiring slice. On successful execution, after hooks may replace the result. Sequential and parallel approved tools use the same hook pipeline. The special `ask` interaction remains outside `tool.execute`.
 
 ## Failure isolation and cleanup
 
