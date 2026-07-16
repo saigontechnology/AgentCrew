@@ -224,14 +224,8 @@ class CustomLLMService(OpenAIService):
                     if isinstance(parsed_arguments, dict):
                         self._normalize_tool_input_values(parsed_arguments)
                         tool_use["input"] = parsed_arguments
-                    else:
-                        logger.warning(
-                            f"_merge_stream_tool_call_delta: accumulated args_json parsed as non-dict "
-                            f"(type={type(parsed_arguments).__name__}, value={parsed_arguments!r}, "
-                            f"args_json={tool_use['args_json']!r})"
-                        )
                 except json.JSONDecodeError:
-                    logger.warning(
+                    logger.debug(
                         f"_merge_stream_tool_call_delta: accumulated args_json still incomplete "
                         f"(tool_name={tool_use.get('name')!r}, "
                         f"args_json={tool_use.get('args_json', '')!r})"
