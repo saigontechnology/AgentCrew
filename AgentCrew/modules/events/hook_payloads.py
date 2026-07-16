@@ -88,28 +88,6 @@ class UserMessageResult(BaseHookResult, total=False):
     accepted: bool
 
 
-class ResponseStreamContext(BaseHookContext, total=False):
-    """One response or thinking item in an output stream."""
-
-    sequence: int
-    chunk_type: str
-    chunk: Any
-    accumulated_content: Any
-    is_first: bool
-    is_final: bool
-    thinking_signature: Any
-    metadata: dict[str, Any]
-
-
-class ResponseStreamResult(BaseHookResult, total=False):
-    """Outcome of processing one stream item."""
-
-    chunk: Any
-    accumulated_content: Any
-    emitted: bool
-    sequence: int
-
-
 class ResponseCompleteContext(BaseHookContext, total=False):
     """Completed model output before final response persistence."""
 
@@ -129,55 +107,6 @@ class ResponseCompleteResult(BaseHookResult, total=False):
     assistant_message: dict[str, Any]
     history_index: int
     memory_stored: bool
-
-
-class AppStartupContext(BaseHookContext, total=False):
-    """Non-secret application startup configuration."""
-
-    mode: str
-    working_directory: str
-    version: str
-    configuration: dict[str, Any]
-    trusted_project_plugins: bool
-    discovered_plugins: list[dict[str, Any]]
-
-
-class AppStartupResult(BaseHookResult, total=False):
-    """Application startup outcome."""
-
-    started: bool
-    mode: str
-    active_agent: str
-    active_plugins: list[str]
-    active_services: list[str]
-    available_services: list[str]
-    warnings: list[str]
-    failures: list[Any]
-
-
-class AppShutdownContext(BaseHookContext, total=False):
-    """Application state and reason before shutdown."""
-
-    mode: str
-    reason: str
-    force: bool
-    active_agent: str
-    active_plugins: list[str]
-    active_task_count: int
-    active_stream_count: int
-    pending_persistence: bool
-
-
-class AppShutdownResult(BaseHookResult, total=False):
-    """Application shutdown outcome."""
-
-    shutdown: bool
-    closed_services: list[str]
-    closed_plugins: list[str]
-    failed_services: list[Any]
-    warnings: list[str]
-    failures: list[Any]
-    flushed_state: bool
 
 
 class MemoryStoreContext(BaseHookContext, total=False):
@@ -300,21 +229,9 @@ HOOK_PAYLOAD_MAP: dict[str, dict[HookPhase, type[Any]]] = {
         HookPhase.BEFORE: UserMessageContext,
         HookPhase.AFTER: UserMessageResult,
     },
-    HookPoints.RESPONSE_STREAM: {
-        HookPhase.BEFORE: ResponseStreamContext,
-        HookPhase.AFTER: ResponseStreamResult,
-    },
     HookPoints.RESPONSE_COMPLETE: {
         HookPhase.BEFORE: ResponseCompleteContext,
         HookPhase.AFTER: ResponseCompleteResult,
-    },
-    HookPoints.APP_STARTUP: {
-        HookPhase.BEFORE: AppStartupContext,
-        HookPhase.AFTER: AppStartupResult,
-    },
-    HookPoints.APP_SHUTDOWN: {
-        HookPhase.BEFORE: AppShutdownContext,
-        HookPhase.AFTER: AppShutdownResult,
     },
     HookPoints.MEMORY_STORE: {
         HookPhase.BEFORE: MemoryStoreContext,

@@ -220,9 +220,9 @@ passed to an after hook. After handlers continue to receive both
 `(context, result)`.
 
 The declared contracts cover `tool.execute`, `agent.process`, `user.message`,
-`response.stream`, `response.complete`, `app.startup`, `app.shutdown`,
-`memory.store`, `memory.retrieve`, `context.build`, `agent.transfer`, and
-`agent.delegate`. These declarations do not mean every point is active:
+`response.complete`, `memory.store`, `memory.retrieve`, `context.build`,
+`agent.transfer`, and `agent.delegate`. These declarations do not mean every
+point is active:
 `tool.execute` is the only hook currently invoked by AgentCrew runtime code.
 
 Payloads are plain dictionary boundaries. They may contain provider-specific

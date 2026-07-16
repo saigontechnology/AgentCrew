@@ -49,12 +49,7 @@ class HookPoints:
     USER_MESSAGE = "user.message"
 
     # ── Response lifecycle ────────────────────
-    RESPONSE_STREAM = "response.stream"
     RESPONSE_COMPLETE = "response.complete"
-
-    # ── Application lifecycle ─────────────────
-    APP_STARTUP = "app.startup"
-    APP_SHUTDOWN = "app.shutdown"
 
     # ── Memory lifecycle ──────────────────────
     MEMORY_STORE = "memory.store"
