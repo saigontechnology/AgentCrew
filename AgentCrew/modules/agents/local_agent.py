@@ -664,22 +664,18 @@ class LocalAgent(BaseAgent):
         if not self._defer_tool_registration:
             self._register_tools_with_llm()
 
-    async def process_messages(
+    async def pre_process_message(
         self,
         messages: list[dict[str, Any]] | None = None,
-        callback: Callable | None = None,
-    ):
+    ) -> list[dict[str, Any]] | None:
         """
-        Process messages using this agent.
+        Run context.build hooks and pre-processing, returning the final
+        message list ready for the LLM call.
 
-        Args:
-            messages: The messages to process
-
-        Returns:
-            The processed messages with the agent's response
+        Returns ``None`` if a before-hook cancels the operation.
         """
         if not self.llm:
-            return
+            return None
 
         self._refresh_agent_skills()
 
@@ -689,9 +685,6 @@ class LocalAgent(BaseAgent):
             self._register_tools_with_llm()
             self._defer_tool_registration = False
 
-        assistant_response = ""
-        _tool_uses = []
-        _token_usage = TokenUsage()
         preparing_messages = messages or self.history
 
         from AgentCrew.modules.events.hooks import (
@@ -706,9 +699,8 @@ class LocalAgent(BaseAgent):
         _hooks = HookRegistry.get_instance()
 
         # ── context.build before hook ────────────────────────────────
-        _system_prompt = self.llm.get_system_prompt() if self.llm else ""
         _before_payload: ContextBuildContext = {
-            "system_prompt": _system_prompt,
+            "system_prompt": self.llm.get_system_prompt() if self.llm else "",
             "messages": copy.deepcopy(preparing_messages),
         }
         _before_ctx = await _hooks.run_before(
@@ -717,14 +709,13 @@ class LocalAgent(BaseAgent):
         )
         if _before_ctx is None:
             logger.info("context.build cancelled by before hook — aborting turn")
-            return
-        # Apply before-hook mutations
+            return None
         if "messages" in _before_ctx:
             preparing_messages = _before_ctx["messages"]
-        _before_sp = _before_ctx.get("system_prompt", _system_prompt)
-        if _before_sp != _system_prompt:
+        _before_sp = _before_ctx.get("system_prompt", "")
+        _current_sp = self.llm.get_system_prompt() if self.llm else ""
+        if _before_sp != _current_sp:
             self.llm.set_system_prompt(_before_sp)
-            _system_prompt = _before_sp
         # ─────────────────────────────────────────────────────────────
 
         self._clean_shrinkable_tool_result(preparing_messages)
@@ -742,7 +733,7 @@ class LocalAgent(BaseAgent):
         # ── context.build after hook ─────────────────────────────────
         _after_envelope: ContextBuildResult = {
             "messages": final_messages,
-            "system_prompt": _system_prompt,
+            "system_prompt": _before_sp,
         }
         _modified = await _hooks.run_after(
             HookPoints.CONTEXT_BUILD,
@@ -750,11 +741,78 @@ class LocalAgent(BaseAgent):
         )
         if isinstance(_modified, dict):
             final_messages = _modified.get("messages", final_messages)
-            _after_sp = _modified.get("system_prompt", _system_prompt)
-            if _after_sp != _system_prompt:
-                self.llm.set_system_prompt(_after_sp)
-                _system_prompt = _after_sp
         # ─────────────────────────────────────────────────────────────
+
+        return final_messages
+
+    async def process_messages(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        callback: Callable | None = None,
+    ):
+        """
+        Process messages using this agent.
+
+        Delegates pre-processing (context.build hooks, enhancement, vision)
+        to :meth:`pre_process_message`, then runs ``agent.process``
+        before/after hooks and streams the LLM response.
+
+        Args:
+            messages: The messages to process
+            callback: Optional ``(tool_uses, token_usage) -> None``
+
+        Yields:
+            ``(assistant_response, chunk_text, thinking_chunk)`` tuples.
+        """
+
+        if not self.llm:
+            return
+
+        final_messages = await self.pre_process_message(messages)
+        if final_messages is None:
+            return
+
+        assistant_response = ""
+        _tool_uses: list[dict[str, Any]] = []
+        _token_usage = TokenUsage()
+
+        from AgentCrew.modules.events.hooks import (
+            HookRegistry,
+            HookPoints,
+        )
+        from AgentCrew.modules.events.hook_payloads import (
+            AgentProcessContext,
+            AgentProcessResult,
+        )
+
+        _hooks = HookRegistry.get_instance()
+
+        # ── agent.process before hook ────────────────────────────
+        _agent_process_provider = self.llm._provider_name if self.llm else ""
+        _agent_process_model_id = self.llm.model if self.llm else ""
+        _process_before_payload: AgentProcessContext = {
+            "model_id": _agent_process_model_id,
+            "messages": final_messages,
+            "provider": _agent_process_provider,
+        }
+        _process_before_ctx = await _hooks.run_before(
+            HookPoints.AGENT_PROCESS,
+            **_process_before_payload,
+        )
+        if _process_before_ctx is None:
+            logger.info("agent.process cancelled by before hook — aborting turn")
+            return
+
+        _modified_model_id = _process_before_ctx.get(
+            "model_id", _agent_process_model_id
+        )
+        if "messages" in _process_before_ctx:
+            final_messages = _process_before_ctx["messages"]
+
+        _original_model = self.llm.model if self.llm else None
+        if _modified_model_id != _original_model:
+            self.llm.model = _modified_model_id
+        # ─────────────────────────────────────────────────────────
 
         try:
             async with await self.llm.stream_assistant_response(
@@ -776,6 +834,26 @@ class LocalAgent(BaseAgent):
                         _tool_uses = tool_uses
                     _token_usage = _token_usage.merge(chunk_token_usage)
 
+            # ── agent.process after hook ────────────────────────────
+            _process_after_envelope: AgentProcessResult = {
+                "tool_uses": _tool_uses,
+                "token_usage": _token_usage,
+            }
+            _modified_result = await _hooks.run_after(
+                HookPoints.AGENT_PROCESS,
+                result=_process_after_envelope,
+                model_id=_modified_model_id,
+                messages=final_messages,
+            )
+            if isinstance(_modified_result, dict):
+                _tool_uses = _modified_result.get("tool_uses", _tool_uses)
+                _token_usage = _modified_result.get("token_usage", _token_usage)
+            # ─────────────────────────────────────────────────────
+
+            # Restore original model_id if it was changed by hook
+            if _original_model is not None and _modified_model_id != _original_model:
+                self.llm.model = _original_model
+
             self.token_usage = _token_usage
             if callback:
                 callback(
@@ -789,6 +867,10 @@ class LocalAgent(BaseAgent):
             logger.warning(f"Stream processing interrupted: {e}")
             return
         except Exception as e:
+            # Restore original model_id on error
+            if _original_model is not None and _modified_model_id != _original_model:
+                self.llm.model = _original_model
             logger.error(f"Error during message processing: {e}")
             logger.debug(f"Final messages at error time: {final_messages}")
             raise e
+

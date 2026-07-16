@@ -558,7 +558,8 @@ flowchart TD
 
     STARTUP --> USER_INPUT
     USER_INPUT -->|"emit: user_message_created"| CONTEXT_BUILD
-    CONTEXT_BUILD -->|"context.build hooks + enhancement + vision"| STREAM_OPEN
+    CONTEXT_BUILD -->|"context.build hooks + enhancement + vision"| AGENT_PROCESS
+    AGENT_PROCESS["agent.process hooks"] -->|"model_id + messages"| STREAM_OPEN
     STREAM_OPEN -->|"emit: stream_open_timeout⎮normal"| THINKING
     THINKING -->|"emit: thinking_started/chunk/completed⎮no thinking"| RESPONSE_STREAM
     RESPONSE_STREAM -->|"emit: response_chunk / streaming_stopped / stream_canceled"| TOOL_CONFIRM
@@ -613,10 +614,12 @@ flowchart TD
 | `tool_result`                | Tool executed successfully         | `tool_use`, `tool_result`, `message` |
 | `tool_error`                 | Tool execution failed              | `tool_use`, `error`, `message`       |
 
-> **Hook points**: `tool.execute` and `context.build` are currently wired.
+> **Hook points**: `tool.execute`, `context.build`, and `agent.process` are currently wired.
 > `tool.execute` before/after hooks can modify/cancel tool calls;
 > `context.build` before/after hooks can modify the message list and system
-> prompt before the LLM request is sent.
+> prompt before the LLM request is sent;
+> `agent.process` before/after hooks can modify the ``model_id`` and ``messages``
+> before the LLM call, and modify the resulting ``tool_uses`` and ``token_usage``.
 
 ### Conversation Events — `MessageHandler`, Command Handlers
 
@@ -670,16 +673,17 @@ flowchart TD
 
 | Hook Point         | Status     | Signature                  | Purpose                    |
 | ------------------ | ---------- | -------------------------- | -------------------------- |
-| **tool.execute** ★ | ✅ Active  | before: `(ctx) → ctx⎮None` | Modify/cancel tool calls   |
-| agent.process      | 🔄 Develop | before/after               | Intercept agent processing |
-| user.message       | 🔄 Develop | before/after               | Intercept user input       |
-| response.complete  | 🔄 Develop | before/after               | Post-process response      |
-| memory.store       | 🔄 Develop | before/after               | Intercept persistence      |
-| memory.retrieve    | 🔄 Develop | before/after               | Intercept retrieval        |
-| **context.build** ★ | ✅ Active | before: `(ctx) → ctx⎮None` | Modify context before LLM  |
-|                   |            | after:  `(ctx, res) → res` |                             |
-| agent.transfer     | 🔄 Develop | before/after               | Intercept hand-offs        |
-| agent.delegate     | 🔄 Develop | before/after               | Intercept delegation       |
+| **tool.execute** ★   | ✅ Active  | before: `(ctx) → ctx⎮None` | Modify/cancel tool calls          |
+| **agent.process** ★  | ✅ Active  | before: `(ctx)`             | Modify ``model_id`` and ``messages`` before LLM; modify ``tool_uses`` and ``token_usage`` after |
+|                     |            | after:  `(ctx, res) → res`  |                                    |
+| **context.build** ★  | ✅ Active  | before: `(ctx) → ctx⎮None` | Modify context before LLM          |
+|                     |            | after:  `(ctx, res) → res`  |                                    |
+| user.message        | 🔄 Develop | before/after               | Intercept user input               |
+| response.complete   | 🔄 Develop | before/after               | Post-process response              |
+| memory.store        | 🔄 Develop | before/after               | Intercept persistence              |
+| memory.retrieve     | 🔄 Develop | before/after               | Intercept retrieval                 |
+| agent.transfer      | 🔄 Develop | before/after               | Intercept hand-offs                |
+| agent.delegate      | 🔄 Develop | before/after               | Intercept delegation               |
 
 ---
 
@@ -698,7 +702,7 @@ flowchart TD
 
 - **Events ≠ Hooks**: Events are one-way broadcasts for UI/logging. Hooks are
   interception points with before/after semantics and cancellation.
-- **`tool.execute` and `context.build` are wired**: The remaining hooks are in
+- **`tool.execute`, `agent.process`, and `context.build` are wired**: The remaining hooks are in
   development awaiting plugin implementations.
 - **Plugins get owned facades**: `_OwnedEventBus` and `_OwnedHookRegistry`
   auto-assign ownership for deterministic cleanup.

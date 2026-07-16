@@ -1,8 +1,8 @@
 # AgentCrew Plugin Development
 
 AgentCrew plugins can subscribe to application events and register lifecycle
-hooks. `tool.execute` and `context.build` are currently wired into runtime
-execution; contracts for the other declared hook points are available for
+hooks. `tool.execute`, `agent.process`, and `context.build` are currently wired
+into runtime execution; contracts for the other declared hook points are available for
 forward-compatible plugin development. Plugins are discovered by scanning
 two filesystem directories:
 
@@ -222,9 +222,9 @@ passed to an after hook. After handlers continue to receive both
 
 The declared contracts cover `tool.execute`, `agent.process`, `user.message`,
 `response.complete`, `memory.store`, `memory.retrieve`, `context.build`,
-`agent.transfer`, and `agent.delegate`. The `tool.execute` and `context.build`
-points are actively invoked by AgentCrew runtime code; the remainder are
-declared for forward-compatible plugin development.
+`agent.transfer`, and `agent.delegate`. The `tool.execute`, `agent.process`,
+and `context.build` points are actively invoked by AgentCrew runtime code;
+the remainder are declared for forward-compatible plugin development.
 
 Payloads are plain dictionary boundaries. They may contain provider-specific
 values typed as `Any`, but must not include credentials, authorization headers,
@@ -257,6 +257,80 @@ An after hook receives the context and this result envelope:
 
 After hooks currently run only after successful executor completion. If the executor raises, the exception escapes before after-hook dispatch. Executor-error after-hook coverage is planned for a later runtime-wiring slice. On successful execution, after hooks may replace the result. Sequential and parallel approved tools use the same hook pipeline. The special `ask` interaction remains outside `tool.execute`.
 
+## `agent.process` hooks
+
+### Before hook
+
+A before hook receives an `AgentProcessContext` dictionary containing:
+
+- `model_id`: the LLM model identifier (e.g. ``"gpt-4o"``)
+- `messages`: the final message list, after all context enhancement and vision
+  preprocessing
+- `provider`: the LLM provider name (e.g. ``"openai"``)
+
+All fields are mutable. Changes to `model_id` are temporarily applied to the LLM
+service for the current turn and restored after the after-hook completes. Changes
+to `messages` are passed directly to the LLM's ``stream_assistant_response()``.
+
+Return the (possibly modified) context to continue. Returning `None` or raising
+`CancelOperation` aborts the turn without calling the LLM.
+
+### After hook
+
+An after hook receives the (read-only) context and an `AgentProcessResult` result
+envelope supplied via the `result=` parameter:
+
+```python
+{
+  "tool_uses": list[dict],
+  "token_usage": TokenUsage,
+}
+```
+
+Return the (possibly modified) envelope. Changes to `tool_uses` propagate to the
+callback (and onward to consumers like ``agent_runner.py`` and
+``turn_executor.py``) and to ``self.tool_uses`` on the agent. Changes to
+`token_usage` propagate to ``self.token_usage`` and the callback.
+
+If the hook returns a non-dict value, the original values are used unchanged.
+
+### Placement
+
+- **Before**: after all context enhancement, vision preprocessing, and
+  ``context.build`` hooks, immediately before ``stream_assistant_response()``.
+- **After**: after the stream completes (all chunks consumed), immediately
+  before the callback is invoked. Not triggered if the stream is cancelled
+  (``GeneratorExit``).
+
+### Example
+
+```python
+from AgentCrew.modules.events import Hook, HookPhase, HookPoints, Plugin
+
+
+class ProcessLoggerPlugin(Plugin):
+    @property
+    def name(self):
+        return "process_logger"
+
+    async def activate(self, bus, hooks):
+        hooks.register(
+            Hook(
+                point=HookPoints.AGENT_PROCESS,
+                phase=HookPhase.BEFORE,
+                handler=self.log_before,
+            )
+        )
+
+    async def deactivate(self):
+        pass
+
+    def log_before(self, context):
+        print(f"Processing with model: {context['model_id']}")
+        print(f"Message count: {len(context['messages'])}")
+        return context
+```
+
 ## `context.build` hooks
 
 ### Before hook
@@ -284,9 +358,6 @@ envelope supplied via the `result=` parameter:
 {
   "messages": list[dict],
   "system_prompt": str,
-  "included_sections": list[str],
-  "estimated_tokens": int,
-  "truncated": bool,
 }
 ```
 
@@ -302,7 +373,7 @@ messages are used unchanged — the caller guards with `isinstance(modified, dic
 - **Before**: after raw message copy, before adaptive context injection and vision
   preprocessing.
 - **After**: after all context enhancement and vision preprocessing, immediately
-  before the provider's `stream_assistant_response()` call.
+  before ``pre_process_message()`` returns.
 
 ### Example
 

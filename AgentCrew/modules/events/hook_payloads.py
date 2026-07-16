@@ -50,22 +50,14 @@ class AgentProcessContext(BaseHookContext, total=False):
 
     provider: str
     model_id: str
-    streaming: bool
-    requested_messages: list[dict[str, Any]]
     messages: list[dict[str, Any]]
-    system_prompt: str
-    temperature: float
-    metadata: dict[str, Any]
 
 
 class AgentProcessResult(BaseHookResult, total=False):
     """Output from one LLM processing pass."""
 
-    response: Any
-    thinking: Any
     tool_uses: list[dict[str, Any]]
     token_usage: Any
-    finish_reason: str | None
 
 
 class UserMessageContext(BaseHookContext, total=False):
