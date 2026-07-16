@@ -1,9 +1,10 @@
 # AgentCrew Plugin Development
 
 AgentCrew plugins can subscribe to application events and register lifecycle
-hooks. Only `tool.execute` is currently wired into runtime execution; contracts
-for the other declared hook points are available for forward-compatible plugin
-development. Plugins are discovered by scanning two filesystem directories:
+hooks. `tool.execute` and `context.build` are currently wired into runtime
+execution; contracts for the other declared hook points are available for
+forward-compatible plugin development. Plugins are discovered by scanning
+two filesystem directories:
 
 1. `.agentcrew/plugins/` — **project-based plugins** (higher precedence)
 2. `~/.AgentCrew/plugins/` — **global plugins** (fallback)
@@ -221,9 +222,9 @@ passed to an after hook. After handlers continue to receive both
 
 The declared contracts cover `tool.execute`, `agent.process`, `user.message`,
 `response.complete`, `memory.store`, `memory.retrieve`, `context.build`,
-`agent.transfer`, and `agent.delegate`. These declarations do not mean every
-point is active:
-`tool.execute` is the only hook currently invoked by AgentCrew runtime code.
+`agent.transfer`, and `agent.delegate`. The `tool.execute` and `context.build`
+points are actively invoked by AgentCrew runtime code; the remainder are
+declared for forward-compatible plugin development.
 
 Payloads are plain dictionary boundaries. They may contain provider-specific
 values typed as `Any`, but must not include credentials, authorization headers,
@@ -255,6 +256,92 @@ An after hook receives the context and this result envelope:
 ```
 
 After hooks currently run only after successful executor completion. If the executor raises, the exception escapes before after-hook dispatch. Executor-error after-hook coverage is planned for a later runtime-wiring slice. On successful execution, after hooks may replace the result. Sequential and parallel approved tools use the same hook pipeline. The special `ask` interaction remains outside `tool.execute`.
+
+## `context.build` hooks
+
+### Before hook
+
+A before hook receives a `ContextBuildContext` dictionary containing:
+
+- `system_prompt`: the agent's system prompt (sourced from the LLM service)
+- `messages`: the raw conversation history (before adaptive context injection)
+
+Return the (possibly modified) context to continue. Returning `None` or raising
+`CancelOperation` aborts the current turn — the generator yields nothing and the
+LLM is not called.
+
+Both `system_prompt` and `messages` are mutable. Changes to `system_prompt` are
+written back via `self.llm.set_system_prompt()` **and persist on the LLM service
+beyond the current turn**. They are not automatically restored when the plugin
+is deactivated.
+
+### After hook
+
+An after hook receives an empty context and a `ContextBuildResult` result
+envelope supplied via the `result=` parameter:
+
+```python
+{
+  "messages": list[dict],
+  "system_prompt": str,
+  "included_sections": list[str],
+  "estimated_tokens": int,
+  "truncated": bool,
+}
+```
+
+Return the (possibly modified) envelope. Changes to `messages` become the final
+input sent to the LLM. Changes to `system_prompt` are written back via
+`self.llm.set_system_prompt()` and persist beyond the current turn.
+
+If the hook returns a non-dict value (e.g. `None` or a string), the original
+messages are used unchanged — the caller guards with `isinstance(modified, dict)`.
+
+### Placement
+
+- **Before**: after raw message copy, before adaptive context injection and vision
+  preprocessing.
+- **After**: after all context enhancement and vision preprocessing, immediately
+  before the provider's `stream_assistant_response()` call.
+
+### Example
+
+```python
+from AgentCrew.modules.events import Hook, HookPhase, HookPoints, Plugin
+
+
+class ContextLoggerPlugin(Plugin):
+    @property
+    def name(self):
+        return "context_logger"
+
+    async def activate(self, bus, hooks):
+        hooks.register(
+            Hook(
+                point=HookPoints.CONTEXT_BUILD,
+                phase=HookPhase.BEFORE,
+                handler=self.log_context_size,
+            )
+        )
+        hooks.register(
+            Hook(
+                point=HookPoints.CONTEXT_BUILD,
+                phase=HookPhase.AFTER,
+                handler=self.log_final_size,
+            )
+        )
+
+    async def deactivate(self):
+        pass
+
+    def log_context_size(self, context):
+        print(f"Before enhancement: {len(context['messages'])} messages")
+        return context
+
+    def log_final_size(self, context, result):
+        print(f"After enhancement: {len(result['messages'])} messages")
+        return result
+```
 
 ## Failure isolation and cleanup
 

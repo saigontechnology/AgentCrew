@@ -692,8 +692,42 @@ class LocalAgent(BaseAgent):
         assistant_response = ""
         _tool_uses = []
         _token_usage = TokenUsage()
-        # Ensure the first message is a system message with the agent's prompt
-        self._clean_shrinkable_tool_result(messages or self.history)
+        preparing_messages = messages or self.history
+
+        from AgentCrew.modules.events.hooks import (
+            HookRegistry,
+            HookPoints,
+        )
+        from AgentCrew.modules.events.hook_payloads import (
+            ContextBuildContext,
+            ContextBuildResult,
+        )
+
+        _hooks = HookRegistry.get_instance()
+
+        # ── context.build before hook ────────────────────────────────
+        _system_prompt = self.llm.get_system_prompt() if self.llm else ""
+        _before_payload: ContextBuildContext = {
+            "system_prompt": _system_prompt,
+            "messages": copy.deepcopy(preparing_messages),
+        }
+        _before_ctx = await _hooks.run_before(
+            HookPoints.CONTEXT_BUILD,
+            **_before_payload,
+        )
+        if _before_ctx is None:
+            logger.info("context.build cancelled by before hook — aborting turn")
+            return
+        # Apply before-hook mutations
+        if "messages" in _before_ctx:
+            preparing_messages = _before_ctx["messages"]
+        _before_sp = _before_ctx.get("system_prompt", _system_prompt)
+        if _before_sp != _system_prompt:
+            self.llm.set_system_prompt(_before_sp)
+            _system_prompt = _before_sp
+        # ─────────────────────────────────────────────────────────────
+
+        self._clean_shrinkable_tool_result(preparing_messages)
         enhancing_messages = messages[:] if messages else self.history[:]
         self._enhance_agent_context_messages(enhancing_messages)
         from AgentCrew.modules.utils import VisionPreprocessingUtils
@@ -704,6 +738,24 @@ class LocalAgent(BaseAgent):
             final_messages,
             self.llm,
         )
+
+        # ── context.build after hook ─────────────────────────────────
+        _after_envelope: ContextBuildResult = {
+            "messages": final_messages,
+            "system_prompt": _system_prompt,
+        }
+        _modified = await _hooks.run_after(
+            HookPoints.CONTEXT_BUILD,
+            result=_after_envelope,
+        )
+        if isinstance(_modified, dict):
+            final_messages = _modified.get("messages", final_messages)
+            _after_sp = _modified.get("system_prompt", _system_prompt)
+            if _after_sp != _system_prompt:
+                self.llm.set_system_prompt(_after_sp)
+                _system_prompt = _after_sp
+        # ─────────────────────────────────────────────────────────────
+
         try:
             async with await self.llm.stream_assistant_response(
                 final_messages

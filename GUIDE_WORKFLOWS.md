@@ -539,6 +539,7 @@ flowchart TD
     STARTUP["Application Startup"]:::phase
     SHUTDOWN["Application Shutdown"]:::phase
     USER_INPUT["User Input"]:::phase
+    CONTEXT_BUILD["Context Build"]:::phase
     STREAM_OPEN["Stream Open"]:::phase
     THINKING["Thinking (optional)"]:::phase
     RESPONSE_STREAM["Response Streaming"]:::phase
@@ -556,7 +557,8 @@ flowchart TD
     UX_FEEDBACK["UX Feedback"]:::phase
 
     STARTUP --> USER_INPUT
-    USER_INPUT -->|"emit: user_message_created"| STREAM_OPEN
+    USER_INPUT -->|"emit: user_message_created"| CONTEXT_BUILD
+    CONTEXT_BUILD -->|"context.build hooks + enhancement + vision"| STREAM_OPEN
     STREAM_OPEN -->|"emit: stream_open_timeout⎮normal"| THINKING
     THINKING -->|"emit: thinking_started/chunk/completed⎮no thinking"| RESPONSE_STREAM
     RESPONSE_STREAM -->|"emit: response_chunk / streaming_stopped / stream_canceled"| TOOL_CONFIRM
@@ -611,8 +613,10 @@ flowchart TD
 | `tool_result`                | Tool executed successfully         | `tool_use`, `tool_result`, `message` |
 | `tool_error`                 | Tool execution failed              | `tool_use`, `error`, `message`       |
 
-> **Hook point**: `tool.execute` — the only actively wired hook. `before` hooks
-> can modify/cancel tool calls, `after` hooks can modify results.
+> **Hook points**: `tool.execute` and `context.build` are currently wired.
+> `tool.execute` before/after hooks can modify/cancel tool calls;
+> `context.build` before/after hooks can modify the message list and system
+> prompt before the LLM request is sent.
 
 ### Conversation Events — `MessageHandler`, Command Handlers
 
@@ -672,7 +676,8 @@ flowchart TD
 | response.complete  | 🔄 Develop | before/after               | Post-process response      |
 | memory.store       | 🔄 Develop | before/after               | Intercept persistence      |
 | memory.retrieve    | 🔄 Develop | before/after               | Intercept retrieval        |
-| context.build      | 🔄 Develop | before/after               | Modify built context       |
+| **context.build** ★ | ✅ Active | before: `(ctx) → ctx⎮None` | Modify context before LLM  |
+|                   |            | after:  `(ctx, res) → res` |                             |
 | agent.transfer     | 🔄 Develop | before/after               | Intercept hand-offs        |
 | agent.delegate     | 🔄 Develop | before/after               | Intercept delegation       |
 
@@ -693,8 +698,8 @@ flowchart TD
 
 - **Events ≠ Hooks**: Events are one-way broadcasts for UI/logging. Hooks are
   interception points with before/after semantics and cancellation.
-- **Only `tool.execute` is wired**: All other hooks are in development awaiting
-  plugin implementations.
+- **`tool.execute` and `context.build` are wired**: The remaining hooks are in
+  development awaiting plugin implementations.
 - **Plugins get owned facades**: `_OwnedEventBus` and `_OwnedHookRegistry`
   auto-assign ownership for deterministic cleanup.
 - **Events defined in `events/constants.py`**: Each needs a constant + TypedDict

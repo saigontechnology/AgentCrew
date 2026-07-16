@@ -149,24 +149,42 @@ class MemoryRetrieveResult(BaseHookResult, total=False):
 
 
 class ContextBuildContext(BaseHookContext, total=False):
-    """Inputs used to construct the final LLM context."""
+    """Context for ``context.build.before`` hooks.
+
+    Before hooks receive this as the *context* argument and may return a
+    (possibly modified) copy. Modifications to ``system_prompt`` persist
+    on the LLM service (``self.llm.set_system_prompt()``); they are not
+    turn-local.
+
+    After hooks receive an empty context — they operate on
+    :class:`ContextBuildResult` (supplied via ``result=`` to
+    ``HookRegistry.run_after()``).
+
+    See Also
+    --------
+    ContextBuildResult : The *result* envelope used by after hooks.
+    """
 
     system_prompt: str
-    history: list[dict[str, Any]]
-    sections: dict[str, Any]
-    tool_definitions: list[dict[str, Any]]
-    model_id: str
-    context_limit: int
+    messages: list[dict[str, Any]]
 
 
 class ContextBuildResult(BaseHookResult, total=False):
-    """Final LLM context construction outcome."""
+    """Result envelope for ``context.build.after`` hooks.
+
+    After hooks receive this as the *result* argument (see
+    :meth:`HookRegistry.run_after`) and may return a (possibly modified)
+    copy.
+
+    .. caution::
+       Mutations to ``system_prompt`` are written back via
+       ``self.llm.set_system_prompt()`` and **persist** on the LLM
+       service beyond the current turn. They are not automatically
+       restored when the hook is removed.
+    """
 
     messages: list[dict[str, Any]]
-    included_sections: list[str]
-    estimated_tokens: int
-    truncated: bool
-    removed_message_count: int
+    system_prompt: str
 
 
 class AgentTransferContext(BaseHookContext, total=False):
