@@ -60,6 +60,17 @@ OPENCODE_GO_MODELS = [
         output_token_price_1m=0.0,
     ),
     Model(
+        id="kimi-k3",
+        provider="opencode_go",
+        name="Kimi K3",
+        description="OpenCode Go curated Kimi K3 model over the OpenAI-compatible chat completions endpoint — flagship model with 1M context, vision, and knowledge work",
+        capabilities=["tool_use", "thinking", "vision", "stream"],
+        max_context_token=500_000,
+        default=False,
+        input_token_price_1m=0.0,
+        output_token_price_1m=0.0,
+    ),
+    Model(
         id="kimi-k2.7-code",
         provider="opencode_go",
         name="Kimi K2.7 Code",

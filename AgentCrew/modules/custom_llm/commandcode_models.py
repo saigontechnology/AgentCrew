@@ -163,6 +163,17 @@ COMMANDCODE_MODELS = [
         cached_token_price_1m=0.075000,
     ),
     Model(
+        id="moonshotai/Kimi-K3",
+        provider="commandcode",
+        name="Kimi K3",
+        description="MoonshotAI Kimi K3 via CommandCode — flagship model for long-horizon coding & knowledge work with 1M context, vision and always-on reasoning",
+        capabilities=["thinking", "tool_use", "vision", "stream", "structured_output"],
+        max_context_token=500_000,
+        input_token_price_1m=3.000000,
+        output_token_price_1m=15.000000,
+        cached_token_price_1m=0.300000,
+    ),
+    Model(
         id="moonshotai/Kimi-K2.6",
         provider="commandcode",
         name="Kimi K2.6",
