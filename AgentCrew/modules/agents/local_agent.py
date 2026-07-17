@@ -701,7 +701,7 @@ class LocalAgent(BaseAgent):
         # ── context.build before hook ────────────────────────────────
         _before_payload: ContextBuildContext = {
             "system_prompt": self.llm.get_system_prompt() if self.llm else "",
-            "messages": copy.deepcopy(preparing_messages),
+            "messages": preparing_messages,
         }
         _before_ctx = await _hooks.run_before(
             HookPoints.CONTEXT_BUILD,
@@ -723,16 +723,9 @@ class LocalAgent(BaseAgent):
         self._enhance_agent_context_messages(enhancing_messages)
         from AgentCrew.modules.utils import VisionPreprocessingUtils
 
-        final_messages = copy.deepcopy(enhancing_messages)
-
-        await VisionPreprocessingUtils.preprocess_messages(
-            final_messages,
-            self.llm,
-        )
-
         # ── context.build after hook ─────────────────────────────────
         _after_envelope: ContextBuildResult = {
-            "messages": final_messages,
+            "messages": enhancing_messages,
             "system_prompt": _before_sp,
         }
         _modified = await _hooks.run_after(
@@ -740,8 +733,15 @@ class LocalAgent(BaseAgent):
             result=_after_envelope,
         )
         if isinstance(_modified, dict):
-            final_messages = _modified.get("messages", final_messages)
+            enhancing_messages = _modified.get("messages", enhancing_messages)
         # ─────────────────────────────────────────────────────────────
+
+        final_messages = copy.deepcopy(enhancing_messages)
+
+        await VisionPreprocessingUtils.preprocess_messages(
+            final_messages,
+            self.llm,
+        )
 
         return final_messages
 
