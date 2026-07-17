@@ -223,9 +223,9 @@ passed to an after hook. After handlers continue to receive both
 The declared contracts cover `tool.execute`, `agent.process`, `user.message`,
 `response.complete`, `memory.store`, `memory.retrieve`, `context.build`,
 `agent.transfer`, and `agent.delegate`. The `tool.execute`, `agent.process`,
-`context.build`, and `memory.store` points are actively invoked by AgentCrew
-runtime code. The remainder are declared for forward-compatible plugin
-development.
+`context.build`, `user.message`, `response.complete`, and `memory.store`
+points are actively invoked by AgentCrew runtime code. The remainder are
+declared for forward-compatible plugin development.
 
 Payloads are plain dictionary boundaries. They may contain provider-specific
 values typed as `Any`, but must not include credentials, authorization headers,

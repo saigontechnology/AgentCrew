@@ -681,8 +681,8 @@ flowchart TD
 |                     |            | after:  `(ctx, res) → res`  |                                    |
 | **context.build** ★  | ✅ Active  | before: `(ctx) → ctx⎮None` | Modify context before LLM          |
 |                     |            | after:  `(ctx, res) → res`  |                                    |
-| user.message        | 🔄 Develop | before/after               | Intercept user input               |
-| response.complete   | 🔄 Develop | before/after               | Post-process response              |
+| **user.message** ★  | ✅ Active  | before: `(ctx) → ctx⎮None` | Intercept user input before processing |
+| **response.complete** ★ | ✅ Active  | after: `(ctx, res) → res`  | Post-process final response          |
 | **memory.store** ★ | ✅ Active  | before: `(ctx) → ctx⎮None` | Modify/cancel memory input          |
 |                     |            | after: `(ctx, res) → res`  | Modify generated memory before persistence |
 | memory.retrieve     | 🔄 Develop | before/after               | Intercept retrieval                 |
@@ -706,7 +706,7 @@ flowchart TD
 
 - **Events ≠ Hooks**: Events are one-way broadcasts for UI/logging. Hooks are
   interception points with before/after semantics and cancellation.
-- **`tool.execute`, `agent.process`, `context.build`, and `memory.store` are wired**:
+- **`tool.execute`, `agent.process`, `context.build`, `user.message`, `response.complete`, and `memory.store` are wired**:
   The remaining hooks are in development awaiting runtime integration.
 - **Plugins get owned facades**: `_OwnedEventBus` and `_OwnedHookRegistry`
   auto-assign ownership for deterministic cleanup.

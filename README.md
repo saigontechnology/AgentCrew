@@ -24,17 +24,19 @@
 
 ## Why AgentCrew?
 
-AgentCrew lets you **build a team of specialists, each with the right tools
-and personality for the job.**
+AgentCrew lets you **build a team of specialists, each with the right tools and
+personality for the job.**
 
 - **An Architect** that weighs trade-offs before a line of code is written.
 - **A Coder** that implements cleanly — no scope creep, no over-engineering.
 - **A Reviewer** that catches what others miss.
-- **A Researcher** that cross-references multiple sources before drawing conclusions.
-- **A Browser Operator** that navigates web apps, fills forms, and clicks through workflows.
+- **A Researcher** that cross-references multiple sources before drawing
+  conclusions.
+- **A Browser Operator** that navigates web apps, fills forms, and clicks
+  through workflows.
 
-Agents hand off work to each other when a task needs a different specialty.
-You stay in control, orchestrating the team from one interface.
+Agents hand off work to each other when a task needs a different specialty. You
+stay in control, orchestrating the team from one interface.
 
 > **When AgentCrew fits:** You have a complex task that benefits from multiple
 > perspectives — building a feature from design to deployment, researching and
@@ -50,24 +52,27 @@ You stay in control, orchestrating the team from one interface.
 ### 1. Install (10 seconds)
 
 **macOS / Linux**
+
 ```bash
 curl -LsSf https://agentcrew.dev/install.sh | bash
 ```
 
 **Windows**
+
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://agentcrew.dev/install.ps1 | iex"
 ```
 
 **pip (any platform)**
+
 ```bash
 pip install agentcrew-ai
 ```
 
 ### 2. Add an API key — or skip this step entirely
 
-Most tools need a paid API key. AgentCrew supports several options that
-don't require one:
+Most tools need a paid API key. AgentCrew supports several options that don't
+require one:
 
 **Subscription-based (no API key needed):**
 
@@ -106,32 +111,32 @@ Or store keys in `~/.AgentCrew/config.json`:
 
 **All supported providers:**
 
-| Provider         | Cost profile                    | Best for                              |
-| ---------------- | ------------------------------- | ------------------------------------- |
-| **OpenCode Go**  | Subscription-based              | Curated open-source models, no API key|
-| **CrofAI**       | Pay-as-you-go, low cost         | General tasks, OpenAI-compatible      |
-| **Command Code** | Subscription-based              | Frontier models via subscription      |
-| **DeepInfra**    | Pay-as-you-go, low cost         | Open models (LLaMA, Qwen, etc.)       |
-| **Together AI**  | Pay-as-you-go                   | Open models, fine-tuning              |
-| **Fireworks**    | Pay-as-you-go                   | Fast open model inference             |
-| OpenAI           | Per-token pricing               | GPT-4o, broad ecosystem               |
-| Anthropic        | Per-token pricing               | Claude family                         |
-| Google Gemini    | Free tier available             | Budget-friendly, strong reasoning     |
-| GitHub Copilot   | Included with subscription      | Coding-focused, no extra cost         |
-| ChatGPT Codex    | Included with Plus/Pro sub      | No extra cost for subscribers         |
-| Custom           | Free (local)                    | Fully offline (Ollama, llama.cpp...)  |
+| Provider         | Cost profile               | Best for                               |
+| ---------------- | -------------------------- | -------------------------------------- |
+| **OpenCode Go**  | Subscription-based         | Curated open-source models, no API key |
+| **CrofAI**       | Pay-as-you-go, low cost    | General tasks, OpenAI-compatible       |
+| **Command Code** | Subscription-based         | Frontier models via subscription       |
+| **DeepInfra**    | Pay-as-you-go, low cost    | Open models (LLaMA, Qwen, etc.)        |
+| **Together AI**  | Pay-as-you-go              | Open models, fine-tuning               |
+| **Fireworks**    | Pay-as-you-go              | Fast open model inference              |
+| OpenAI           | Per-token pricing          | GPT-4o, broad ecosystem                |
+| Anthropic        | Per-token pricing          | Claude family                          |
+| Google Gemini    | Free tier available        | Budget-friendly, strong reasoning      |
+| GitHub Copilot   | Included with subscription | Coding-focused, no extra cost          |
+| ChatGPT Codex    | Included with Plus/Pro sub | No extra cost for subscribers          |
+| Custom           | Free (local)               | Fully offline (Ollama, llama.cpp...)   |
 
 > **Which provider should I pick?**
 >
-> | If you...                            | Pick this                            |
-> | ------------------------------------ | ------------------------------------ |
-> | Want curated open-source models      | **OpenCode Go** — subscription-based |
-> | Want low-cost, open-source friendly  | **CrofAI** or **DeepInfra**          |
-> | Have a Command Code subscription     | **Command Code**                     |
-> | Have ChatGPT Plus / Pro              | `openai_codex` — no extra cost       |
-> | Have GitHub Copilot                  | `github_copilot` — no extra cost     |
-> | Want a free tier to start            | **Google Gemini**                    |
-> | Need fully offline / air-gapped      | **Custom** (Ollama, llama.cpp, etc.) |
+> | If you...                           | Pick this                            |
+> | ----------------------------------- | ------------------------------------ |
+> | Want curated open-source models     | **OpenCode Go** — subscription-based |
+> | Want low-cost, open-source friendly | **CrofAI** or **DeepInfra**          |
+> | Have a Command Code subscription    | **Command Code**                     |
+> | Have ChatGPT Plus / Pro             | `openai_codex` — no extra cost       |
+> | Have GitHub Copilot                 | `github_copilot` — no extra cost     |
+> | Want a free tier to start           | **Google Gemini**                    |
+> | Need fully offline / air-gapped     | **Custom** (Ollama, llama.cpp, etc.) |
 
 ### 3. Launch
 
@@ -183,14 +188,15 @@ agent picks up with full context and its own specialized tools and instructions.
 
 ### Four ways to use AgentCrew
 
-| Mode              | Command                                                     | Best for                                                |
-| ----------------- | ----------------------------------------------------------- | ------------------------------------------------------- |
-| **Desktop GUI**   | `agentcrew chat`                                            | Daily work, drag-and-drop files, visual diffs           |
-| **Terminal**      | `agentcrew chat --console`                                  | Remote servers, keyboard-first workflows                |
-| **One-shot jobs** | `agentcrew job --agent "Name" "task" ./files`               | CI/CD, batch processing, automation                     |
-| **HTTP API**      | `agentcrew a2a-server`                                      | Integrate with other apps, multi-instance agent networks |
+| Mode              | Command                                       | Best for                                                 |
+| ----------------- | --------------------------------------------- | -------------------------------------------------------- |
+| **Desktop GUI**   | `agentcrew chat`                              | Daily work, drag-and-drop files, visual diffs            |
+| **Terminal**      | `agentcrew chat --console`                    | Remote servers, keyboard-first workflows                 |
+| **One-shot jobs** | `agentcrew job --agent "Name" "task" ./files` | CI/CD, batch processing, automation                      |
+| **HTTP API**      | `agentcrew a2a-server`                        | Integrate with other apps, multi-instance agent networks |
 
 **Job mode example:**
+
 ```bash
 agentcrew job --agent "CodeAssistant" \
   "Review for security issues" \
@@ -198,26 +204,27 @@ agentcrew job --agent "CodeAssistant" \
 ```
 
 **A2A server example:**
+
 ```bash
 agentcrew a2a-server --host 0.0.0.0 --port 41241
 ```
 
 ### Tools — enable only what each agent needs
 
-| Tool                    | What it does                                             | When to enable it                                |
-| ----------------------- | -------------------------------------------------------- | ------------------------------------------------ |
-| `code_analysis`         | Read files, grep, analyze repo structure                 | Any agent working with code                      |
-| `file_editing`          | Write/modify files (search-replace blocks, backups)      | Coding and documentation agents                  |
-| `web_search`            | Search the web via Tavily                                 | Research and fact-checking agents                |
-| `fetch_webpage`         | Extract content from a URL                                | Research agents                                  |
-| `browser`               | Full browser automation (navigate, click, form fill)      | QA, web scraping, form-filling agents            |
-| `command_execution`     | Run shell commands (rate limits, audit logs)              | DevOps, code execution agents                    |
-| `memory`                | Store and retrieve conversation context                   | Almost every agent                               |
-| `clipboard`             | Read/write system clipboard                               | Agents that interact with other apps             |
-| `adaptive_learning`     | Learn behavioral patterns from interactions               | Agents that should adapt over time               |
-| `voice`                 | Speak and listen (ElevenLabs or DeepInfra)                | Voice-interactive agents                         |
-| **MCP tools**           | External tools via Model Context Protocol                 | Any agent needing external integrations          |
-| `transfer`              | Hand off tasks to other agents                            | Automatically available in multi-agent setups    |
+| Tool                | What it does                                         | When to enable it                             |
+| ------------------- | ---------------------------------------------------- | --------------------------------------------- |
+| `code_analysis`     | Read files, grep, analyze repo structure             | Any agent working with code                   |
+| `file_editing`      | Write/modify files (search-replace blocks, backups)  | Coding and documentation agents               |
+| `web_search`        | Search the web via Tavily                            | Research and fact-checking agents             |
+| `fetch_webpage`     | Extract content from a URL                           | Research agents                               |
+| `browser`           | Full browser automation (navigate, click, form fill) | QA, web scraping, form-filling agents         |
+| `command_execution` | Run shell commands (rate limits, audit logs)         | DevOps, code execution agents                 |
+| `memory`            | Store and retrieve conversation context              | Almost every agent                            |
+| `clipboard`         | Read/write system clipboard                          | Agents that interact with other apps          |
+| `adaptive_learning` | Learn behavioral patterns from interactions          | Agents that should adapt over time            |
+| `voice`             | Speak and listen (ElevenLabs or DeepInfra)           | Voice-interactive agents                      |
+| **MCP tools**       | External tools via Model Context Protocol            | Any agent needing external integrations       |
+| `transfer`          | Hand off tasks to other agents                       | Automatically available in multi-agent setups |
 
 ### Communication protocols
 
@@ -226,8 +233,8 @@ AgentCrew speaks three protocols:
 - **Console / GUI** — Human-to-agent: the chat interface you use daily.
 - **A2A (Agent-to-Agent)** — HTTP+JSON-RPC protocol. Connect multiple AgentCrew
   instances so one can delegate to agents on another machine.
-- **ACP (Agent Communication Protocol)** — WebSocket protocol for custom clients,
-  IDE integrations, and headless agent control.
+- **ACP (Agent Communication Protocol)** — WebSocket protocol for custom
+  clients, IDE integrations, and headless agent control.
 
 ---
 
@@ -283,31 +290,31 @@ url = "http://server-b:41241"
 
 ## Common commands (once you're inside)
 
-| Command                                | What it does                          |
-| -------------------------------------- | ------------------------------------- |
-| `/agent <name>`                        | Switch to another agent               |
-| `@<name> <task>`                       | Hand off a subtask                    |
-| `/clear`                               | Start a fresh conversation            |
-| `/file <path>`                         | Attach a file                         |
-| `/think <low\|medium\|high\|xhigh>`    | Enable extended reasoning             |
-| `/model <provider/model>`              | Switch AI model                       |
-| `/voice`                               | Toggle voice recording                |
-| `/help`                                | Show all commands                     |
-| `exit` or `quit`                       | Exit                                  |
-| `Ctrl+C`                               | Stop the current response             |
+| Command                             | What it does               |
+| ----------------------------------- | -------------------------- |
+| `/agent <name>`                     | Switch to another agent    |
+| `@<name> <task>`                    | Hand off a subtask         |
+| `/clear`                            | Start a fresh conversation |
+| `/file <path>`                      | Attach a file              |
+| `/think <low\|medium\|high\|xhigh>` | Enable extended reasoning  |
+| `/model <provider/model>`           | Switch AI model            |
+| `/voice`                            | Toggle voice recording     |
+| `/help`                             | Show all commands          |
+| `exit` or `quit`                    | Exit                       |
+| `Ctrl+C`                            | Stop the current response  |
 
 ---
 
 ## Next steps
 
-- **[GUIDE_GETTING_STARTED.md](GUIDE_GETTING_STARTED.md)** — Your first 30 minutes with
-  AgentCrew: install, create agents, run a multi-agent workflow.
-- **[GUIDE_WORKFLOWS.md](GUIDE_WORKFLOWS.md)** — When and why: pattern guides for common
-  scenarios with decision trees and best practices.
-- **[CONFIGURATION.md](CONFIGURATION.md)** — Deep dive into providers, agents, MCP
-  servers, themes, and plugins.
-- **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** — Build plugins with EventBus
-  subscriptions and tool execution hooks.
+- **[GUIDE_GETTING_STARTED.md](GUIDE_GETTING_STARTED.md)** — Your first 30
+  minutes with AgentCrew: install, create agents, run a multi-agent workflow.
+- **[GUIDE_WORKFLOWS.md](GUIDE_WORKFLOWS.md)** — When and why: pattern guides
+  for common scenarios with decision trees and best practices.
+- **[CONFIGURATION.md](CONFIGURATION.md)** — Deep dive into providers, agents,
+  MCP servers, themes, and plugins.
+- **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** — Build plugins with
+  EventBus subscriptions and hooks.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — How to build, test, and contribute.
 - **[Docker guide](docker/DOCKER.md)** — Running AgentCrew in containers.
 

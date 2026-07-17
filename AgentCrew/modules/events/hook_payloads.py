@@ -248,10 +248,8 @@ HOOK_PAYLOAD_MAP: dict[str, dict[HookPhase, type[Any]]] = {
     },
     HookPoints.USER_MESSAGE: {
         HookPhase.BEFORE: UserMessageContext,
-        HookPhase.AFTER: UserMessageResult,
     },
     HookPoints.RESPONSE_COMPLETE: {
-        HookPhase.BEFORE: ResponseCompleteContext,
         HookPhase.AFTER: ResponseCompleteResult,
     },
     HookPoints.MEMORY_STORE: {

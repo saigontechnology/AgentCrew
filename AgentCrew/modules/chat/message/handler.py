@@ -168,6 +168,21 @@ class MessageHandler:
                 f"/file {shlex.quote(file_command)}"
             )
 
+        # ── user.message before hook ────────────────────────────────
+        from AgentCrew.modules.events.hooks import HookPoints
+        from AgentCrew.modules.events.hook_payloads import UserMessageContext
+
+        _um_ctx: UserMessageContext = {
+            "raw_input": user_input,
+        }
+        _um_result = await self.hooks.run_before(
+            HookPoints.USER_MESSAGE,
+            **_um_ctx,
+        )
+        if _um_result is not None and "raw_input" in _um_result:
+            user_input = _um_result["raw_input"]
+        # ─────────────────────────────────────────────────────
+
         # Add regular text message
         display_text, llm_content = _resolve_at_mention(user_input, self.agent_manager)
 
@@ -431,6 +446,19 @@ class MessageHandler:
                         token_usage,
                         store_memory=False,
                     )
+                    # ── response.complete after hook ──────────────
+                    from AgentCrew.modules.events.hooks import HookPoints
+                    from AgentCrew.modules.events.hook_payloads import ResponseCompleteResult
+
+                    _rc_result: ResponseCompleteResult = {
+                        "response": assistant_response,
+                        "memory_stored": False,
+                    }
+                    await self.hooks.run_after(
+                        HookPoints.RESPONSE_COMPLETE,
+                        result=_rc_result,
+                    )
+                    # ─────────────────────────────────────────────
                     await self.bus.emit(
                         AppEvents.STREAM_CANCELED,
                         session_id=session.session_id,
@@ -584,6 +612,20 @@ class MessageHandler:
                 store_memory=True,
             )
 
+            # ── response.complete after hook ────────────────────
+            from AgentCrew.modules.events.hooks import HookPoints
+            from AgentCrew.modules.events.hook_payloads import ResponseCompleteResult
+
+            _rc_result: ResponseCompleteResult = {
+                "response": assistant_response,
+                "memory_stored": True,
+            }
+            await self.hooks.run_after(
+                HookPoints.RESPONSE_COMPLETE,
+                result=_rc_result,
+            )
+            # ─────────────────────────────────────────────────────
+
             if self.agent_manager.defered_transfer:
                 self.agent.history.append(
                     {
@@ -628,6 +670,19 @@ class MessageHandler:
                 token_usage,
                 store_memory=False,
             )
+            # ── response.complete after hook ────────────────────
+            from AgentCrew.modules.events.hooks import HookPoints
+            from AgentCrew.modules.events.hook_payloads import ResponseCompleteResult
+
+            _rc_result: ResponseCompleteResult = {
+                "response": assistant_response,
+                "memory_stored": False,
+            }
+            await self.hooks.run_after(
+                HookPoints.RESPONSE_COMPLETE,
+                result=_rc_result,
+            )
+            # ─────────────────────────────────────────────────────
             await self.bus.emit(
                 AppEvents.STREAM_CANCELED,
                 session_id=session.session_id,
