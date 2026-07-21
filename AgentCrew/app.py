@@ -2,70 +2,18 @@ import os
 import sys
 import json
 import asyncio
-import functools
 import nest_asyncio
 from typing import Any
 
 import click
 from loguru import logger
 
-from AgentCrew.setup import ApplicationSetup, PROVIDER_LIST
+from AgentCrew.setup import ApplicationSetup
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
 from AgentCrew.modules.llm.service_manager import ServiceManager
 
 nest_asyncio.apply()
-
-
-def common_options(func):
-    @click.option(
-        "--provider",
-        type=click.Choice(PROVIDER_LIST),
-        default=None,
-        help="LLM provider to use (claude, openai, google, crofai, github_copilot, deepinfra, together, opencode_go, commandcode, or openai_codex)",
-    )
-    @click.option(
-        "--agent-config",
-        default=None,
-        help="Path/URL to the agent configuration file.",
-    )
-    @click.option(
-        "--mcp-config", default=None, help="Path to the mcp servers configuration file."
-    )
-    @click.option(
-        "--memory-llm",
-        type=click.Choice(
-            [
-                "claude",
-                "openai",
-                "openai_codex",
-                "google",
-                "crofai",
-                "deepinfra",
-                "together",
-                "opencode_go",
-                "commandcode",
-                "github_copilot",
-                "copilot_response",
-            ]
-        ),
-        default=None,
-        help="LLM Model use for analyzing and processing memory",
-    )
-    @click.option(
-        "--memory-path", default=None, help="Path to the memory database location"
-    )
-    @click.option(
-        "--trusted-project-plugins",
-        is_flag=True,
-        default=False,
-        help="Enable project plugins from .agentcrew/plugins/ (disabled by default)",
-    )
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        return func(*args, **kwargs)
-
-    return wrapper
 
 
 class AgentCrewApplication:

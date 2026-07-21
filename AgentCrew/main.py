@@ -4,7 +4,7 @@ import sys
 import requests
 import subprocess
 import platform
-from AgentCrew.app import common_options
+from AgentCrew.setup import common_options, PROVIDER_LIST
 
 
 def _custom_unraisable_hook(unraisable):
@@ -505,7 +505,18 @@ def chatgpt_auth():
 
 
 @cli.command("create-agent")
-@common_options
+@click.option(
+    "--provider",
+    type=click.Choice(PROVIDER_LIST),
+    default=None,
+    help="LLM provider to use (claude, openai, google, crofai, github_copilot, deepinfra, together, opencode_go, commandcode, or openai_codex)",
+)
+@click.option(
+    "--agent-config",
+    default=None,
+    help="Path/URL to the agent configuration file.",
+)
+@click.option("--model-id", default=None, help="Model ID from provider")
 @click.option(
     "--name",
     "-n",
@@ -519,20 +530,25 @@ def chatgpt_auth():
     help="Description of what the agent should do (will prompt interactively if omitted)",
 )
 def create_agent_command(
-    provider, agent_config, mcp_config, memory_llm, memory_path, name, description
+    provider,
+    agent_config,
+    model_id,
+    name,
+    description,
 ):
     """Create a new agent interactively using the same flow as onboarding"""
     from AgentCrew.setup import ApplicationSetup
     from AgentCrew.modules.onboarding import OnboardingService
     from AgentCrew.modules.config import ConfigManagement
 
-    if memory_path:
-        os.environ["MEMORYDB_PATH"] = memory_path
     if agent_config:
         os.environ["SW_AGENTS_CONFIG"] = agent_config
 
     setup = ApplicationSetup(ConfigManagement())
     setup.load_api_keys_from_config()
+
+    if not model_id:
+        model_id = setup.detect_model_id()
 
     detected_provider = provider or setup.detect_provider()
     if not detected_provider:
@@ -543,7 +559,7 @@ def create_agent_command(
         raise SystemExit(1)
 
     services = setup.setup_services(
-        detected_provider, memory_llm=memory_llm, need_memory=False, with_voice=False
+        detected_provider, model_id=model_id, need_memory=False, with_voice=False
     )
     onboarding = OnboardingService(services["llm"], services=services)
     success = onboarding.create_agent(name=name, description=description)
