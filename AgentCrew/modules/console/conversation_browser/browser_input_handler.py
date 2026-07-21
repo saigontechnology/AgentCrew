@@ -38,7 +38,6 @@ class ConversationBrowserInputHandler:
         kb = KeyBindings()
 
         @kb.add(Keys.Up)
-        @kb.add("k")
         def _(event):
             if self._ui.search_mode:
                 return
@@ -47,10 +46,31 @@ class ConversationBrowserInputHandler:
             if self._ui.handle_navigation("up"):
                 self._ui.render()
 
+        @kb.add("k")
+        def _(event):
+            if self._ui.search_mode:
+                self._ui.append_search_char("k")
+                self._ui.render()
+                return
+            self._g_pressed = False
+            self._d_pressed = False
+            if self._ui.handle_navigation("up"):
+                self._ui.render()
+
         @kb.add(Keys.Down)
+        def _(event):
+            if self._ui.search_mode:
+                return
+            self._g_pressed = False
+            self._d_pressed = False
+            if self._ui.handle_navigation("down"):
+                self._ui.render()
+
         @kb.add("j")
         def _(event):
             if self._ui.search_mode:
+                self._ui.append_search_char("j")
+                self._ui.render()
                 return
             self._g_pressed = False
             self._d_pressed = False
@@ -162,7 +182,6 @@ class ConversationBrowserInputHandler:
                 self._ui.render()
 
         @kb.add(Keys.Enter)
-        @kb.add("l")
         def _(event):
             self._g_pressed = False
             self._d_pressed = False
@@ -170,6 +189,17 @@ class ConversationBrowserInputHandler:
                 self._ui.exit_search_mode(clear_filter=False)
                 self._ui.render()
                 return
+            self._selected_id = self._ui.get_selected_conversation_id()
+            event.app.exit()
+
+        @kb.add("l")
+        def _(event):
+            if self._ui.search_mode:
+                self._ui.append_search_char("l")
+                self._ui.render()
+                return
+            self._g_pressed = False
+            self._d_pressed = False
             self._selected_id = self._ui.get_selected_conversation_id()
             event.app.exit()
 
