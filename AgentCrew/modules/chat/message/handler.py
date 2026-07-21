@@ -235,6 +235,12 @@ class MessageHandler:
         """Resolve a pending learn behavior confirmation with the user's decision."""
         self.learn_review_coordinator.resolve_confirmation(confirmation_id, result)
 
+    def resolve_evolution_questions(self, questions_id: int, answers: dict[str, str]):
+        """Resolve pending evolution user questions with the user's answers."""
+        self.prompt_evolution_coordinator.resolve_evolution_questions(
+            questions_id, answers
+        )
+
     def _create_stream_session(self) -> StreamSession:
         self._stream_session_counter += 1
         session = StreamSession(session_id=self._stream_session_counter)
@@ -448,7 +454,9 @@ class MessageHandler:
                     )
                     # ── response.complete after hook ──────────────
                     from AgentCrew.modules.events.hooks import HookPoints
-                    from AgentCrew.modules.events.hook_payloads import ResponseCompleteResult
+                    from AgentCrew.modules.events.hook_payloads import (
+                        ResponseCompleteResult,
+                    )
 
                     _rc_result: ResponseCompleteResult = {
                         "response": assistant_response,

@@ -197,6 +197,9 @@ class ConsoleUI:
             self.bus.on(AppEvents.EVOLUTION_STARTED, self._on_evolution_started),
             self.bus.on(AppEvents.EVOLUTION_FINISHED, self._on_evolution_finished),
             self.bus.on(AppEvents.EVOLUTION_SUMMARY, self._on_evolution_summary),
+            self.bus.on(
+                AppEvents.EVOLUTION_QUESTIONS_REQUESTED, self._on_evolution_questions
+            ),
             self.bus.on(AppEvents.EVOLUTION_APPLIED, self._on_evolution_applied),
             self.bus.on(AppEvents.EVOLUTION_DECLINED, self._on_evolution_declined),
             # ── UX ──
@@ -453,6 +456,26 @@ class ConsoleUI:
             )
         else:
             asyncio.run(self.message_handler.submit_pending_evolution_review("decline"))
+        self.input_handler._start_input_thread()
+
+    def _on_evolution_questions(self, **data):
+        """Handle the evolution questions event - ask user 3 optional questions."""
+        questions_id = data.get("questions_id")
+        questions = data.get("questions", [])
+        self.input_handler._stop_input_thread()
+        answers = {}
+        for q in questions:
+            key = q.get("key", "")
+            label = q.get("label", "")
+            ans = self.input_handler.get_prompt_input(
+                f"{label} (press Enter to skip):", default=""
+            )
+            if ans.strip():
+                answers[key] = ans.strip()
+        # If user skipped all questions, pass empty dict
+        asyncio.run(
+            self.message_handler.resolve_evolution_questions(questions_id, answers)
+        )
         self.input_handler._start_input_thread()
 
     def _on_evolution_applied(self, **data):

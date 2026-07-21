@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Callable
 
 from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.agents.prompt_evolution_service import PromptEvolutionService
 from AgentCrew.modules.events import AppEvents, EventBus
 from .prompt_evolution_session import PromptEvolutionSession
+
+
+USER_QUESTIONS = [
+    {
+        "key": "wanted_change",
+        "label": "What do you want to change about the agent? (optional)",
+    },
+    {"key": "does_well", "label": "What does the agent do well? (optional)"},
+    {"key": "does_badly", "label": "What does the agent do poorly? (optional)"},
+]
 
 
 class PromptEvolutionCoordinator:
@@ -22,6 +33,8 @@ class PromptEvolutionCoordinator:
         self._persistence_service = persistence_service
         self._session = PromptEvolutionSession()
         self._service: PromptEvolutionService | None = None
+        self._pending_questions: dict[int, dict] = {}
+        self._next_questions_id = 0
 
     def get_pending_proposal(self):
         return self._session.get()
@@ -45,9 +58,14 @@ class PromptEvolutionCoordinator:
             persistence_service=self._persistence_service,
         )
 
+        # Ask user 3 optional questions before running analysis
+        user_answers = await self._ask_user_questions()
+
         await self._bus.emit(AppEvents.EVOLUTION_STARTED, agent_name=agent.name)
         try:
-            proposal = await self._service.create_evolution_proposal(agent)
+            proposal = await self._service.create_evolution_proposal(
+                agent, user_answers=user_answers
+            )
         except Exception as e:
             await self._bus.emit(AppEvents.EVOLUTION_FINISHED)
             await self._bus.emit(
@@ -58,6 +76,39 @@ class PromptEvolutionCoordinator:
         proposal = self._session.start(proposal)
         await self._bus.emit(AppEvents.EVOLUTION_SUMMARY, **proposal)
         return True
+
+    async def _ask_user_questions(self) -> dict[str, str]:
+        """Ask the user 3 optional questions before evolution analysis.
+
+        Returns a dict with non-empty answers keyed by question key.
+        """
+        questions_id = self._next_questions_id
+        self._next_questions_id += 1
+        self._pending_questions[questions_id] = {"resolved": False}
+
+        await self._bus.emit(
+            AppEvents.EVOLUTION_QUESTIONS_REQUESTED,
+            questions_id=questions_id,
+            questions=USER_QUESTIONS,
+        )
+
+        try:
+            while not self._pending_questions[questions_id]["resolved"]:
+                await asyncio.sleep(0.1)
+            answers = self._pending_questions[questions_id].get("answers", {})
+            return {k: v for k, v in answers.items() if v and v.strip()}
+        finally:
+            if questions_id in self._pending_questions:
+                del self._pending_questions[questions_id]
+
+    def resolve_evolution_questions(
+        self, questions_id: int, answers: dict[str, str]
+    ) -> None:
+        """Resolve pending evolution user questions with the user's answers."""
+        if questions_id in self._pending_questions:
+            self._pending_questions[questions_id].update(
+                {"resolved": True, "answers": answers}
+            )
 
     async def approve(self) -> bool:
         if not self._session.has_pending():

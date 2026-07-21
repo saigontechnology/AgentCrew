@@ -36,6 +36,7 @@ Each memory record contains:
 <memory_records>
 {memory_corpus}
 </memory_records>
+{user_answers_section}
 
 ## Your Task
 Analyze ALL memory records to identify **repeated patterns** that appear across multiple conversations. A pattern must appear in at least 2 separate memory records to qualify as durable.
@@ -44,6 +45,7 @@ Focus on:
 1. **Notes** — these contain direct user corrections, stated preferences, and workflow constraints. This is your primary evidence source.
 2. **Insights** — these contain durable lessons. Cross-reference with Notes for confirmation.
 3. **Flow/Topic patterns** — recurring themes and conversation arcs reveal the agent's actual usage patterns.
+{user_task_priority}
 
 ## Extraction Rules
 - ONLY extract patterns with evidence from multiple conversations (not one-off instructions)
@@ -126,7 +128,9 @@ Output ONLY the complete revised system prompt. No commentary, no explanation, n
         self.persistence_service = persistence_service
         self.agents_config = agents_config or AgentsConfig()
 
-    async def create_evolution_proposal(self, agent: Any) -> dict[str, Any]:
+    async def create_evolution_proposal(
+        self, agent: Any, user_answers: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         if not isinstance(agent, LocalAgent):
             raise ValueError("/evolve is only supported for local agents.")
 
@@ -143,7 +147,9 @@ Output ONLY the complete revised system prompt. No commentary, no explanation, n
             agent.name,
             len(memory_corpus),
         )
-        analysis = await self._run_analysis(agent, memory_corpus)
+        analysis = await self._run_analysis(
+            agent, memory_corpus, user_answers=user_answers
+        )
         sanitized = self._sanitize_analysis(analysis)
         summary = self._format_user_summary(sanitized)
 
@@ -328,14 +334,44 @@ Output ONLY the complete revised system prompt. No commentary, no explanation, n
         return "\n".join(parts)
 
     async def _run_analysis(
-        self, agent: LocalAgent, memory_corpus: list[dict[str, Any]]
+        self,
+        agent: LocalAgent,
+        memory_corpus: list[dict[str, Any]],
+        user_answers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         corpus_text = self._prepare_corpus_for_analysis(memory_corpus)
+
+        # Format user answers section for the prompt
+        user_answers_section = ""
+        user_task_priority = ""
+        if user_answers:
+            answer_lines = []
+            for key, label in (
+                ("wanted_change", "What the user wants to change"),
+                ("does_well", "What the user says the agent does well"),
+                ("does_badly", "What the user says the agent does poorly"),
+            ):
+                if user_answers.get(key):
+                    answer_lines.append(f"- {label}: {user_answers[key]}")
+            if answer_lines:
+                user_answers_section = (
+                    "\n## User Feedback\n"
+                    "The user provided the following feedback to guide this evolution:\n"
+                    + "\n".join(answer_lines)
+                )
+                user_task_priority = (
+                    "\n4. **User Feedback** — The user's direct feedback above is your highest priority evidence. "
+                    "Cross-reference user feedback with Memory Records to find matching patterns, "
+                    "and give extra weight to patterns that align with what the user explicitly mentioned."
+                )
+
         prompt = self.ANALYSIS_PROMPT.format(
             agent_name=agent.name,
             agent_description=agent.description,
             current_system_prompt=agent.get_system_prompt(),
             memory_corpus=corpus_text,
+            user_answers_section=user_answers_section,
+            user_task_priority=user_task_priority,
         )
         logger.debug(f"Evolution analysis prompt length: {len(prompt)} chars")
         if not agent.llm:

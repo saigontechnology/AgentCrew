@@ -25,6 +25,7 @@ class LLMWorker(QObject):
 
     process_request = Signal(str)
     process_evolution_action = Signal(str, str)
+    process_evolution_questions = Signal(int, object)
 
     def __init__(self):
         super().__init__()
@@ -37,6 +38,9 @@ class LLMWorker(QObject):
         self.message_handler = message_handler
         self.process_request.connect(self.process_input)
         self.process_evolution_action.connect(self.process_evolution)
+        self.process_evolution_questions.connect(
+            self.process_evolution_questions_resolve
+        )
 
     @Slot(str)
     def cancel_current_request(self):
@@ -105,4 +109,21 @@ class LLMWorker(QObject):
             traceback_str = traceback.format_exc()
             error_msg = f"{str(e)}\n{traceback_str}"
             logger.error(f"Error in LLMWorker evolution action: {error_msg}")
+            self.error.emit(str(e))
+
+    @Slot(int, object)
+    def process_evolution_questions_resolve(
+        self, questions_id: int, answers: dict[str, str]
+    ):
+        """Slot to resolve evolution questions with user answers."""
+        try:
+            if not self.message_handler:
+                self.error.emit("Message handler not connected")
+                return
+
+            self.message_handler.resolve_evolution_questions(questions_id, answers)
+        except Exception as e:
+            traceback_str = traceback.format_exc()
+            error_msg = f"{str(e)}\n{traceback_str}"
+            logger.error(f"Error resolving evolution questions: {error_msg}")
             self.error.emit(str(e))

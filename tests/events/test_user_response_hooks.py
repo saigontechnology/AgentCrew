@@ -120,14 +120,16 @@ class TestOppositePhasesDoNotFire:
     def test_user_message_after_not_in_payload_map(self):
         """user.message.after is not in HOOK_PAYLOAD_MAP."""
         phases = HOOK_PAYLOAD_MAP.get(HookPoints.USER_MESSAGE, {})
-        assert HookPhase.AFTER not in phases, \
+        assert HookPhase.AFTER not in phases, (
             "user.message.after must not appear in HOOK_PAYLOAD_MAP"
+        )
 
     def test_response_complete_before_not_in_payload_map(self):
         """response.complete.before is not in HOOK_PAYLOAD_MAP."""
         phases = HOOK_PAYLOAD_MAP.get(HookPoints.RESPONSE_COMPLETE, {})
-        assert HookPhase.BEFORE not in phases, \
+        assert HookPhase.BEFORE not in phases, (
             "response.complete.before must not appear in HOOK_PAYLOAD_MAP"
+        )
 
 
 # ===========================================================================
@@ -320,11 +322,15 @@ class TestPriorityOrdering:
     async def test_response_complete_after_priority(self, hooks):
         order: list[str] = []
 
-        async def low(ctx: dict, result: ResponseCompleteResult) -> ResponseCompleteResult:
+        async def low(
+            ctx: dict, result: ResponseCompleteResult
+        ) -> ResponseCompleteResult:
             order.append("low")
             return result
 
-        async def high(ctx: dict, result: ResponseCompleteResult) -> ResponseCompleteResult:
+        async def high(
+            ctx: dict, result: ResponseCompleteResult
+        ) -> ResponseCompleteResult:
             order.append("high")
             return result
 

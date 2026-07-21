@@ -81,6 +81,7 @@ class _EvolutionEvents:
     EVOLUTION_SUMMARY = "evolution_summary_ready"
     EVOLUTION_APPLIED = "evolution_applied"
     EVOLUTION_DECLINED = "evolution_declined"
+    EVOLUTION_QUESTIONS_REQUESTED = "evolution_questions_requested"
 
 
 class _LearningEvents:
@@ -291,6 +292,11 @@ class EvolutionSummaryPayload(TypedDict):
     status: str
 
 
+class EvolutionQuestionsPayload(TypedDict):
+    questions_id: int
+    questions: list[dict[str, str]]
+
+
 class EvolutionAppliedPayload(TypedDict):
     agent_name: str
     previous_system_prompt: str
@@ -404,6 +410,7 @@ EVENT_PAYLOAD_MAP: dict[str, type[Any] | None] = {
     AppEvents.EVOLUTION_SUMMARY: EvolutionSummaryPayload,
     AppEvents.EVOLUTION_APPLIED: EvolutionAppliedPayload,
     AppEvents.EVOLUTION_DECLINED: None,
+    AppEvents.EVOLUTION_QUESTIONS_REQUESTED: EvolutionQuestionsPayload,
     AppEvents.LEARN_CONFIRMATION: LearnConfirmationPayload,
     AppEvents.VOICE_RECORDING_STARTED: None,
     AppEvents.VOICE_RECORDING_STOPPING: None,

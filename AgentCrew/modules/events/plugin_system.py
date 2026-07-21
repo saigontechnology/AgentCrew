@@ -15,7 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from AgentCrew.modules.events import  EventBus, Subscription, Hook, HookRegistration, HookRegistry
+from AgentCrew.modules.events import (
+    EventBus,
+    Subscription,
+    Hook,
+    HookRegistration,
+    HookRegistry,
+)
 
 
 # ── Private namespace for all plugin modules ─────────────────────

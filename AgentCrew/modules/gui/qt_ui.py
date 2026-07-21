@@ -540,6 +540,10 @@ class ChatWindow(QMainWindow):
             self.bus.on(AppEvents.EVOLUTION_SUMMARY, self._on_evolution_summary),
             self.bus.on(AppEvents.EVOLUTION_APPLIED, self._on_evolution_applied),
             self.bus.on(AppEvents.EVOLUTION_DECLINED, self._on_evolution_declined),
+            self.bus.on(
+                AppEvents.EVOLUTION_QUESTIONS_REQUESTED,
+                self._on_evolution_questions_requested,
+            ),
             self.bus.on(AppEvents.ERROR, self._on_error),
             self.bus.on(AppEvents.SYSTEM_MESSAGE, self._on_system_message),
             self.bus.on(AppEvents.DEBUG_REQUESTED, self._on_debug_requested),
@@ -680,6 +684,9 @@ class ChatWindow(QMainWindow):
 
     def _on_evolution_applied(self, **data):
         self._queue_ui(self.command_handler.handle_evolution_applied, data)
+
+    def _on_evolution_questions_requested(self, **data):
+        self._queue_ui(self.command_handler.handle_evolution_questions, data)
 
     def _on_evolution_declined(self):
         self._queue_ui(self.command_handler.handle_evolution_declined)

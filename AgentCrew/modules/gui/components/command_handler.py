@@ -466,6 +466,23 @@ class CommandHandler:
         )
         self.chat_window.ui_state_manager.set_input_controls_enabled(True)
 
+    def handle_evolution_questions(self, data: dict):
+        """Handle the evolution questions event - show dialog with 3 optional questions."""
+        from AgentCrew.modules.gui.widgets.evolution_questions_dialog import (
+            EvolutionQuestionsDialog,
+        )
+
+        questions = data.get("questions", [])
+        questions_id = data.get("questions_id")
+
+        dialog = EvolutionQuestionsDialog(self.chat_window, questions=questions)
+        dialog.exec()
+
+        answers = dialog.get_answers()
+        self.chat_window.llm_worker.process_evolution_questions.emit(
+            questions_id, answers
+        )
+
     def handle_evolution_declined(self):
         self._hide_evolution_loading_dialog()
         self.chat_window.chat_components.add_system_message(
