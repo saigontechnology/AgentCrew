@@ -120,7 +120,8 @@ OPENAI_MODELS = [
     ),
     Model(
         id="gpt-5.6-sol",
-        provider="openai_response",
+        provider="openai",
+        service_name="openai_response",
         name="GPT-5.6 Sol",
         description="Frontier model for complex professional work",
         capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
@@ -131,7 +132,8 @@ OPENAI_MODELS = [
     ),
     Model(
         id="gpt-5.6-terra",
-        provider="openai_response",
+        provider="openai",
+        service_name="openai_response",
         name="GPT-5.6 Terra",
         description="GPT-5.6 model that balances intelligence and cost",
         capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
@@ -142,7 +144,8 @@ OPENAI_MODELS = [
     ),
     Model(
         id="gpt-5.6-luna",
-        provider="openai_response",
+        provider="openai",
+        service_name="openai_response",
         name="GPT-5.6 Luna",
         description="GPT-5.6 model optimized for cost-sensitive workloads",
         capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
