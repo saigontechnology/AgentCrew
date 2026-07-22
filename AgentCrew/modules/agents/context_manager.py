@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING, Any
 from loguru import logger
@@ -199,6 +200,46 @@ You must analyze and plan out the steps then execute it with your available tool
                 adaptive_messages.append(
                     f"## Current directory is {dir_name} with following structure:\n{dir_structure}"
                 )
+
+            code_analysis = agent.services.get("code_analysis")
+            if code_analysis and "code_analysis" in agent.tools:
+                try:
+                    cache_entries = code_analysis.get_cache_entries_for_context(
+                        os.getcwd()
+                    )
+                except Exception as exc:
+                    logger.warning(f"Failed to list analyze_repo cache entries: {exc}")
+                    cache_entries = []
+                if cache_entries:
+                    lines = [
+                        "## Cached analyze_repo Results",
+                        "",
+                        (
+                            "The following `analyze_repo` calls have cached results "
+                            "for this project. Calling `analyze_repo` with the same "
+                            "arguments returns the cached result quickly."
+                        ),
+                        "",
+                    ]
+                    for entry in cache_entries:
+                        args_parts: list[str] = []
+                        # Use json.dumps for safe, unambiguous quoting
+                        args_parts.append(f"path={json.dumps(entry['path'])}")
+                        exc_patterns = entry.get("exclude_patterns")
+                        if exc_patterns:
+                            args_parts.append(
+                                f"exclude_patterns={json.dumps(exc_patterns)}"
+                            )
+                        feature_scope = entry.get("feature_scope")
+                        if feature_scope is not None:
+                            args_parts.append(
+                                f"feature_scope={json.dumps(feature_scope)}"
+                            )
+                        args_parts.append(
+                            f"deep_analysis={json.dumps(entry['deep_analysis'])}"
+                        )
+                        lines.append(f"- `analyze_repo({', '.join(args_parts)})`")
+                    adaptive_messages.append("\n".join(lines))
 
         if (
             agent.services.get("agent_manager")

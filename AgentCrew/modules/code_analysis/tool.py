@@ -78,23 +78,27 @@ def get_code_analysis_tool_handler(
         exclude_patterns = params.get("exclude_patterns", [])
         feature_scope = params.get("feature_scope")
         deep_analysis = params.get("deep_analysis", True)
-        result = await code_analysis_service.analyze_code_structure(
-            path, exclude_patterns, feature_scope=feature_scope
+
+        result = await code_analysis_service.analyze_code_structure_cached(
+            path=path,
+            exclude_patterns=exclude_patterns,
+            feature_scope=feature_scope,
+            deep_analysis=deep_analysis,
         )
-        if isinstance(result, dict):
-            raise Exception(f"Failed to analyze code: {result.get('error', '')}")
+
+        error = result.get("error")
+        if error:
+            raise Exception(f"Failed to analyze code: {error}")
 
         output = [
             {
                 "type": "text",
-                "text": result,
+                "text": result["analysis_text"],
             },
         ]
 
-        if deep_analysis:
-            project_notes = await code_analysis_service.extract_project_notes(
-                result, path, feature_scope=feature_scope
-            )
+        project_notes = result.get("project_notes")
+        if project_notes:
             output.append(
                 {
                     "type": "text",

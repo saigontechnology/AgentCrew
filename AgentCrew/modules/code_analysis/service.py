@@ -12,6 +12,8 @@ from .file_tree_formatter import FileTreeFormatter
 from .result_formatter import ResultFormatter
 from .project_notes import ProjectNotesExtractor
 from .file_selector import FileSelector, MAX_FILES_TO_ANALYZE
+from .cache import AnalyzeRepoCache
+from loguru import logger
 import mimetypes
 
 if TYPE_CHECKING:
@@ -100,6 +102,7 @@ class CodeAnalysisService:
             llm_service=self.llm_service
         )
         self._file_selector = FileSelector(llm_service=self.llm_service)
+        self._analyze_cache = AnalyzeRepoCache()
 
     def _detect_language(self, file_path: str) -> str:
         """Detect programming language based on file extension."""
@@ -384,6 +387,88 @@ class CodeAnalysisService:
     def _format_file_tree(self, tree: dict[str, Any], indent: str = "") -> list[str]:
         """Format a file tree dictionary into indented lines."""
         return self._file_tree_formatter.format_file_tree(tree, indent)
+
+    # ------------------------------------------------------------------
+    # Cached analysis (wraps analyze_code_structure + extract_project_notes)
+    # ------------------------------------------------------------------
+
+    async def analyze_code_structure_cached(
+        self,
+        path: str,
+        exclude_patterns: list[str] | None = None,
+        feature_scope: str | None = None,
+        deep_analysis: bool = True,
+    ) -> dict[str, Any]:
+        """Analyze code structure with project-local caching.
+
+        On cache hit returns previously stored results without running
+        tree-sitter analysis or LLM calls.  On cache miss runs the full
+        analysis pipeline, caches the result, and returns it.
+
+        Returns:
+            A dict with keys:
+            - ``analysis_text`` (str) — the structural analysis output
+            - ``project_notes`` (str | None) — extracted project notes if
+              *deep_analysis* was True
+            - ``error`` (str | None) — set only when analysis itself failed
+        """
+        # Try cache first
+        try:
+            cached = self._analyze_cache.get(
+                path, exclude_patterns, feature_scope, deep_analysis
+            )
+            if cached is not None:
+                result_data = cached.get("result", {})
+                return {
+                    "analysis_text": result_data.get("analysis_text", ""),
+                    "project_notes": result_data.get("project_notes"),
+                }
+        except Exception as exc:
+            logger.warning(f"analyze_repo cache lookup failed, falling through: {exc}")
+
+        # Cache miss or error — run real analysis
+        analysis_text = await self.analyze_code_structure(
+            path, exclude_patterns, feature_scope=feature_scope
+        )
+        if isinstance(analysis_text, dict):
+            # Error case: do not cache
+            return {
+                "analysis_text": "",
+                "project_notes": None,
+                "error": analysis_text.get("error", "Unknown error"),
+            }
+
+        project_notes: str | None = None
+        if deep_analysis:
+            project_notes = await self.extract_project_notes(
+                analysis_text, path, feature_scope=feature_scope
+            )
+
+        # Best-effort cache write
+        try:
+            self._analyze_cache.set(
+                path=path,
+                exclude_patterns=exclude_patterns,
+                feature_scope=feature_scope,
+                deep_analysis=deep_analysis,
+                analysis_text=analysis_text,
+                project_notes=project_notes,
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to cache analyze_repo result: {exc}")
+
+        return {
+            "analysis_text": analysis_text,
+            "project_notes": project_notes,
+        }
+
+    def get_cache_entries_for_context(self, cwd: str) -> list[dict[str, Any]]:
+        """Return metadata for valid cache entries in the project at *cwd*.
+
+        Used by the adaptive context system to inform the agent about
+        previously cached ``analyze_repo`` calls.  Performs no LLM work.
+        """
+        return self._analyze_cache.list_valid_entries(cwd)
 
     def _format_analysis_results(
         self,
