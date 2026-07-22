@@ -6,6 +6,7 @@ from loguru import logger
 from .service import CodeAnalysisService
 from .file_search_service import FileSearchService
 from .grep_service import GrepTextService
+from .symbol_lookup_service import SymbolLookupService
 
 
 # ============================================================================
@@ -554,6 +555,177 @@ def get_grep_text_tool_handler(service_instance: GrepTextService) -> Callable:
 
 
 # ============================================================================
+# Symbol Lookup Tools
+# ============================================================================
+
+
+def _get_symbol_lookup_parameters(include_definitions: bool = False) -> dict[str, Any]:
+    properties: dict[str, Any] = {
+        "symbol": {
+            "type": "string",
+            "description": "Exact symbol name to find.",
+        },
+        "path": {
+            "type": "string",
+            "description": "Source file or directory scope to search.",
+            "default": ".",
+        },
+        "exclude_patterns": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Optional glob patterns to exclude when searching a directory.",
+        },
+        "max_results": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": SymbolLookupService.MAX_RESULTS,
+            "default": SymbolLookupService.DEFAULT_MAX_RESULTS,
+            "description": "Maximum number of deterministic matches to return.",
+        },
+    }
+    if include_definitions:
+        properties["include_definitions"] = {
+            "type": "boolean",
+            "default": False,
+            "description": "Include recognized declaration names in reference results.",
+        }
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": ["symbol"],
+    }
+
+
+def get_find_definition_tool_definition() -> dict[str, Any]:
+    """Return the tool definition for syntax-based symbol definition lookup."""
+    return {
+        "type": "function",
+        "function": {
+            "name": "find_definition",
+            "description": (
+                "Find candidate definitions of an exact symbol within a source file or "
+                "directory using Tree-sitter syntax. Results include paths, ranges, "
+                "symbol kinds, and snippets. This is not type-aware or import-aware, "
+                "so duplicate names can produce multiple candidates."
+            ),
+            "parameters": _get_symbol_lookup_parameters(),
+        },
+    }
+
+
+def get_find_references_tool_definition() -> dict[str, Any]:
+    """Return the tool definition for syntax-based symbol reference lookup."""
+    return {
+        "type": "function",
+        "function": {
+            "name": "find_references",
+            "description": (
+                "Find exact identifier usages within a source file or directory using "
+                "Tree-sitter syntax. Recognized declarations are excluded by default. "
+                "This is not type-aware or import-aware, so results are candidate "
+                "references when names are duplicated or languages are dynamic."
+            ),
+            "parameters": _get_symbol_lookup_parameters(include_definitions=True),
+        },
+    }
+
+
+def _format_symbol_lookup_markdown(result: dict[str, Any]) -> str:
+    """Format a structured symbol lookup result for LLM consumption."""
+
+    def code_span(value: Any) -> str:
+        text = str(value).replace("\n", " ")
+        longest_run = 0
+        current_run = 0
+        for character in text:
+            if character == "`":
+                current_run += 1
+                longest_run = max(longest_run, current_run)
+            else:
+                current_run = 0
+        fence = "`" * (longest_run + 1)
+        padding = " " if text.startswith("`") or text.endswith("`") else ""
+        return f"{fence}{padding}{text}{padding}{fence}"
+
+    lookup = result["lookup"]
+    title = "Definitions" if lookup == "definition" else "References"
+    count = result["count"]
+    lines = [
+        f"## {title}: {code_span(result['symbol'])}",
+        "",
+        f"**Scope:** {code_span(result['scope'])} · **Matches:** {count}",
+        "",
+    ]
+
+    if not result["matches"]:
+        lines.append("No syntax-based candidates found.")
+    else:
+        for match in result["matches"]:
+            start = match["range"]["start"]
+            location = f"{match['path']}:{start['line']}:{start['column']}"
+            lines.append(
+                f"- {code_span(location)} — **{match['kind']}** ({match['language']})"
+            )
+            snippet_lines = str(match.get("snippet", "")).splitlines() or [""]
+            lines.extend(["", *(f"      {line}" for line in snippet_lines), ""])
+
+    if result["truncated"]:
+        lines.extend(
+            [
+                "",
+                f"**Truncated:** Showing the first {count} matches.",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "> **Note:** Syntax-only candidates; results are not type-aware or import-aware.",
+        ]
+    )
+    return "\n".join(lines).rstrip()
+
+
+def get_find_definition_tool_handler(
+    service_instance: SymbolLookupService,
+) -> Callable:
+    """Return the handler for syntax-based definition lookup."""
+
+    async def handler(**params):
+        result = service_instance.find_definitions(
+            symbol=params.get("symbol", ""),
+            path=params.get("path", "."),
+            exclude_patterns=params.get("exclude_patterns"),
+            max_results=params.get(
+                "max_results", SymbolLookupService.DEFAULT_MAX_RESULTS
+            ),
+        )
+        return [{"type": "text", "text": _format_symbol_lookup_markdown(result)}]
+
+    return handler
+
+
+def get_find_references_tool_handler(
+    service_instance: SymbolLookupService,
+) -> Callable:
+    """Return the handler for syntax-based reference lookup."""
+
+    async def handler(**params):
+        result = service_instance.find_references(
+            symbol=params.get("symbol", ""),
+            path=params.get("path", "."),
+            exclude_patterns=params.get("exclude_patterns"),
+            max_results=params.get(
+                "max_results", SymbolLookupService.DEFAULT_MAX_RESULTS
+            ),
+            include_definitions=params.get("include_definitions", False),
+        )
+        return [{"type": "text", "text": _format_symbol_lookup_markdown(result)}]
+
+    return handler
+
+
+# ============================================================================
 # Registration
 # ============================================================================
 
@@ -567,6 +739,8 @@ def register(service_instance=None, agent=None):
     - read_file: Retrieve file content or specific line ranges
     - find_files: Search for files by pattern
     - grep_text: Search for text patterns within file contents
+    - find_definition: Find syntax-based symbol definition candidates
+    - find_references: Find syntax-based symbol reference candidates
 
     Args:
         service_instance: The code analysis service instance (optional, for backward compatibility)
@@ -604,5 +778,19 @@ def register(service_instance=None, agent=None):
         get_grep_text_tool_definition,
         get_grep_text_tool_handler,
         grep_text_service,
+        agent,
+    )
+
+    symbol_lookup_service = SymbolLookupService.get_instance()
+    register_tool(
+        get_find_definition_tool_definition,
+        get_find_definition_tool_handler,
+        symbol_lookup_service,
+        agent,
+    )
+    register_tool(
+        get_find_references_tool_definition,
+        get_find_references_tool_handler,
+        symbol_lookup_service,
         agent,
     )
