@@ -7,6 +7,10 @@ from typing import Any, TYPE_CHECKING
 from loguru import logger
 
 from AgentCrew.modules.chat.message.commands.base import CommandResult
+from AgentCrew.modules.chat.message.commands.copy_utils import (
+    extract_assistant_text,
+    get_copyable_assistants,
+)
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message import MessageHandler
@@ -171,6 +175,56 @@ class UtilityCommands:
             await self.message_handler.bus.emit(
                 AppEvents.ERROR, message=f"Failed to retrieve usage: {str(e)}"
             )
+        return CommandResult(handled=True, clear_flag=True)
+
+    async def handle_copy(self, user_input: str) -> CommandResult:
+        copy_idx = user_input[5:].strip() or 1
+        try:
+            copy_idx = int(copy_idx)
+        except (TypeError, ValueError):
+            await self.message_handler.bus.emit(
+                AppEvents.ERROR,
+                message="Invalid copy index. Usage: /copy <number> (default: 1)",
+            )
+            return CommandResult(handled=True, clear_flag=True)
+
+        if copy_idx < 1:
+            await self.message_handler.bus.emit(
+                AppEvents.ERROR,
+                message="Copy index must be a positive integer.",
+            )
+            return CommandResult(handled=True, clear_flag=True)
+
+        assistant_messages = get_copyable_assistants(
+            self.message_handler.streamline_messages,
+            self.message_handler.conversation_turns,
+        )
+
+        if not assistant_messages:
+            await self.message_handler.bus.emit(
+                AppEvents.ERROR,
+                message="No assistant messages available to copy.",
+            )
+            return CommandResult(handled=True, clear_flag=True)
+
+        if copy_idx > len(assistant_messages):
+            await self.message_handler.bus.emit(
+                AppEvents.ERROR,
+                message=f"Index {copy_idx} out of range. Available: 1-{len(assistant_messages)}.",
+            )
+            return CommandResult(handled=True, clear_flag=True)
+
+        selected_msg = assistant_messages[-copy_idx]
+        text = extract_assistant_text(selected_msg)
+
+        if not text:
+            await self.message_handler.bus.emit(
+                AppEvents.ERROR,
+                message="Selected assistant message has no text content.",
+            )
+            return CommandResult(handled=True, clear_flag=True)
+
+        await self.message_handler.bus.emit(AppEvents.COPY_REQUESTED, text=text)
         return CommandResult(handled=True, clear_flag=True)
 
     async def handle_clean_behaviors(self, user_input: str) -> CommandResult:

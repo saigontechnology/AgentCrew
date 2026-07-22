@@ -20,6 +20,12 @@ class KeyboardHandler:
         self.send_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self.chat_window)
         self.send_shortcut.activated.connect(self.chat_window.send_message)
 
+        # Ctrl+Shift+C shortcut (copy last response)
+        self.copy_shortcut = QShortcut(QKeySequence("Ctrl+Shift+C"), self.chat_window)
+        self.copy_shortcut.activated.connect(
+            lambda: self.chat_window.llm_worker.process_request.emit("/copy")
+        )
+
         # Ctrl+L shortcut (clear chat)
         self.clear_shortcut = QShortcut(QKeySequence("Ctrl+L"), self.chat_window)
         self.clear_shortcut.activated.connect(

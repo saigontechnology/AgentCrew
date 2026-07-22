@@ -212,6 +212,8 @@ class ConsoleUI:
             self.bus.on(AppEvents.FORK_AND_SWITCH, self._on_fork_and_switch),
             self.bus.on(AppEvents.LEARN_CONFIRMATION, self._on_learn_confirmation),
             self.bus.on(AppEvents.MCP_PROMPT, self._on_mcp_prompt),
+            # ── Copy ──
+            self.bus.on(AppEvents.COPY_REQUESTED, self._on_copy_requested),
             # ── Voice ──
             self.bus.on(
                 AppEvents.VOICE_RECORDING_STARTED, self._on_voice_recording_started
@@ -519,6 +521,15 @@ class ConsoleUI:
             )
         )
         self._calculate_token_usage(self._token_usage)
+
+    # ── Copy ──
+
+    def _on_copy_requested(self, **data):
+        text = data.get("text", "")
+        if text:
+            self.copy_to_clipboard(text)
+
+    # ── Jump ──
 
     def _on_jump_performed(self, **data):
         jump_text = Text(

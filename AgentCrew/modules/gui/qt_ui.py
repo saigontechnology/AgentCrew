@@ -553,6 +553,7 @@ class ChatWindow(QMainWindow):
             self.bus.on(AppEvents.FORK_AND_SWITCH, self._on_fork_and_switch),
             self.bus.on(AppEvents.LEARN_CONFIRMATION, self._on_learn_confirmation),
             self.bus.on(AppEvents.MCP_PROMPT, self._on_mcp_prompt),
+            self.bus.on(AppEvents.COPY_REQUESTED, self._on_copy_requested),
             self.bus.on(
                 AppEvents.VOICE_RECORDING_STARTED, self._on_voice_recording_started
             ),
@@ -717,6 +718,11 @@ class ChatWindow(QMainWindow):
 
     def _on_mcp_prompt(self, **data):
         self._queue_ui(self.message_input.setPlainText, data.get("content", ""))
+
+    def _on_copy_requested(self, **data):
+        text = data.get("text", "")
+        if text:
+            self._queue_ui(self.command_handler.handle_copy_requested, text)
 
     def _on_transfer_enforce_toggled(self, status: str):
         self._queue_ui(

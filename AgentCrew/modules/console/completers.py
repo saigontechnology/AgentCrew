@@ -2,6 +2,10 @@ from prompt_toolkit.completion import Completer, PathCompleter
 from prompt_toolkit.document import Document
 from prompt_toolkit.completion import Completion
 from AgentCrew.modules.llm.model_registry import ModelRegistry
+from AgentCrew.modules.chat.message.commands.copy_utils import (
+    extract_assistant_text_preview,
+    get_copyable_assistants,
+)
 import os
 import re
 
@@ -64,6 +68,43 @@ class ForkCompleter(Completer):
                 if turn_str.startswith(word_before_cursor):
                     # Use the stored preview
                     preview = turn.get_preview(40)
+                    display = f"{turn_str}: {preview}"
+                    yield Completion(
+                        turn_str,
+                        start_position=-len(word_before_cursor),
+                        display=display,
+                    )
+
+
+class CopyCompleter(Completer):
+    """Completer that shows available assistant responses when typing /copy command."""
+
+    def __init__(self, message_handler=None):
+        self.message_handler = message_handler
+
+    def _get_copyable_assistants(self):
+        if not self.message_handler:
+            return []
+        return get_copyable_assistants(
+            self.message_handler.streamline_messages,
+            self.message_handler.conversation_turns,
+        )
+
+    def get_completions(self, document, complete_event):
+        text = document.text
+
+        if text.startswith("/copy "):
+            word_before_cursor = document.get_word_before_cursor(
+                pattern=COMPLETER_PATTERN
+            )
+
+            assistants = self._get_copyable_assistants()
+            total = len(assistants)
+
+            for i in range(1, total + 1):
+                turn_str = str(i)
+                if turn_str.startswith(word_before_cursor):
+                    preview = extract_assistant_text_preview(assistants[-i], 40)
                     display = f"{turn_str}: {preview}"
                     yield Completion(
                         turn_str,
@@ -245,6 +286,7 @@ class ChatCompleter(Completer):
         self.at_agent_completer = AtAgentCompleter()
         self.jump_completer = JumpCompleter(message_handler)
         self.fork_completer = ForkCompleter(message_handler)
+        self.copy_completer = CopyCompleter(message_handler)
         self.mcp_completer = MCPCompleter(message_handler)
         self.drop_completer = DropCompleter(message_handler)
         self.behavior_completer = BehaviorIDCompleter(message_handler)
@@ -274,6 +316,9 @@ class ChatCompleter(Completer):
         elif text.startswith("/fork "):
             # Use fork completer for /fork command
             yield from self.fork_completer.get_completions(document, complete_event)
+        elif text.startswith("/copy "):
+            # Use copy completer for /copy command
+            yield from self.copy_completer.get_completions(document, complete_event)
         elif text.startswith("/mcp"):
             yield from self.mcp_completer.get_completions(document, complete_event)
         elif text.startswith("/file "):
@@ -318,6 +363,10 @@ class ChatCompleter(Completer):
             (
                 "/consolidate",
                 "Consolidate conversation messages (usage: /consolidate [count])",
+            ),
+            (
+                "/copy",
+                "Copy the nth-latest assistant response to clipboard (usage: /copy <n>)",
             ),
             (
                 "/evolve",

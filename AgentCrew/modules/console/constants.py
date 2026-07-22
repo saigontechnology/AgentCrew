@@ -30,6 +30,7 @@ COMMAND_HELP_MESSAGES = [
     "Use '/model [model_id]' to switch models or list available models.",
     "Use '/usage' to show current provider usage limits.",
     "Use '/debug [agent|chat|system]' to show debug information.",
+    "Use '/copy <number>' to copy the nth-latest assistant response to clipboard.",
     "Use '/jump <turn_number>' to rewind the conversation to a previous turn.",
     "Use '/agent [agent_name]' to switch agents or list available agents.",
     "Use '/export_agent <agent_names> <output_file>' to export selected agents to a TOML file (comma-separated names).",

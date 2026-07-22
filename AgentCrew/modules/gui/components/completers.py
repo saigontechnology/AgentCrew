@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QCompleter
 from PySide6.QtCore import Qt
 from AgentCrew.modules.llm.model_registry import ModelRegistry
+from AgentCrew.modules.chat.message.commands.copy_utils import get_copyable_assistants
 
 
 class GuiModelCompleter:
@@ -107,6 +108,37 @@ class GuiForkCompleter:
         return completions
 
 
+class GuiCopyCompleter:
+    """GUI completer for copy commands."""
+
+    def __init__(self, message_handler=None):
+        self.message_handler = message_handler
+
+    def get_completions(self, text):
+        """Get copy completions for GUI."""
+        if not text.startswith("/copy "):
+            return []
+
+        word_after_command = text[6:]  # Remove "/copy "
+
+        assistants = (
+            get_copyable_assistants(
+                self.message_handler.streamline_messages,
+                self.message_handler.conversation_turns,
+            )
+            if self.message_handler
+            else []
+        )
+
+        completions = []
+        for i in range(1, len(assistants) + 1):
+            turn_str = str(i)
+            if turn_str.startswith(word_after_command):
+                completions.append(turn_str)
+
+        return completions
+
+
 class GuiMCPCompleter:
     """GUI completer for MCP commands."""
 
@@ -142,6 +174,7 @@ class GuiCommandCompleter:
     def __init__(self):
         self.commands = [
             "/clear",
+            "/copy",
             "/debug",
             "/think",
             "/usage",
@@ -209,6 +242,7 @@ class GuiChatCompleter:
         self.at_agent_completer = GuiAtAgentCompleter()
         self.jump_completer = GuiJumpCompleter(message_handler)
         self.fork_completer = GuiForkCompleter(message_handler)
+        self.copy_completer = GuiCopyCompleter(message_handler)
         self.mcp_completer = GuiMCPCompleter(message_handler)
         self.command_completer = GuiCommandCompleter()
 
@@ -225,6 +259,8 @@ class GuiChatCompleter:
             return self.jump_completer.get_completions(text)
         elif text.startswith("/fork "):
             return self.fork_completer.get_completions(text)
+        elif text.startswith("/copy "):
+            return self.copy_completer.get_completions(text)
         elif text.startswith("/mcp "):
             return self.mcp_completer.get_completions(text)
         elif text.startswith("/"):

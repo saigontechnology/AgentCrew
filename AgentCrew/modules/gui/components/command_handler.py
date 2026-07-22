@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Slot
 
+import pyperclip
+
 from AgentCrew.modules.gui.widgets.evolution_loading_dialog import (
     EvolutionLoadingDialog,
 )
@@ -39,6 +41,12 @@ class CommandHandler:
         # Clear command
         if user_input.startswith("/clear"):
             self.clear_chat()
+            self.chat_window.ui_state_manager.set_input_controls_enabled(True)
+            return True
+
+        # Copy command
+        elif user_input.startswith("/copy"):
+            self.chat_window.llm_worker.process_request.emit(user_input)
             self.chat_window.ui_state_manager.set_input_controls_enabled(True)
             return True
 
@@ -497,6 +505,11 @@ class CommandHandler:
     def handle_evolution_finished(self):
         self._hide_evolution_loading_dialog()
         self.chat_window.display_status_message("Prompt evolution processing finished")
+
+    def handle_copy_requested(self, text: str):
+        """Copy text to clipboard."""
+        pyperclip.copy(text)
+        self.chat_window.display_status_message("Text copied to clipboard!")
 
     def _handle_learn_behavior_confirmation(self, data: Any):
         """Handle learn behavior confirmation request from the /learn command."""

@@ -111,6 +111,7 @@ class _UxEvents:
     FORK_AND_SWITCH = "fork_and_switch_performed"
     FORK_CREATED = "fork_created"
     MCP_PROMPT = "mcp_prompt"
+    COPY_REQUESTED = "copy_requested"
 
 
 # ── Convenience aggregate ──
@@ -367,6 +368,10 @@ class McpPromptPayload(TypedDict):
     content: str
 
 
+class CopyRequestedPayload(TypedDict):
+    text: str
+
+
 # ──────────────────────────────────────────────
 #  Event → Payload mapping (runtime introspection)
 # ──────────────────────────────────────────────
@@ -425,4 +430,5 @@ EVENT_PAYLOAD_MAP: dict[str, type[Any] | None] = {
     AppEvents.FORK_AND_SWITCH: ForkAndSwitchPayload,
     AppEvents.FORK_CREATED: ForkCreatedPayload,
     AppEvents.MCP_PROMPT: McpPromptPayload,
+    AppEvents.COPY_REQUESTED: CopyRequestedPayload,
 }
