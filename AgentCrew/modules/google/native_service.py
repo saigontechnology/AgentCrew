@@ -73,7 +73,7 @@ class GoogleAINativeService(BaseLLMService):
         self.client = genai.Client(api_key=api_key, http_options=http_options)
 
         # Default model
-        self.model = "gemini-2.5-flash-preview-05-20"
+        self.model = "gemini-3.6-flash"
 
         # Initialize tools and handlers
         self.tools = []

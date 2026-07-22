@@ -79,7 +79,7 @@ PICTURE_DESCRIPTION_PROVIDERS = {
     "google": {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         "api_key_env": "GEMINI_API_KEY",
-        "model": "gemini-flash-lite-latest",
+        "model": "gemini-3.5-flash-lite",
     },
     "openai": {
         "url": "https://api.openai.com/v1/chat/completions",

@@ -138,4 +138,15 @@ TOGETHER_MODELS = [
         input_token_price_1m=2.0,
         output_token_price_1m=2.0,
     ),
+    Model(
+        id="thinkingmachines/Inkling",
+        provider="together",
+        name="Inkling",
+        description="Open-weight multimodal MoE model from Thinking Machines Lab (975B total, 41B active) for reasoning, coding, and tool use on Together AI",
+        max_context_token=524_000,
+        capabilities=["tool_use", "stream", "thinking", "vision", "structured_output"],
+        input_token_price_1m=1.0,
+        cached_token_price_1m=0.17,
+        output_token_price_1m=4.05,
+    ),
 ]
