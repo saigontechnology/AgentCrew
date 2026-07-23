@@ -505,13 +505,13 @@ class FileHandler:
                 }
                 return message_content
         # Directly read text-based files
-        elif mime_type and mime_type.startswith("text/"):
+        else:
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 return {"type": "text", "text": f"Content of {file_path}:\n\n{content}"}
             except Exception as e:
-                logger.error(f"Error reading text file {file_path}: {str(e)}")
+                logger.warning(f"Cannot reading text file {file_path}: {str(e)}")
                 return None
 
         # Fallback to other file types
