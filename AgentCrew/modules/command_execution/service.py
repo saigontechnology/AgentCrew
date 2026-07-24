@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -204,7 +204,7 @@ class CommandExecutionService:
         if not env_vars:
             return True, ""
 
-        for key in env_vars.keys():
+        for key in env_vars:
             if key in PROTECTED_ENV_VARS:
                 return False, f"Cannot override protected environment variable: {key}"
 
@@ -222,7 +222,7 @@ class CommandExecutionService:
         Log command execution for audit trail.
         """
         log_entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "command_id": command_id,
             "command_hash": hashlib.sha256(command.encode()).hexdigest(),
             "command": command,
@@ -348,7 +348,7 @@ class CommandExecutionService:
                     stdin=subprocess.PIPE,
                     cwd=resolved_dir,
                     env=env,
-                    preexec_fn=os.setsid,  # Create process group
+                    start_new_session=True,  # replaced preexec_fn=os.setsid for thread safety
                 )
 
             cmd_process = CommandProcess(
@@ -662,7 +662,7 @@ class CommandExecutionService:
                 if cmd_process.process.stdin:
                     cmd_process.process.stdin.close()
             except Exception:
-                pass
+                logger.debug("Failed to close command stdin")
 
             for thread in cmd_process.reader_threads:
                 if thread.is_alive():

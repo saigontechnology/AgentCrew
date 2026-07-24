@@ -1021,14 +1021,15 @@ class ConsoleUI:
                         continue
 
                     # Start loading animation while waiting for response
-                    if (
-                        not user_input.startswith("/")
-                        or user_input.startswith("/file ")
-                        or user_input.startswith("/consolidate ")
-                        or user_input.startswith("/agent ")
-                        or user_input.startswith("/model ")
-                        or user_input.startswith("/learn")
-                        or user_input.startswith("/retry")
+                    if not user_input.startswith("/") or user_input.startswith(
+                        (
+                            "/file ",
+                            "/consolidate ",
+                            "/agent ",
+                            "/model ",
+                            "/learn",
+                            "/retry",
+                        )
                     ):
                         self.start_loading_animation()
 

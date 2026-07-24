@@ -38,6 +38,18 @@ def _owner_key(context: ServerCallContext | None) -> str:
     return "default"
 
 
+def _read_json(path: str) -> Any:
+    """Synchronous helper: read and parse JSON from *path*."""
+    with open(path) as f:
+        return json.load(f)
+
+
+def _remove_sync(path: str) -> None:
+    """Synchronous helper: remove file if it exists."""
+    if os.path.exists(path):
+        os.remove(path)
+
+
 def atomic_write(path: str, data: Any) -> None:
     """Atomic file write using temporary file + rename."""
     tmp = path + ".tmp"
@@ -150,18 +162,16 @@ class FileSessionStore(AgentCrewSessionStore):
         async with self._lock_for(path):
             if not os.path.exists(path):
                 return []
-            with open(path) as f:
-                return json.load(f)
+            return await asyncio.to_thread(_read_json, path)
 
     async def append_history(self, context_id: str, message: dict[str, Any]) -> None:
         path = self._history_path(context_id)
         async with self._lock_for(path):
             history = []
             if os.path.exists(path):
-                with open(path) as f:
-                    history = json.load(f)
+                history = await asyncio.to_thread(_read_json, path)
             history.append(message)
-            atomic_write(path, history)
+            await asyncio.to_thread(atomic_write, path, history)
 
     async def save_pending_tools(
         self, task_id: str, ask_tool_use: dict, remaining_tools: list
@@ -169,28 +179,25 @@ class FileSessionStore(AgentCrewSessionStore):
         path = self._pending_path(task_id)
         data = {"ask_tool_use": ask_tool_use, "remaining_tools": remaining_tools}
         async with self._lock_for(path):
-            atomic_write(path, data)
+            await asyncio.to_thread(atomic_write, path, data)
 
     async def get_pending_tools(self, task_id: str) -> dict | None:
         path = self._pending_path(task_id)
         async with self._lock_for(path):
             if not os.path.exists(path):
                 return None
-            with open(path) as f:
-                return json.load(f)
+            return await asyncio.to_thread(_read_json, path)
 
     async def clear_pending_tools(self, task_id: str) -> None:
         path = self._pending_path(task_id)
         async with self._lock_for(path):
-            if os.path.exists(path):
-                os.remove(path)
+            await asyncio.to_thread(_remove_sync, path)
 
     async def cleanup(self, task_id: str, context_id: str) -> None:
         await self.clear_pending_tools(task_id)
         hpath = self._history_path(context_id)
         async with self._lock_for(hpath):
-            if os.path.exists(hpath):
-                os.remove(hpath)
+            await asyncio.to_thread(_remove_sync, hpath)
 
 
 class RedisSessionStore(AgentCrewSessionStore):
@@ -356,7 +363,7 @@ class FileAgentCrewTaskStore(TaskStore):
             always_print_fields_with_no_presence=True,
         )
         async with self._lock:
-            atomic_write(path, d)
+            await asyncio.to_thread(atomic_write, path, d)
             t = Task()
             t.CopyFrom(task)
             self._cache[f"{owner}:{task.id}"] = t
@@ -372,8 +379,7 @@ class FileAgentCrewTaskStore(TaskStore):
         path = self._task_path(task_id, owner)
         if not os.path.exists(path):
             return None
-        with open(path) as f:
-            d = json.load(f)
+        d = await asyncio.to_thread(_read_json, path)
         task = Task()
         ParseDict(d, task)
         async with self._lock:
@@ -394,8 +400,7 @@ class FileAgentCrewTaskStore(TaskStore):
                     ck = f"{owner}:{fname[len(f'task_{owner}_') : -5]}"
                     if ck not in self._cache:
                         fpath = os.path.join(self._base_dir, fname)
-                        with open(fpath) as f:
-                            d = json.load(f)
+                        d = await asyncio.to_thread(_read_json, fpath)
                         task = Task()
                         ParseDict(d, task)
                         self._cache[ck] = task
@@ -409,8 +414,7 @@ class FileAgentCrewTaskStore(TaskStore):
         path = self._task_path(task_id, owner)
         async with self._lock:
             self._cache.pop(f"{owner}:{task_id}", None)
-        if os.path.exists(path):
-            os.remove(path)
+        await asyncio.to_thread(_remove_sync, path)
 
 
 class RedisAgentCrewTaskStore(TaskStore):

@@ -1,5 +1,6 @@
 from collections.abc import Callable
 
+from loguru import logger
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
@@ -162,7 +163,7 @@ class LocalAgentEditor(QWidget):
                 for model in registry.get_models_by_provider(provider):
                     self.model_id_combo.addItem(f"{model.provider}/{model.id}")
         except Exception:
-            pass
+            logger.debug("Failed to populate model list")
 
     def _on_field_changed(self):
         self.field_changed.emit()

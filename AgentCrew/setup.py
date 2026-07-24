@@ -526,9 +526,8 @@ class ApplicationSetup:
             from AgentCrew.modules.onboarding import OnboardingService
 
             onboarding = OnboardingService(services["llm"], services=services)
-            if onboarding.should_run(config_uri):
-                if onboarding.run():
-                    agent_definitions = AgentManager.load_agents_from_config(config_uri)
+            if onboarding.should_run(config_uri) and onboarding.run():
+                agent_definitions = AgentManager.load_agents_from_config(config_uri)
 
         if not agent_definitions:
             click.echo(
@@ -657,14 +656,13 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
                 last_agent
                 and self.agent_manager
                 and last_agent in self.agent_manager.agents
-            ):
-                if self.agent_manager.select_agent(last_agent):
-                    initial_agent_selected = True
+            ) and self.agent_manager.select_agent(last_agent):
+                initial_agent_selected = True
         except Exception as e:
             click.echo(f"\u26a0\ufe0f  Could not restore last used agent: {e}")
 
         if not initial_agent_selected and self.agent_manager:
-            first_agent_name = list(self.agent_manager.agents.keys())[0]
+            first_agent_name = next(iter(self.agent_manager.agents.keys()))
             if not self.agent_manager.select_agent(first_agent_name):
                 available_agents = ", ".join(self.agent_manager.agents.keys())
                 click.echo(

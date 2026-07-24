@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
@@ -53,7 +53,7 @@ class GithubCopilotResponseService(OpenAIResponseService):
 
         if openai_api_key.startswith("ghu") or int(
             dict(x.split("=") for x in openai_api_key.split(";"))["exp"]
-        ) < int(datetime.now().timestamp()):
+        ) < int(datetime.now(UTC).timestamp()):
             import requests
 
             headers = {
@@ -166,10 +166,9 @@ class GithubCopilotResponseService(OpenAIResponseService):
                         ]
                     )
                     > 0
+                ) and "vision" in ModelRegistry.get_model_capabilities(
+                    f"{self._provider_name}/{self.model}"
                 ):
-                    if "vision" in ModelRegistry.get_model_capabilities(
-                        f"{self._provider_name}/{self.model}"
-                    ):
-                        self._extra_headers["Copilot-Vision-Request"] = "true"
+                    self._extra_headers["Copilot-Vision-Request"] = "true"
 
         return await super().stream_assistant_response(messages)

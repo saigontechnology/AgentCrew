@@ -37,7 +37,7 @@ async def main():
     print(result)
 
     if isinstance(result, dict):
-        raise Exception(f"Failed to analyze code: {result.get('error', '')}")
+        raise TypeError(f"Failed to analyze code: {result.get('error', '')}")
 
     project_notes = await analyze.extract_project_notes(
         result, path, feature_scope=feature_scope

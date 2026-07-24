@@ -279,7 +279,7 @@ class ServiceManager:
                 self.custom_provider_details.keys()
             )
             raise ValueError(
-                f"Unknown service: {service_name}. Available services: {', '.join(sorted(list(set(known))))}"
+                f"Unknown service: {service_name}. Available services: {', '.join(sorted(set(known)))}"
             )
 
     def initialize_standalone_service_for_model(self, model: Model) -> BaseLLMService:
@@ -352,7 +352,7 @@ class ServiceManager:
                 self.custom_provider_details.keys()
             )
             raise ValueError(
-                f"Unknown service: {service_name}. Available services: {', '.join(sorted(list(set(known))))}"
+                f"Unknown service: {service_name}. Available services: {', '.join(sorted(set(known)))}"
             )
 
     def get_service_for_model(self, model: Model) -> BaseLLMService:

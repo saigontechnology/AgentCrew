@@ -37,6 +37,18 @@ from .task_interaction import TaskInteractionHandler
 from .task_store import TaskStore
 from .task_streaming import TaskStreamingManager
 
+
+def _utc_now_iso() -> str:
+    """Return current UTC time as an ISO-8601 string."""
+    return datetime.now(UTC).isoformat()
+
+
+def _write_file_sync(path: str, data: bytes) -> None:
+    """Synchronous helper: write binary data to a file."""
+    with open(path, "wb") as f:
+        f.write(data)
+
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterable
     from typing import Any
@@ -172,7 +184,7 @@ class AgentTaskManager(TaskManager):
                     await self.store.clear_pending_tools(task_id)
 
                 existing_task.status.state = TaskState.working
-                existing_task.status.timestamp = datetime.now().isoformat()
+                existing_task.status.timestamp = _utc_now_iso()
                 existing_task.status.message = None
                 await self.store.save_task(existing_task)
 
@@ -190,9 +202,7 @@ class AgentTaskManager(TaskManager):
             task = Task(
                 id=task_id,
                 context_id=request.params.message.context_id or f"ctx_{task_id}",
-                status=TaskStatus(
-                    state=TaskState.working, timestamp=datetime.now().isoformat()
-                ),
+                status=TaskStatus(state=TaskState.working, timestamp=_utc_now_iso()),
             )
             await self.store.save_task(task)
 
@@ -212,8 +222,9 @@ class AgentTaskManager(TaskManager):
             for part in message.get("content", []):
                 if part.get("type") == "file":
                     temp_file = os.path.join(tempfile.gettempdir(), part["file_name"])
-                    with open(temp_file, "wb") as f:
-                        f.write(part["file_data"])
+                    await asyncio.to_thread(
+                        _write_file_sync, temp_file, part["file_data"]
+                    )
                     file_part = await self.file_handler.async_process_file(temp_file)
                     if file_part:
                         new_parts.append(file_part)
@@ -296,7 +307,7 @@ class AgentTaskManager(TaskManager):
         self.cancellation.signal_cancel(task_id)
 
         task.status.state = TaskState.canceled
-        task.status.timestamp = datetime.now().isoformat()
+        task.status.timestamp = _utc_now_iso()
         await self.store.save_task(task)
 
         await self.streaming.signal_cancel(task_id, task)
@@ -376,9 +387,10 @@ class AgentTaskManager(TaskManager):
                     )
                 )
 
-                if isinstance(event, TaskStatusUpdateEvent):
-                    if self._is_terminal_state(event.status.state):
-                        break
+                if isinstance(event, TaskStatusUpdateEvent) and self._is_terminal_state(
+                    event.status.state
+                ):
+                    break
         finally:
             self.streaming.remove_subscriber(resubscribe_key)
 
@@ -400,10 +412,13 @@ class AgentTaskManager(TaskManager):
         task_ids = await self.store.list_task_ids()
         for task_id in task_ids:
             task = await self.store.get_task(task_id)
-            if task and self._is_terminal_state(task.status.state):
-                if self._is_expired(task.status.timestamp or "", retention):
-                    await self.store.cleanup_task(task_id)
-                    await self.streaming.cleanup(task_id)
+            if (
+                task
+                and self._is_terminal_state(task.status.state)
+                and self._is_expired(task.status.timestamp or "", retention)
+            ):
+                await self.store.cleanup_task(task_id)
+                await self.streaming.cleanup(task_id)
 
     async def on_send_task_subscribe(
         self, request: SendStreamingMessageRequest

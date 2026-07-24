@@ -230,19 +230,19 @@ class GoogleAINativeService(BaseLLMService):
             type=types.Type(param_type),
             description=param_def.get("description", None),
         )
-        if "const" in param_def.keys():
+        if "const" in param_def:
             schema.default = param_def.get("const", None)
 
-        if "enum" in param_def.keys():
+        if "enum" in param_def:
             schema.enum = param_def.get("enum", [])
 
-        if "anyOf" in param_def.keys():
+        if "anyOf" in param_def:
             schema.any_of = [
                 self._build_schema(item) for item in param_def.get("anyOf", [])
             ]
         if param_type == "OBJECT":
             schema.properties = {}
-            if "properties" in param_def.keys():
+            if "properties" in param_def:
                 for key in param_def.get("properties", {}):
                     prop = param_def.get("properties").get(key, {})
                     schema.properties[key] = self._build_schema(prop)
@@ -304,7 +304,7 @@ class GoogleAINativeService(BaseLLMService):
             ):
                 if param_def.get("$ref", ""):
                     ref_key = param_def["$ref"].removeprefix("#/$defs/")
-                    if ref_key in defs.keys():
+                    if ref_key in defs:
                         function_declaration.parameters.properties[param_name] = (
                             self._build_schema(defs[ref_key])
                         )

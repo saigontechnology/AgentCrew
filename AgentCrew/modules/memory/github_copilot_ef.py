@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import warnings
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -126,7 +126,7 @@ class GithubCopilotEmbeddingFunction(EmbeddingFunction[Documents]):
 
         if openai_api_key.startswith("ghu") or int(
             dict(x.split("=") for x in openai_api_key.split(";"))["exp"]
-        ) < int(datetime.now().timestamp()):
+        ) < int(datetime.now(UTC).timestamp()):
             import requests
 
             headers = {

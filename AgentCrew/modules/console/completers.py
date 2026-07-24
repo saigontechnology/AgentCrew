@@ -1,6 +1,7 @@
 import os
 import re
 
+from loguru import logger
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
 
@@ -222,7 +223,7 @@ class AgentCompleter(Completer):
         text = document.text
 
         # Only provide completions for the /agent command and /export_agent command
-        if text.startswith("/agent ") or text.startswith("/export_agent "):
+        if text.startswith(("/agent ", "/export_agent ")):
             word_before_cursor = document.get_word_before_cursor(
                 pattern=COMPLETER_PATTERN
             )
@@ -577,9 +578,7 @@ class BehaviorIDCompleter(Completer):
                             self.message_handler.agent.name, is_local=scope == "project"
                         )
                     )
-                    behavior_ids = []
-                    for id, _ in all_behaviors.items():
-                        behavior_ids.append(id)
+                    behavior_ids = list(all_behaviors)
 
                     for behavior_id in behavior_ids:
                         if behavior_id.startswith(word_before_cursor):
@@ -589,7 +588,7 @@ class BehaviorIDCompleter(Completer):
                                 display=behavior_id,
                             )
                 except Exception:
-                    pass
+                    logger.debug("Failed to yield completion candidates")
         elif text.startswith(("/delete_behavior ", "/update_behavior ")):
             word_before_cursor = document.get_word_before_cursor(
                 pattern=COMPLETER_PATTERN

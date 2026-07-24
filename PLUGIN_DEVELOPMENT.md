@@ -271,10 +271,7 @@ tool request before hook mutation.
 An after hook receives the context and this result envelope:
 
 ```python
-{
-  "tool_result": object,
-  "is_error": bool
-}
+{"tool_result": object, "is_error": bool}
 ```
 
 After hooks currently run only after successful executor completion. If the
@@ -310,8 +307,8 @@ result envelope supplied via the `result=` parameter:
 
 ```python
 {
-  "tool_uses": list[dict],
-  "token_usage": TokenUsage,
+    "tool_uses": list[dict],
+    "token_usage": TokenUsage,
 }
 ```
 
@@ -384,8 +381,8 @@ envelope supplied via the `result=` parameter:
 
 ```python
 {
-  "messages": list[dict],
-  "system_prompt": str,
+    "messages": list[dict],
+    "system_prompt": str,
 }
 ```
 
@@ -463,13 +460,13 @@ The before hook receives a `MemoryStoreContext` envelope:
 
 ```python
 {
-  "operation_data": {
-    "operation_id": str,
-    "user_message": str,
-    "assistant_messages": list[str],
-    "agent_name": str,
-    "session_id": str,
-  }
+    "operation_data": {
+        "operation_id": str,
+        "user_message": str,
+        "assistant_messages": list[str],
+        "agent_name": str,
+        "session_id": str,
+    }
 }
 ```
 
@@ -484,7 +481,7 @@ The after hook receives the final `operation_data` as context and a
 
 ```python
 {
-  "memory_data": dict,
+    "memory_data": dict,
 }
 ```
 

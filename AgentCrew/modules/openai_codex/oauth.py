@@ -61,7 +61,7 @@ def _normalize_refresh_time(value: Any) -> str | None:
         if not stripped:
             return None
         try:
-            datetime.fromisoformat(stripped.replace("Z", "+00:00"))
+            datetime.fromisoformat(stripped)
             return stripped.replace("+00:00", "Z")
         except ValueError:
             return None
@@ -343,9 +343,8 @@ class OpenAICodexOAuth:
     def get_valid_access_token(self) -> str | None:
         if self.has_valid_tokens:
             return self.access_token
-        if self._tokens and self._tokens.get("refresh"):
-            if self._refresh_token():
-                return self.access_token
+        if self._tokens and self._tokens.get("refresh") and self._refresh_token():
+            return self.access_token
         return None
 
     def _update_tokens_from_response(self, data: dict[str, Any]):

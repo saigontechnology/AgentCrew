@@ -147,10 +147,7 @@ class TextMapFormatter:
                     modfilers = " ".join(node["modifiers"]) + " "
                 node_info = f"{modfilers}{node_name}({params_str}){node_lines}"
         else:
-            if "first_line" in node:
-                node_info = node["first_line"]
-            else:
-                node_info = node_name
+            node_info = node.get("first_line", node_name)
 
         if len(node_info) > 300:
             node_info = node_info[:297] + "... (REDACTED due to long content)"

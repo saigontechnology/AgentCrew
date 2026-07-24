@@ -115,7 +115,7 @@ class TestOpenAICodexOAuth:
         data = json.loads(token_path.read_text(encoding="utf-8"))
         assert data["auth_mode"] == "chatgpt"
         assert isinstance(data["last_refresh"], str)
-        datetime.fromisoformat(data["last_refresh"].replace("Z", "+00:00"))
+        datetime.fromisoformat(data["last_refresh"])
         assert data["tokens"]["access_token"] == "new-access"
         assert data["tokens"]["refresh_token"] == "new-refresh"
         assert data["tokens"]["id_token"] == "new-id-token"
@@ -154,7 +154,7 @@ class TestOpenAICodexOAuth:
         assert data["custom"] == {"enabled": True}
         assert data["auth_mode"] == "chatgpt"
         assert isinstance(data["last_refresh"], str)
-        datetime.fromisoformat(data["last_refresh"].replace("Z", "+00:00"))
+        datetime.fromisoformat(data["last_refresh"])
         assert data["tokens"]["access_token"] == "migrated-access"
         assert data["tokens"]["refresh_token"] == "migrated-refresh"
         assert data["tokens"]["custom_token_metadata"] == "keep-me"

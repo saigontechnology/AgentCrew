@@ -195,10 +195,10 @@ def get_memory_retrieve_tool_handler(
 
         try:
             if from_date:
-                from_date = int(dt.strptime(from_date, "%Y-%m-%d").timestamp())
+                from_date = int(dt.strptime(from_date, "%Y-%m-%d").timestamp())  # noqa: DTZ007 - user-provided date, intentionally naive
             if to_date:
                 to_date = (
-                    int(dt.strptime(to_date, "%Y-%m-%d").timestamp()) + 86_399
+                    int(dt.strptime(to_date, "%Y-%m-%d").timestamp()) + 86_399  # noqa: DTZ007 - user-provided date, intentionally naive
                 )  # to the end of to_date
             if from_date and to_date and from_date >= to_date:
                 raise ValueError(

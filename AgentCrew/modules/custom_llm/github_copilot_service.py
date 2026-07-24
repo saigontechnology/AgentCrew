@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -79,7 +79,7 @@ class GithubCopilotService(CustomLLMService):
 
         if openai_api_key.startswith("ghu") or int(
             dict(x.split("=") for x in openai_api_key.split(";"))["exp"]
-        ) < int(datetime.now().timestamp()):
+        ) < int(datetime.now(UTC).timestamp()):
             import requests
 
             headers = {
@@ -365,9 +365,8 @@ class GithubCopilotService(CustomLLMService):
             if (
                 hasattr(chunk.usage, "prompt_tokens_details")
                 and chunk.usage.prompt_tokens_details
-            ):
-                if hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
-                    cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
+            ) and hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
+                cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
 
         if (not chunk.choices) or (len(chunk.choices) == 0):
             return (
@@ -454,10 +453,9 @@ class GithubCopilotService(CustomLLMService):
                         ]
                     )
                     > 0
+                ) and "vision" in ModelRegistry.get_model_capabilities(
+                    f"{self._provider_name}/{self.model}"
                 ):
-                    if "vision" in ModelRegistry.get_model_capabilities(
-                        f"{self._provider_name}/{self.model}"
-                    ):
-                        self.extra_headers["Copilot-Vision-Request"] = "true"
+                    self.extra_headers["Copilot-Vision-Request"] = "true"
 
         return await super().stream_assistant_response(messages)

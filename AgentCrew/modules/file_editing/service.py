@@ -7,8 +7,10 @@ Main service for file editing operations in AgentCrew.
 import os
 import shutil
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
+
+from loguru import logger
 
 from .safety_validator import SafetyConfig, SafetyValidator
 from .search_replace_engine import SearchReplaceEngine
@@ -139,7 +141,7 @@ class FileEditingService:
                 try:
                     shutil.copy2(backup_path, file_path)
                 except Exception:
-                    pass
+                    logger.debug("Failed to restore backup")
 
             return {
                 "status": "error",
@@ -249,7 +251,7 @@ class FileEditingService:
                 try:
                     os.unlink(temp_path)
                 except Exception:
-                    pass
+                    logger.debug("Failed to clean up temp file")
 
     def _create_backup(self, file_path: str) -> str:
         """
@@ -264,7 +266,7 @@ class FileEditingService:
         backup_dir = self.safety_validator.config.backup_directory
         os.makedirs(backup_dir, exist_ok=True)
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename = os.path.basename(file_path)
         backup_path = os.path.join(backup_dir, f"{filename}.{timestamp}.backup")
 

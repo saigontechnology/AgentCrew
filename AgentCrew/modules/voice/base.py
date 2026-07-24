@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
@@ -272,7 +274,7 @@ class BaseVoiceService(ABC):
         try:
             self.stop_tts_thread()
         except Exception:
-            pass
+            logger.debug("Failed to stop TTS thread")
 
 
 class BaseTextCleaner(ABC):
@@ -362,4 +364,4 @@ class BaseAudioHandler(ABC):
             if self.recording:
                 self.stop_recording()
         except Exception:
-            pass
+            logger.debug("Failed to stop recording")

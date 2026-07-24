@@ -141,7 +141,7 @@ def get_file_write_or_edit_tool_handler(
                     text_or_search_replace_blocks=blocks_string,
                 )
         else:
-            raise ValueError(
+            raise TypeError(
                 "Error: write_blocks must be a string (full file write) "
                 "or an array of search/replace objects (targeted edit)."
             )

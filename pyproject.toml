@@ -1,6 +1,6 @@
 [project]
 name = "agentcrew-ai"
-version = "0.19.1"
+version = "0.20.0"
 requires-python = ">=3.12"
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -110,6 +110,11 @@ explicit = true
 
 [tool.ruff.lint]
 ignore = ["BLE001"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["N999"]
+"tests/yt-dlp_test.py" = ["N999"]
+"tests/*" = ["DTZ005", "DTZ006", "DTZ002", "DTZ007"]
 
 
 [project.urls]

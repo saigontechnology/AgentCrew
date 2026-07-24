@@ -50,7 +50,7 @@ class GuiAgentCompleter:
 
         # Get all available agents from the manager
         completions = []
-        for agent_name, agent in self.agent_manager.agents.items():
+        for agent_name in self.agent_manager.agents:
             if agent_name.startswith(word_after_command):
                 completions.append(agent_name)
 

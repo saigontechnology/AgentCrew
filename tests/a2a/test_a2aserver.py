@@ -30,12 +30,12 @@ class StubForA2A:
 
     name = "stub"
     description = "Stub agent for testing"
-    tool_definitions: dict[str, Any] = {}
     input_tokens_usage = 0
     output_tokens_usage = 0
 
     def __init__(self):
-        self.history = []
+        self.history: list[dict[str, Any]] = []
+        self.tool_definitions: dict[str, Any] = {}
 
     def get_model(self):
         return "test-model"

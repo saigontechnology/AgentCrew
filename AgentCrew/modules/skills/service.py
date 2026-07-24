@@ -127,9 +127,7 @@ class SkillsService:
                 key_end = line.index(":")
                 key = line[:key_end]
                 value = line[key_end + 1 :].strip()
-                if ":" in value and not (
-                    value.startswith('"') or value.startswith("'")
-                ):
+                if ":" in value and not (value.startswith(('"', "'"))):
                     value = f'"{value}"'
                     fixed_lines.append(f"{key}: {value}")
                     continue

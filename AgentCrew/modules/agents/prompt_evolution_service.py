@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 import xmltodict
 from loguru import logger
@@ -111,7 +111,7 @@ Before finalizing, deduplicate and consolidate the full prompt so the output is 
 
 Output ONLY the complete revised system prompt. No commentary, no explanation, no markdown wrapping, no current_system_prompt tags warning."""
 
-    PROJECT_SPECIFIC_PATTERNS = [
+    PROJECT_SPECIFIC_PATTERNS: ClassVar[list[re.Pattern]] = [
         re.compile(r"(tests?/|src/|lib/|modules/|components/)[^\s]+", re.IGNORECASE),
         re.compile(r"\.\w{1,5}\b"),
         re.compile(r"\b(JIRA|TICK|ISSUE|PR|MR)-?\d+\b", re.IGNORECASE),
@@ -132,7 +132,7 @@ Output ONLY the complete revised system prompt. No commentary, no explanation, n
         self, agent: Any, user_answers: dict[str, str] | None = None
     ) -> dict[str, Any]:
         if not isinstance(agent, LocalAgent):
-            raise ValueError("/evolve is only supported for local agents.")
+            raise TypeError("/evolve is only supported for local agents.")
 
         memory_corpus = self._get_memory_corpus(agent)
         if not memory_corpus:

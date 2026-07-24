@@ -258,7 +258,7 @@ class ChromeManager:
                     chrome_args,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    preexec_fn=os.setsid,
+                    start_new_session=True,  # replaced preexec_fn=os.setsid for thread safety
                 )
 
             time.sleep(2)

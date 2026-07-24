@@ -171,11 +171,8 @@ class OpenAIService(BaseLLMService):
                 if (
                     hasattr(chunk.usage, "prompt_tokens_details")
                     and chunk.usage.prompt_tokens_details
-                ):
-                    if hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
-                        cached_tokens = (
-                            chunk.usage.prompt_tokens_details.cached_tokens or 0
-                        )
+                ) and hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
+                    cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
 
         if cached_tokens:
             input_tokens = input_tokens - cached_tokens
@@ -325,9 +322,8 @@ class OpenAIService(BaseLLMService):
             if (
                 hasattr(chunk.usage, "prompt_tokens_details")
                 and chunk.usage.prompt_tokens_details
-            ):
-                if hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
-                    cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
+            ) and hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
+                cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
 
         # Handle tool call chunks
         if len(chunk.choices) > 0 and hasattr(chunk.choices[0].delta, "tool_calls"):
@@ -444,9 +440,8 @@ class OpenAIService(BaseLLMService):
             response.usage
             and hasattr(response.usage, "prompt_tokens_details")
             and response.usage.prompt_tokens_details
-        ):
-            if hasattr(response.usage.prompt_tokens_details, "cached_tokens"):
-                cached_tokens = response.usage.prompt_tokens_details.cached_tokens or 0
+        ) and hasattr(response.usage.prompt_tokens_details, "cached_tokens"):
+            cached_tokens = response.usage.prompt_tokens_details.cached_tokens or 0
         if cached_tokens:
             input_tokens = input_tokens - cached_tokens
         total_cost = self.calculate_cost(input_tokens, output_tokens, cached_tokens)

@@ -48,11 +48,10 @@ class CSharpParser(BaseLanguageParser):
         for child in node.children:
             if child.type == "identifier":
                 result["name"] = self.extract_node_text(child, source_code)
-            elif child.type == "base_list":
-                if len(child.children) > 1:
-                    result["base_class"] = self.extract_node_text(
-                        child.children[1], source_code
-                    )
+            elif child.type == "base_list" and len(child.children) > 1:
+                result["base_class"] = self.extract_node_text(
+                    child.children[1], source_code
+                )
 
     def _handle_method_declaration(
         self, node, source_code: bytes, result: dict[str, Any]

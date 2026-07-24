@@ -11,7 +11,7 @@ import math
 import random
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from rich.box import HORIZONTALS
 from rich.console import Group
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 class UIEffects:
     """Handles UI effects like loading animations and live displays."""
 
-    EVOLUTION_FRAMES = [
+    EVOLUTION_FRAMES: ClassVar[list[list[str]]] = [
         [
             "        ╭──────╮        ",
             "        │ ◠  ◠ │        ",
@@ -91,7 +91,7 @@ class UIEffects:
         ],
     ]
 
-    EVOLUTION_LABELS = [
+    EVOLUTION_LABELS: ClassVar[list[str]] = [
         "Gathering memories...",
         "Analyzing patterns...",
         "Extracting traits...",

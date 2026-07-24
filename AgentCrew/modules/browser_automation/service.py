@@ -168,17 +168,20 @@ class BrowserAutomationService:
             self.clear_console_logs()
             result = self.chrome_interface.Page.navigate(url=urllib.parse.unquote(url))
 
-            if isinstance(result, tuple) and len(result) >= 2:
-                if isinstance(result[0], dict):
-                    error_text = result[0].get("result", {}).get("errorText")
-                    if error_text:
-                        self._reset_browser_state()
-                        return {
-                            "success": False,
-                            "error": f"Navigation failed: {error_text}.Please try again",
-                            "url": url,
-                            "profile": profile,
-                        }
+            if (
+                isinstance(result, tuple)
+                and len(result) >= 2
+                and isinstance(result[0], dict)
+            ):
+                error_text = result[0].get("result", {}).get("errorText")
+                if error_text:
+                    self._reset_browser_state()
+                    return {
+                        "success": False,
+                        "error": f"Navigation failed: {error_text}.Please try again",
+                        "url": url,
+                        "profile": profile,
+                    }
 
             current_url = JavaScriptExecutor.get_current_url(self.chrome_interface)
             self._clear_uuid_mappings()
@@ -637,7 +640,9 @@ class BrowserAutomationService:
                 "typing_method": "keyboard_simulation",
             }
 
-    def dispatch_key_event(self, key: str, modifiers: list[str] = []) -> dict[str, Any]:
+    def dispatch_key_event(
+        self, key: str, modifiers: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Dispatch key events using CDP input.dispatchKeyEvent.
 
@@ -648,6 +653,8 @@ class BrowserAutomationService:
         Returns:
             dict containing dispatch result
         """
+        if modifiers is None:
+            modifiers = []
         try:
             self._ensure_chrome_running()
 
@@ -826,5 +833,5 @@ class BrowserAutomationService:
         """Cleanup when service is destroyed."""
         try:
             self.cleanup()
-        except Exception:
+        except Exception:  # noqa: S110
             pass

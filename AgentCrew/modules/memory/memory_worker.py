@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import Event, Thread
 from typing import TYPE_CHECKING
 
@@ -200,7 +200,7 @@ class MemoryWorker:
                         analyzed_prompt = (
                             analyzed_prompt.replace(
                                 "{current_date}",
-                                datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
+                                datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                             )
                             .replace("{user_message}", user_message)
                             .replace(
@@ -235,7 +235,7 @@ class MemoryWorker:
             if memory_data is None:
                 memory_data = {
                     "MEMORY": {
-                        "DATE": datetime.today().strftime("%Y-%m-%d"),
+                        "DATE": datetime.now(UTC).strftime("%Y-%m-%d"),
                         "CONVERSATION_NOTES": {
                             "NOTE": [user_message, assistant_response_for_memory]
                         },
@@ -261,7 +261,7 @@ class MemoryWorker:
                 memory_data = _modified["memory_data"]
             # ─────────────────────────────────────────────────────────────
 
-            timestamp = datetime.now().timestamp()
+            timestamp = datetime.now(UTC).timestamp()
 
             memory_header = memory_data["MEMORY"].get("HEAD", None)
             conversation_document = xmltodict.unparse(
@@ -354,7 +354,7 @@ class MemoryWorker:
                 if query_parts:
                     search_query = " ".join(query_parts)
             except Exception:
-                pass
+                logger.debug("Failed to build search query from entities")
 
             results = collection.query(
                 query_texts=[search_query],
@@ -422,7 +422,7 @@ class MemoryWorker:
 
         prompt = (
             CONSOLIDATION_PROMPT.replace(
-                "{current_date}", datetime.today().strftime("%Y-%m-%d")
+                "{current_date}", datetime.now(UTC).strftime("%Y-%m-%d")
             )
             .replace("{current_memory}", current_document)
             .replace("{existing_memories}", candidates_xml)

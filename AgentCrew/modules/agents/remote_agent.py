@@ -223,7 +223,7 @@ class RemoteAgent(BaseAgent):
         # On reconnect: extract unconsumed text from snapshot artifacts
         if is_reconnect or was_new:
             new_artifacts = self._state.on_task_snapshot(t)
-            for aid, text in new_artifacts.items():
+            for text in new_artifacts.values():
                 if text:
                     full_response_text.append(text)
                     return ("".join(full_response_text), text, None)

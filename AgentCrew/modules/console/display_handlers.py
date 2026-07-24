@@ -142,7 +142,7 @@ class DisplayHandlers:
         title_length = len(title) + 1 if title else 0
         time = ""
         if with_time:
-            time = f" {datetime.now().strftime('%H:%M:%S')} ──"
+            time = f" {datetime.now().strftime('%H:%M:%S')} ──"  # noqa: DTZ005 - intentional local wall-clock display
         self.console.print(
             " ─"
             + title
@@ -495,12 +495,11 @@ class DisplayHandlers:
         content = msg.get("content", "")
         if isinstance(content, list):
             for item in content:
-                if isinstance(item, dict):
-                    if item.get("type") == "image_url":
-                        url = item.get("image_url", {}).get("url", "")
-                        if url.startswith("data:"):
-                            self.display_image_from_data_uri(url)
-                            count += 1
+                if isinstance(item, dict) and item.get("type") == "image_url":
+                    url = item.get("image_url", {}).get("url", "")
+                    if url.startswith("data:"):
+                        self.display_image_from_data_uri(url)
+                        count += 1
         return count
 
     def display_loaded_conversation(self, messages: list, default_agent_name: str):
@@ -783,10 +782,9 @@ class DisplayHandlers:
             # For content in the format of a list of content parts
             result = []
             for item in content:
-                if isinstance(item, dict):
-                    if item.get("type") == "text":
-                        result.append(item.get("text", ""))
-                    # Handle other content types if needed
+                if isinstance(item, dict) and item.get("type") == "text":
+                    result.append(item.get("text", ""))
+                # Handle other content types if needed
             return "\n".join(result)
 
         return str(content)

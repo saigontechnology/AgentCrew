@@ -261,7 +261,7 @@ class ToolWidget(QWidget):
 
                     # Format the value nicely
                     value_str = str(value)
-                    if isinstance(value, dict) or isinstance(value, list):
+                    if isinstance(value, (dict, list)):
                         value_str = json.dumps(value, indent=2)
 
                     value_label = QLabel(value_str)

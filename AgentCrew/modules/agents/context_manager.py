@@ -392,8 +392,10 @@ You must analyze and plan out the steps then execute it with your available tool
                     and content.startswith("[UNIQUE]")
                 ):
                     unique_tool_indices.append(i)
-                elif content and isinstance(content, list):
-                    if (
+                elif (
+                    content
+                    and isinstance(content, list)
+                    and (
                         len(
                             [
                                 d.get("text", "")
@@ -403,9 +405,10 @@ You must analyze and plan out the steps then execute it with your available tool
                             ]
                         )
                         > 0
-                    ):
-                        unique_tool_indices.append(i)
-                        continue
+                    )
+                ):
+                    unique_tool_indices.append(i)
+                    continue
 
         if len(unique_tool_indices) > 1:
             for i in unique_tool_indices[:-1]:

@@ -484,7 +484,7 @@ class OnboardingService:
                         if OnboardingService._looks_like_agent_definition(parsed):
                             return result_text
                     except Exception:
-                        pass
+                        logger.debug("Failed to parse extracted text as TOML")
 
                 self._print_assistant_message(result_text)
 
@@ -604,9 +604,7 @@ class OnboardingService:
             return bool(agents[0].get("name") and agents[0].get("system_prompt"))
         if isinstance(agents, list) and len(agents) == 0:
             return False
-        if parsed.get("name") and parsed.get("system_prompt"):
-            return True
-        return False
+        return bool(parsed.get("name") and parsed.get("system_prompt"))
 
     def _save_agent(self, toml_text: str) -> bool:
         """Parse and save the generated agent definition."""
@@ -672,7 +670,7 @@ class OnboardingService:
                 with open(config_path, "rb") as f:
                     existing = tomllib.load(f)
             except Exception:
-                pass
+                logger.debug("Failed to load existing config")
 
         existing_agents = existing.get("agents", [])
         if not isinstance(existing_agents, list):

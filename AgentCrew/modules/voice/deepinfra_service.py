@@ -1,3 +1,4 @@
+import asyncio
 import os
 import queue
 import tempfile
@@ -11,6 +12,13 @@ import sounddevice as sd
 import soundfile as sf
 from loguru import logger
 from openai import OpenAI
+
+
+def _read_file_sync(path: str) -> bytes:
+    """Synchronous helper: read file as bytes."""
+    with open(path, "rb") as f:
+        return f.read()
+
 
 from .audio_handler import AudioHandler
 from .base import BaseVoiceService
@@ -97,15 +105,19 @@ class DeepInfraVoiceService(BaseVoiceService):
                 sf.write(tmp_file.name, audio_data, sample_rate)
                 tmp_file_path = tmp_file.name
 
-            with open(tmp_file_path, "rb") as audio_file:
-                transcript = self.stt_client.audio.transcriptions.create(
-                    model=self.stt_model,
-                    file=audio_file,
-                    language="en",
-                    response_format="verbose_json",
-                    temperature=0.2,
-                    timestamp_granularities=["segment"],
-                )
+            audio_data = await asyncio.to_thread(_read_file_sync, tmp_file_path)
+            from io import BytesIO
+
+            audio_file = BytesIO(audio_data)
+            audio_file.name = tmp_file_path
+            transcript = self.stt_client.audio.transcriptions.create(
+                model=self.stt_model,
+                file=audio_file,
+                language="en",
+                response_format="verbose_json",
+                temperature=0.2,
+                timestamp_granularities=["segment"],
+            )
 
             text = transcript.text if hasattr(transcript, "text") else ""
             language = transcript.language if hasattr(transcript, "language") else "en"
@@ -345,4 +357,4 @@ class DeepInfraVoiceService(BaseVoiceService):
         try:
             self.stop_tts_thread()
         except Exception:
-            pass
+            logger.debug("Failed to stop DeepInfra TTS thread")

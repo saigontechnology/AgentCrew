@@ -71,7 +71,7 @@ class MCPSessionManager:
 
         await self.deregister_tools_for_agent(agent_name)
 
-        for server_id, config in enabled_servers.items():
+        for config in enabled_servers.values():
             target_agents = self.mcp_service._target_agent_names(agent_name, config)
             for target_agent_name in target_agents:
                 try:
@@ -137,7 +137,7 @@ class MCPSessionManager:
 
         enabled_servers = self.config_manager.get_enabled_servers(agent_name)
 
-        for _, config in enabled_servers.items():
+        for config in enabled_servers.values():
             target_agents = self.mcp_service._target_agent_names(agent_name, config)
             for target_agent_name in target_agents:
                 try:

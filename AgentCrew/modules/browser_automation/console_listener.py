@@ -29,7 +29,7 @@ def _find_page_tab_index(host: str, port: int) -> int:
         for i, tab in enumerate(tabs):
             if tab.get("type") == "page":
                 return i
-    except Exception:
+    except requests.RequestException:
         pass
     return 0
 
@@ -193,7 +193,7 @@ class ConsoleListener:
             try:
                 self._interface.close()
             except Exception:
-                pass
+                logger.debug("Failed to close CDP interface")
         self._interface = None
 
     def _dispatch(self, message: dict):

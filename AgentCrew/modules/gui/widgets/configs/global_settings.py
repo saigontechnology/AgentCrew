@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -42,7 +44,7 @@ class SettingsTab(QWidget):
 
     config_changed = Signal()
 
-    API_KEY_DEFINITIONS = [
+    API_KEY_DEFINITIONS: ClassVar[list[dict[str, str]]] = [
         {
             "label": "Anthropic API Key:",
             "key_name": "ANTHROPIC_API_KEY",

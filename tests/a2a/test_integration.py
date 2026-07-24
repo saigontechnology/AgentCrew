@@ -53,12 +53,12 @@ class DummyLocalAgent:
 
     name = "test_agent"
     description = "Test agent for integration tests"
-    tool_definitions: dict[str, Any] = {}
     input_tokens_usage = 0
     output_tokens_usage = 0
 
     def __init__(self):
         self.history: list[dict[str, Any]] = []
+        self.tool_definitions: dict[str, Any] = {}
 
     def format_message(self, msg_type, data):
         if hasattr(msg_type, "value"):
@@ -459,14 +459,15 @@ class TestRemoteAgentClient:
             async for chunk in client.send_message(req):
                 if chunk.HasField("task"):
                     response_task_id = chunk.task.id
-                elif chunk.HasField("artifact_update"):
-                    pass
-                elif chunk.HasField("status_update"):
-                    if (
+                elif (
+                    chunk.HasField("artifact_update")
+                    or chunk.HasField("status_update")
+                    and (
                         chunk.status_update.status.state
                         == TaskState.TASK_STATE_COMPLETED
-                    ):
-                        pass
+                    )
+                ):
+                    pass
 
             # Get the task
             if response_task_id:

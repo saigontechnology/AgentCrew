@@ -340,11 +340,13 @@ class ChatComponents:
         container_index = -1
         for i in range(self.chat_window.chat_layout.count()):
             item = self.chat_window.chat_layout.itemAt(i)
-            if item and item.widget():
-                # Check if this widget contains our message bubble
-                if message_bubble in item.widget().findChildren(MessageBubble):
-                    container_index = i
-                    break
+            if (
+                item
+                and item.widget()
+                and message_bubble in item.widget().findChildren(MessageBubble)
+            ):
+                container_index = i
+                break
 
         if container_index == -1:
             return  # Message bubble not found

@@ -40,14 +40,13 @@ class MessageEventHandler:
         if planning_content:
             self._update_planning_widget(planning_content)
 
-        if visible_content.strip():
-            if (
-                self.chat_window.stream_state.expecting_response
-                and self.chat_window.bubble_state.current_response_bubble is None
-            ):
-                self.chat_window.bubble_state.current_response_bubble = (
-                    self.chat_window.chat_components.append_message("", False)
-                )
+        if visible_content.strip() and (
+            self.chat_window.stream_state.expecting_response
+            and self.chat_window.bubble_state.current_response_bubble is None
+        ):
+            self.chat_window.bubble_state.current_response_bubble = (
+                self.chat_window.chat_components.append_message("", False)
+            )
 
         if self.chat_window.bubble_state.current_response_bubble:
             self.chat_window.bubble_state.current_response_bubble.update_streaming_text(

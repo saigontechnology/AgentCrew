@@ -1,6 +1,6 @@
 import os
 import tempfile
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import AnyStr, TextIO
 
 
@@ -11,9 +11,9 @@ class FileLogIO(TextIO):
         log_dir_path = os.getenv("AGENTCREW_LOG_PATH", tempfile.gettempdir())
         os.makedirs(log_dir_path, exist_ok=True)
         self.log_path = (
-            log_dir_path + f"/{file_format}_{datetime.now().timestamp()}.log"
+            log_dir_path + f"/{file_format}_{datetime.now(UTC).timestamp()}.log"
         )
-        self.file = open(self.log_path, "w+")
+        self.file = open(self.log_path, "w+")  # noqa: SIM115
 
     def write(self, data: AnyStr) -> int:
         """Write data to the log file."""

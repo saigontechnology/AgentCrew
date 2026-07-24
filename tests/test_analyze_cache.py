@@ -1256,7 +1256,7 @@ class TestCodeAnalysisServiceCached:
     @pytest.mark.asyncio
     async def test_miss_different_feature_scope(self, svc_and_mocks) -> None:
         """Different feature_scope produces independent cache entries."""
-        svc, internal_mock, notes_mock, git_root = svc_and_mocks
+        svc, internal_mock, _notes_mock, git_root = svc_and_mocks
 
         await svc.analyze_code_structure_cached(
             git_root, feature_scope="a", deep_analysis=True
@@ -1286,7 +1286,7 @@ class TestCodeAnalysisServiceCached:
     @pytest.mark.asyncio
     async def test_cache_hit_preserves_notes_semantics(self, svc_and_mocks) -> None:
         """Deep-analysis cache hit preserves project_notes in output."""
-        svc, internal_mock, notes_mock, git_root = svc_and_mocks
+        svc, _internal_mock, _notes_mock, git_root = svc_and_mocks
 
         r1 = await svc.analyze_code_structure_cached(git_root, deep_analysis=True)
         assert r1["project_notes"] == "project notes"
@@ -1299,7 +1299,7 @@ class TestCodeAnalysisServiceCached:
         self, svc_and_mocks, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Cache failure degrades to normal analysis."""
-        svc, internal_mock, notes_mock, git_root = svc_and_mocks
+        svc, _internal_mock, _notes_mock, git_root = svc_and_mocks
 
         def failing_get(*args, **kwargs):
             raise RuntimeError("cache failure")
@@ -1315,7 +1315,7 @@ class TestCodeAnalysisServiceCached:
         self, svc_and_mocks, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Entries created within one second preserve precise ordering."""
-        svc, internal_mock, notes_mock, git_root = svc_and_mocks
+        svc, _internal_mock, _notes_mock, git_root = svc_and_mocks
 
         await svc.analyze_code_structure_cached(
             git_root, feature_scope="first", deep_analysis=True
@@ -1383,7 +1383,7 @@ class TestCodeAnalysisServiceCached:
         self, svc_and_mocks, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A modified file that now fails parsing must not retain its old structure."""
-        svc, internal_mock, notes_mock, git_root = svc_and_mocks
+        svc, internal_mock, _notes_mock, git_root = svc_and_mocks
 
         # Initial full analysis succeeds
         await svc.analyze_code_structure_cached(git_root, deep_analysis=True)
@@ -1413,7 +1413,7 @@ class TestCodeAnalysisServiceCached:
         self, svc_and_mocks, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A previously failing file that now parses successfully must not retain its old error."""
-        svc, internal_mock, notes_mock, git_root = svc_and_mocks
+        svc, internal_mock, _notes_mock, git_root = svc_and_mocks
 
         # Initial full analysis with error
         internal_mock.return_value = {
@@ -1468,7 +1468,7 @@ class TestCodeAnalysisServiceCached:
     ) -> None:
         """Simulate Windows-style os.path.relpath returning backslashes;
         _run_analysis_internal must emit forward-slash paths."""
-        svc, internal_mock, notes_mock, git_root = svc_and_mocks
+        svc, internal_mock, _notes_mock, git_root = svc_and_mocks
 
         # Bypass the mock to call the real _run_analysis_internal
         original_run = svc.__class__._run_analysis_internal
@@ -1504,7 +1504,7 @@ class TestCodeAnalysisServiceCached:
     ) -> None:
         """When the platform produces backslash paths in cache entries,
         incremental merge must still match and replace them."""
-        svc, internal_mock, notes_mock, git_root = svc_and_mocks
+        svc, internal_mock, _notes_mock, git_root = svc_and_mocks
 
         # Seed cache with backslash paths (simulating a Windows-cached entry)
         internal_mock.return_value = {
@@ -1754,7 +1754,7 @@ class TestCodeAnalysisServiceCached:
         self, svc_skipped_fixture
     ) -> None:
         """Deleting a hash-only path removes it without analysis."""
-        svc, internal_mock, notes_mock, git_root, src_dir, tracked_files = (
+        svc, internal_mock, _notes_mock, git_root, src_dir, tracked_files = (
             svc_skipped_fixture
         )
 

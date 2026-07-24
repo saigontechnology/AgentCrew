@@ -1,3 +1,4 @@
+import asyncio
 import os
 import queue
 import tempfile
@@ -10,6 +11,13 @@ from typing import Any
 import soundfile as sf
 from elevenlabs import ElevenLabs, SpeechToTextChunkResponseModel, VoiceSettings, stream
 from loguru import logger
+
+
+def _read_file_sync(path: str) -> bytes:
+    """Synchronous helper: read file as bytes."""
+    with open(path, "rb") as f:
+        return f.read()
+
 
 from .audio_handler import AudioHandler
 from .base import BaseVoiceService
@@ -121,8 +129,8 @@ class ElevenLabsVoiceService(BaseVoiceService):
                 tmp_file_path = tmp_file.name
 
             # Convert to BytesIO for API
-            with open(tmp_file_path, "rb") as f:
-                audio_bytes = BytesIO(f.read())
+            audio_data = await asyncio.to_thread(_read_file_sync, tmp_file_path)
+            audio_bytes = BytesIO(audio_data)
 
             # Perform speech-to-text
             transcription = self.client.speech_to_text.convert(
@@ -133,7 +141,7 @@ class ElevenLabsVoiceService(BaseVoiceService):
             )
 
             if not isinstance(transcription, SpeechToTextChunkResponseModel):
-                raise ValueError("Cannot transribe")
+                raise TypeError("Cannot transcribe")
 
             # Clean up temp file
             os.unlink(tmp_file_path)
@@ -365,4 +373,4 @@ class ElevenLabsVoiceService(BaseVoiceService):
         try:
             self.stop_tts_thread()
         except Exception:
-            pass
+            logger.debug("Failed to stop ElevenLabs TTS thread")

@@ -84,8 +84,8 @@ class UIStateManager:
             # Ensure the button is connected to send message
             try:
                 self.chat_window.send_button.clicked.disconnect()
-            except Exception:
-                pass  # In case it wasn't connected
+            except (TypeError, RuntimeError):
+                pass  # Button was not connected
             self.chat_window.send_button.clicked.connect(self.chat_window.send_message)
         else:
             # Change button to stop functionality

@@ -320,4 +320,4 @@ class AudioHandler(BaseAudioHandler):
                 self.stop_recording()
             self._stop_completion_worker()
         except Exception:
-            pass
+            logger.debug("Voice cleanup failed")

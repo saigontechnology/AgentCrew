@@ -152,12 +152,11 @@ def filter_hidden_elements(html_content: str) -> str:
                     self.filtered_html.append(f"<{tag}>")
 
         def handle_endtag(self, tag):
-            if self.skip_depth > 0:
-                if tag in self.tag_stack:
-                    self.skip_depth -= 1
-                    if self.skip_depth == 0:
-                        self.tag_stack.remove(tag)
-                    return
+            if self.skip_depth > 0 and tag in self.tag_stack:
+                self.skip_depth -= 1
+                if self.skip_depth == 0:
+                    self.tag_stack.remove(tag)
+                return
 
             if self.skip_depth == 0:
                 self.filtered_html.append(f"</{tag}>")

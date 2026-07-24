@@ -392,8 +392,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 raise
             from openai import APIError
 
-            if isinstance(e, APIError):
-                if (
+            if (
+                isinstance(e, APIError)
+                and (
                     hasattr(e, "code")
                     and e.code
                     in (
@@ -401,26 +402,28 @@ class AgentCrewA2AExecutor(AgentExecutor):
                         "context_length_exceeded",
                     )
                     or "context window" in str(e)
-                ) and retried_count[0] < 5:
-                    from AgentCrew.modules.agents import LocalAgent as _LocalAgent
-                    from AgentCrew.modules.llm.model_registry import ModelRegistry
+                )
+                and retried_count[0] < 5
+            ):
+                from AgentCrew.modules.agents import LocalAgent as _LocalAgent
+                from AgentCrew.modules.llm.model_registry import ModelRegistry
 
-                    if isinstance(agent, _LocalAgent):
-                        max_token = ModelRegistry.get_model_limit(agent.get_model())
-                        agent.input_tokens_usage = max_token
-                        retried_count[0] += 1
-                        return await self._process_task(
-                            context,
-                            event_queue,
-                            task_id,
-                            context_id,
-                            agent,
-                            history,
-                            artifacts,
-                            token_usage,
-                            retried_count,
-                            answer_state,
-                        )
+                if isinstance(agent, _LocalAgent):
+                    max_token = ModelRegistry.get_model_limit(agent.get_model())
+                    agent.input_tokens_usage = max_token
+                    retried_count[0] += 1
+                    return await self._process_task(
+                        context,
+                        event_queue,
+                        task_id,
+                        context_id,
+                        agent,
+                        history,
+                        artifacts,
+                        token_usage,
+                        retried_count,
+                        answer_state,
+                    )
             raise
 
     async def _execute_tool_calls(

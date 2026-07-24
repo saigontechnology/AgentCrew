@@ -105,7 +105,7 @@ class ToolDisplayHandlers:
             tool_texts_group.append(Text("Parameters:", style=RICH_STYLE_YELLOW))
             for key, value in tool_parameters.items():
                 # Format value based on type
-                if isinstance(value, dict) or isinstance(value, list):
+                if isinstance(value, (dict, list)):
                     formatted_value = json.dumps(value, indent=2)
                     # Add indentation to all lines after the first
                     formatted_lines = formatted_value.split("\n")

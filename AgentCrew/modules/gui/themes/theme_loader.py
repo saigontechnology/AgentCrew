@@ -1,11 +1,11 @@
 import os
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
 
 
 class ThemeLoader:
-    _cache: dict[str, "ThemeData"] = {}
+    _cache: ClassVar[dict[str, "ThemeData"]] = {}
     _themes_dir: str | None = None
 
     @classmethod

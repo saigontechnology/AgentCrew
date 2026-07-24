@@ -132,7 +132,7 @@ class TaskStreamingManager:
                 try:
                     self.streaming_tasks[key].put_nowait(None)
                 except Exception:
-                    pass
+                    logger.debug("Failed to send drain signal to streaming queue")
 
     def remove(self, task_id: str) -> None:
         self.streaming_tasks.pop(task_id, None)

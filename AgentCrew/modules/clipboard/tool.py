@@ -108,13 +108,13 @@ def get_clipboard_write_tool_handler(clipboard_service: ClipboardService) -> Cal
     async def handle_clipboard_write(**params) -> str | list[dict[str, Any]]:
         content = params.get("content")
         if not content:
-            raise Exception("Invalid Argument")
+            raise ValueError("Invalid Argument")
 
         result = clipboard_service.write(content)
         if result["success"]:
             return result["message"]
         else:
-            raise Exception("Cannot write to clipboard")
+            raise RuntimeError("Cannot write to clipboard")
 
     return handle_clipboard_write
 

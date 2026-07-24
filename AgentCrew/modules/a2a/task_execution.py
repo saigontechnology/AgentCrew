@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -39,6 +39,11 @@ if TYPE_CHECKING:
     from .task_interaction import TaskInteractionHandler
     from .task_store import TaskStore
     from .task_streaming import TaskStreamingManager
+
+
+def _utc_now_iso() -> str:
+    """Return current UTC time as an ISO-8601 string."""
+    return datetime.now(UTC).isoformat()
 
 
 class TaskExecutionEngine:
@@ -108,7 +113,7 @@ class TaskExecutionEngine:
             task_history = await self.store.get_task_history(task.context_id)
             logger.debug(task_history)
             task.status.state = TaskState.failed
-            task.status.timestamp = datetime.now().isoformat()
+            task.status.timestamp = _utc_now_iso()
             await self.store.save_task(task)
             if self.streaming.is_streaming_enabled(task.id):
                 await self.streaming.flush_task_events(task.id)
@@ -162,7 +167,7 @@ class TaskExecutionEngine:
                     current_response = response_message
 
                 task.status.state = TaskState.working
-                task.status.timestamp = datetime.now().isoformat()
+                task.status.timestamp = _utc_now_iso()
 
                 if thinking_chunk:
                     think_text_chunk, signature = thinking_chunk
@@ -298,7 +303,7 @@ class TaskExecutionEngine:
             if think_text_chunk:
                 thinking_artifact = convert_agent_response_to_a2a_artifact(
                     think_text_chunk,
-                    artifact_id=f"thinking_{task.id}_{datetime.now()}",
+                    artifact_id=f"thinking_{task.id}_{_utc_now_iso()}",
                 )
                 await self.streaming.record_and_emit_event(
                     task.id,
@@ -445,7 +450,7 @@ class TaskExecutionEngine:
             questions = []
 
         task.status.state = TaskState.input_required
-        task.status.timestamp = datetime.now().isoformat()
+        task.status.timestamp = _utc_now_iso()
         task.status.message = self.interaction.create_ask_message(questions)
 
         await self.store.save_task(task)
@@ -501,7 +506,7 @@ class TaskExecutionEngine:
         artifacts.append(final_artifact)
 
         task.status.state = TaskState.completed
-        task.status.timestamp = datetime.now().isoformat()
+        task.status.timestamp = _utc_now_iso()
         task.artifacts = artifacts
         await self.store.save_task(task)
 

@@ -139,7 +139,7 @@ def get_ask_tool_handler() -> Callable:
 
         for i, q in enumerate(questions):
             if not isinstance(q, dict):
-                raise ValueError(f"Error: Question at index {i} must be an object")
+                raise TypeError(f"Error: Question at index {i} must be an object")
             question_text = q.get("question", "").strip()
             guided_answers = q.get("guided_answers", [])
 

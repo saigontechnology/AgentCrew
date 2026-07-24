@@ -48,7 +48,7 @@ class ClipboardServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_content_parameter(self):
         """Test write handler with missing content parameter."""
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValueError):
             await self.write_handler()
 
 

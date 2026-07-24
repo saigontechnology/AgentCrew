@@ -1,8 +1,8 @@
 import json
 import os
 import threading
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Self
 
 from loguru import logger
 
@@ -24,7 +24,7 @@ class GlobalConfig:
     _cached_mtime: float | None = None
     _cache_lock: threading.Lock = threading.Lock()
 
-    def __new__(cls) -> "GlobalConfig":
+    def __new__(cls) -> Self:
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -162,7 +162,7 @@ class GlobalConfig:
                 global_config["last_used"] = {}
             global_config["last_used"]["model"] = model_id
             global_config["last_used"]["provider"] = provider
-            global_config["last_used"]["timestamp"] = datetime.now().isoformat()
+            global_config["last_used"]["timestamp"] = datetime.now(UTC).isoformat()
             self.write(global_config)
         except Exception as e:
             logger.warning(f"Warning: Failed to save last used model to config: {e}")
@@ -174,7 +174,7 @@ class GlobalConfig:
             if "last_used" not in global_config:
                 global_config["last_used"] = {}
             global_config["last_used"]["agent"] = agent_name
-            global_config["last_used"]["timestamp"] = datetime.now().isoformat()
+            global_config["last_used"]["timestamp"] = datetime.now(UTC).isoformat()
             self.write(global_config)
         except Exception as e:
             logger.warning(f"Warning: Failed to save last used agent to config: {e}")

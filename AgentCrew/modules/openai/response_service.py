@@ -255,9 +255,11 @@ class OpenAIResponseService(BaseLLMService):
                 stream_params["top_p"] = forced_sample_params.top_p
 
         # Add reasoning configuration for thinking models
-        if "thinking" in ModelRegistry.get_model_capabilities(full_model_id):
-            if self.reasoning_effort:
-                stream_params["reasoning"] = {"effort": self.reasoning_effort}
+        if (
+            "thinking" in ModelRegistry.get_model_capabilities(full_model_id)
+            and self.reasoning_effort
+        ):
+            stream_params["reasoning"] = {"effort": self.reasoning_effort}
 
         if self._extra_headers:
             stream_params["extra_headers"] = self._extra_headers
@@ -608,7 +610,9 @@ class OpenAIResponseService(BaseLLMService):
                 "model": getattr(response, "model", self.model),
             }
         except Exception as e:
-            raise Exception(f"Failed to retrieve response {response_id}: {e!s}")
+            raise RuntimeError(
+                f"Failed to retrieve response {response_id}: {e!s}"
+            ) from e
 
     async def cancel_response(self, response_id: str) -> bool:
         """Cancel a background response by ID."""

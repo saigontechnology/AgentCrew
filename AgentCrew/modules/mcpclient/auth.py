@@ -364,7 +364,7 @@ class OAuthCallbackServer:
 
         if not self.has_result():
             logger.error("OAuth callback timeout - no response received")
-            raise Exception(
+            raise TimeoutError(
                 f"OAuth authorization timeout. Please complete authorization within {timeout / 60:.1f} minutes."
             )
 
@@ -372,13 +372,13 @@ class OAuthCallbackServer:
 
         if result.get("error"):
             error = result.get("error")
-            raise Exception(f"OAuth authorization failed: {error}")
+            raise RuntimeError(f"OAuth authorization failed: {error}")
 
         code = result.get("code")
         state = result.get("state")
 
         if not code:
-            raise Exception("No authorization code received from OAuth callback")
+            raise RuntimeError("No authorization code received from OAuth callback")
 
         logger.info("OAuth callback successful, authorization code received")
         return code, state

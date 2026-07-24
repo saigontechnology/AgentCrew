@@ -104,12 +104,12 @@ class A2AServer:
                     try:
                         await s.close()
                     except Exception:
-                        pass
+                        logger.warning("Failed to close session store during shutdown")
                 for ts in self._task_stores:
                     try:
                         await ts.close()
                     except Exception:
-                        pass
+                        logger.warning("Failed to close task store during shutdown")
                 logger.info("A2A v1 server stopped.")
 
         return Starlette(routes=routes, lifespan=lifespan)

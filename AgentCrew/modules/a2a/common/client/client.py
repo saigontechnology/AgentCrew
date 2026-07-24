@@ -8,11 +8,17 @@ from uuid import uuid4
 import httpx
 from a2a.types import (
     A2ARequest,
+    CancelTaskRequest,
     CancelTaskResponse,
+    GetTaskPushNotificationConfigRequest,
     GetTaskPushNotificationConfigResponse,
+    GetTaskRequest,
     GetTaskResponse,
+    SendMessageRequest,
     SendMessageResponse,
+    SendStreamingMessageRequest,
     SendStreamingMessageResponse,
+    SetTaskPushNotificationConfigRequest,
     SetTaskPushNotificationConfigResponse,
     TaskIdParams,
     TaskPushNotificationConfig,
@@ -25,13 +31,7 @@ if TYPE_CHECKING:
 
     from a2a.types import (
         AgentCard,
-        CancelTaskRequest,
-        GetTaskPushNotificationConfigRequest,
-        GetTaskRequest,
         MessageSendParams,
-        SendMessageRequest,
-        SendStreamingMessageRequest,
-        SetTaskPushNotificationConfigRequest,
         TaskQueryParams,
     )
     from httpx._types import TimeoutTypes

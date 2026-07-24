@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
 
 class EvolutionLoadingDialog(QDialog):
-    FRAMES = [
+    FRAMES: ClassVar[list[list[str]]] = [
         [
             "        ╭──────╮        ",
             "        │ ◠  ◠ │        ",
@@ -62,7 +64,7 @@ class EvolutionLoadingDialog(QDialog):
         ],
     ]
 
-    LABELS = [
+    LABELS: ClassVar[list[str]] = [
         "Gathering memories...",
         "Analyzing patterns...",
         "Extracting traits...",

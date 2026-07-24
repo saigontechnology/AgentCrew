@@ -205,7 +205,7 @@ class ResultFormatter:
         analysis_results: list[dict[str, Any]],
         analyzed_files: list[str],
         errors: list[dict[str, str]],
-        non_analyzed_files: list[str] = [],
+        non_analyzed_files: list[str] | None = None,
         total_supported_files: int = 0,
     ) -> str:
         """Format the analysis results into a clear text format.
@@ -218,6 +218,8 @@ class ResultFormatter:
             total_supported_files: Total number of supported files in the repository
         """
 
+        if non_analyzed_files is None:
+            non_analyzed_files = []
         total_files = len(analyzed_files)
         classes = sum(
             _count_nodes_in_structure(f["structure"], self._class_types)

@@ -160,7 +160,7 @@ class ConversationBrowserUI:
     def _format_timestamp(self, timestamp) -> str:
         """Format timestamp for display."""
         if isinstance(timestamp, (int, float)):
-            return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+            return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")  # noqa: DTZ006 - display formatting for user-facing timestamps
         if isinstance(timestamp, str):
             try:
                 dt = datetime.fromisoformat(timestamp)

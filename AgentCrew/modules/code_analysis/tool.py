@@ -89,7 +89,7 @@ def get_code_analysis_tool_handler(
 
         error = result.get("error")
         if error:
-            raise Exception(f"Failed to analyze code: {error}")
+            raise RuntimeError(f"Failed to analyze code: {error}")
 
         output = [
             {
@@ -170,7 +170,7 @@ def get_file_content_tool_handler(
         end_line = params.get("end_line")
 
         if not file_path:
-            raise Exception("file_path is not provided.")
+            raise ValueError("file_path is not provided.")
 
         file_path = os.path.expanduser(file_path)
 
@@ -330,32 +330,31 @@ def get_find_files_tool_handler(service_instance: FileSearchService) -> Callable
         if not pattern:
             error_msg = "Parameter 'pattern' is required but was not provided"
             logger.error(error_msg)
-            raise Exception(error_msg)
+            raise ValueError(error_msg)
 
         if not pattern.strip():
             error_msg = "Parameter 'pattern' cannot be empty or whitespace"
             logger.error(error_msg)
-            raise Exception(error_msg)
+            raise ValueError(error_msg)
 
         is_windows = sys.platform == "win32"
-        if is_windows:
-            if "\\" in pattern or "/" in pattern:
-                error_msg = "Parameter 'pattern' contains path separators ('\\' or '/') which are not supported on Windows."
-                logger.error(error_msg)
-                raise Exception(error_msg)
+        if is_windows and ("\\" in pattern or "/" in pattern):
+            error_msg = "Parameter 'pattern' contains path separators ('\\' or '/') which are not supported on Windows."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         if max_results is not None:
             if not isinstance(max_results, int):
                 error_msg = f"Parameter 'max_results' must be an integer, got: {type(max_results).__name__}"
                 logger.error(error_msg)
-                raise Exception(error_msg)
+                raise TypeError(error_msg)
 
             if max_results < 0:
                 error_msg = (
                     f"Parameter 'max_results' must be non-negative, got: {max_results}"
                 )
                 logger.error(error_msg)
-                raise Exception(error_msg)
+                raise ValueError(error_msg)
 
         # Expand user directory if present (e.g., ~/project -> /home/user/project)
         expanded_directory = os.path.expanduser(directory)
@@ -491,30 +490,30 @@ def get_grep_text_tool_handler(service_instance: GrepTextService) -> Callable:
         if not pattern:
             error_msg = "Parameter 'pattern' is required but was not provided"
             logger.error(error_msg)
-            raise Exception(error_msg)
+            raise ValueError(error_msg)
 
         if not pattern.strip():
             error_msg = "Parameter 'pattern' cannot be empty or whitespace"
             logger.error(error_msg)
-            raise Exception(error_msg)
+            raise ValueError(error_msg)
 
         if not isinstance(case_sensitive, bool):
             error_msg = f"Parameter 'case_sensitive' must be a boolean, got: {type(case_sensitive).__name__}"
             logger.error(error_msg)
-            raise Exception(error_msg)
+            raise TypeError(error_msg)
 
         if max_results is not None:
             if not isinstance(max_results, int):
                 error_msg = f"Parameter 'max_results' must be an integer, got: {type(max_results).__name__}"
                 logger.error(error_msg)
-                raise Exception(error_msg)
+                raise TypeError(error_msg)
 
             if max_results < 0:
                 error_msg = (
                     f"Parameter 'max_results' must be non-negative, got: {max_results}"
                 )
                 logger.error(error_msg)
-                raise Exception(error_msg)
+                raise ValueError(error_msg)
 
         if isinstance(raw_path, str):
             expanded_path = [os.path.expanduser(raw_path)]
@@ -524,12 +523,12 @@ def get_grep_text_tool_handler(service_instance: GrepTextService) -> Callable:
                 if not isinstance(item, str):
                     error_msg = f"Parameter 'path' list items must be strings, got: {type(item).__name__} at index {index}"
                     logger.error(error_msg)
-                    raise Exception(error_msg)
+                    raise TypeError(error_msg)
                 expanded_path.append(os.path.expanduser(item))
         else:
             error_msg = f"Parameter 'path' must be an array of strings, got: {type(raw_path).__name__}"
             logger.error(error_msg)
-            raise Exception(error_msg)
+            raise TypeError(error_msg)
 
         logger.info(
             f"grep_text tool called with: pattern='{pattern}', path='{expanded_path}', "
@@ -547,7 +546,7 @@ def get_grep_text_tool_handler(service_instance: GrepTextService) -> Callable:
         except Exception as e:
             error_msg = f"Text search failed: {e!s}"
             logger.error(error_msg)
-            raise Exception(error_msg) from e
+            raise RuntimeError(error_msg) from e
 
         return [
             {

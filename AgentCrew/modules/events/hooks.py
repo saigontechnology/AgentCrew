@@ -15,7 +15,7 @@ import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Self
 
 from loguru import logger
 
@@ -111,7 +111,7 @@ class HookRegistry:
 
     _instance: HookRegistry | None = None
 
-    def __new__(cls) -> HookRegistry:
+    def __new__(cls) -> Self:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False

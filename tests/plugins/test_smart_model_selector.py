@@ -315,7 +315,7 @@ class TestSelectBestModelPolicy:
     async def test_claude_level1_selects_haiku(self, plugin):
         """End-to-end: claude level 1 → haiku selected (not cheapest global)."""
         fake = FakeClassifier(resp='{"level": 1, "reason": "simple"}')
-        reg, orig = _patch_registry(
+        _reg, orig = _patch_registry(
             plugin, [CLAUDE_HAIKU, CLAUDE_SONNET, CLAUDE_OPUS], fake
         )
         try:
@@ -346,7 +346,7 @@ class TestSelectBestModelPolicy:
             input_token_price_1m=15.0,
             output_token_price_1m=75.0,
         )
-        reg, orig = _patch_registry(plugin, [weird], fake)
+        _reg, orig = _patch_registry(plugin, [weird], fake)
         try:
             ctx = {
                 "provider": "claude",
@@ -370,7 +370,7 @@ class TestNewMessageGate:
     @pytest.mark.asyncio
     async def test_normal_user_triggers(self, plugin):
         fake = FakeClassifier(resp='{"level": 1, "reason": "ok"}')
-        reg, orig = _patch_registry(plugin, [CLAUDE_HAIKU, CLAUDE_SONNET], fake)
+        _reg, orig = _patch_registry(plugin, [CLAUDE_HAIKU, CLAUDE_SONNET], fake)
         try:
             ctx = {
                 "provider": "claude",

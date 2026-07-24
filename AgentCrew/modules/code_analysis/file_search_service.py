@@ -1,6 +1,6 @@
 import os
 import sys
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from loguru import logger
 
@@ -27,8 +27,13 @@ class FileSearchService:
 
     _instance = None
 
-    SEARCHER_PRIORITY_UNIX = ["fd", "rg", "find"]
-    SEARCHER_PRIORITY_WINDOWS = ["fd", "rg", "dir", "Get-ChildItem"]
+    SEARCHER_PRIORITY_UNIX: ClassVar[list[str]] = ["fd", "rg", "find"]
+    SEARCHER_PRIORITY_WINDOWS: ClassVar[list[str]] = [
+        "fd",
+        "rg",
+        "dir",
+        "Get-ChildItem",
+    ]
 
     @classmethod
     def get_instance(cls):
@@ -384,7 +389,7 @@ class FileSearchService:
 
         for line in lines:
             # Skip error messages or non-path lines
-            if line.startswith("Error:") or line.startswith("Warning:"):
+            if line.startswith(("Error:", "Warning:")):
                 continue
 
             if self._is_windows:

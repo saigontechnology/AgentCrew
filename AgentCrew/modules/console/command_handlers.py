@@ -454,7 +454,7 @@ class CommandHandlers:
             )
             behavior_ids = []
 
-            for id, _ in all_behaviors.items():
+            for id in all_behaviors:
                 behavior_ids.extend(id)
 
             return behavior_ids

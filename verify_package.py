@@ -30,9 +30,7 @@ def check_wheel_files(wheel_path):
                 # It's a directory
                 path = path.rstrip("/")
                 for req_dir in required_dirs:
-                    if path.endswith(req_dir) or path.endswith(
-                        req_dir.replace("/", "-")
-                    ):
+                    if path.endswith((req_dir, req_dir.replace("/", "-"))):
                         found_dirs.add(req_dir)
             else:
                 # It's a file

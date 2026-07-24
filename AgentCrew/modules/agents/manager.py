@@ -60,12 +60,11 @@ class AgentManager:
                 if "json" in response.headers.get("content-type", "")
                 else ".toml"
             )
-            temp_file = tempfile.NamedTemporaryFile(
+            with tempfile.NamedTemporaryFile(
                 mode="w", suffix=suffix, delete=False, encoding="utf-8"
-            )
-            temp_file.write(response.text)
-            temp_file.close()
-            config_path = temp_file.name
+            ) as temp_file:
+                temp_file.write(response.text)
+                config_path = temp_file.name
         else:
             config_path = config_uri
 
@@ -197,7 +196,7 @@ class AgentManager:
         self._defered_transfer = value
 
     def clean_agents_messages(self):
-        for _, agent in self.agents.items():
+        for agent in self.agents.values():
             agent.history = []
             agent.shared_context_pool = {}
 
@@ -229,7 +228,7 @@ class AgentManager:
             messages_to_process = streamline_messages
 
         # Process messages for each agent
-        for _, agent in self.agents.items():
+        for agent in self.agents.values():
             agent_messages = [
                 msg
                 for msg in messages_to_process
@@ -278,53 +277,51 @@ class AgentManager:
             if target_agent_name not in source_agent.shared_context_pool:
                 source_agent.shared_context_pool[target_agent_name] = []
             for i, msg in enumerate(source_agent.history):
-                if i not in source_agent.shared_context_pool[target_agent_name]:
-                    if "content" in msg:
-                        content = ""
-                        processing_content = msg["content"]
-                        if msg.get("role", "") == "tool":
-                            continue
-                        if msg.get("role", "") == "user" and msg.get(
-                            "tool_call_id", ""
-                        ):
-                            continue
-                        if isinstance(processing_content, str):
-                            content = msg.get("content", "")
-                        elif (
-                            isinstance(processing_content, list)
-                            and len(processing_content) > 0
-                        ):
-                            if "text" == processing_content[0].get("type", ""):
-                                content = processing_content[0]["text"]
-                            elif processing_content[0].get("type", "") == "image_url":
-                                direct_injected_messages.append(msg)
-                                source_agent.shared_context_pool[
-                                    target_agent_name
-                                ].append(i)
-                                continue
-                        if content.strip():
-                            if content.startswith(
-                                "Content of "
-                            ):  # file should be shared across agents
-                                direct_injected_messages.append(msg)
-                                # Set the new current agent
-                                source_agent.shared_context_pool[
-                                    target_agent_name
-                                ].append(i)
-                                continue
-                            if content.startswith("<Transfer_Request>"):
-                                continue
-                            role = (
-                                "User"
-                                if msg.get("role", "user") == "user"
-                                else source_agent.name
-                            )
-                            included_conversations.append(
-                                f"<{role}_message>{content}</{role}_message>"
-                            )
+                if (
+                    i not in source_agent.shared_context_pool[target_agent_name]
+                    and "content" in msg
+                ):
+                    content = ""
+                    processing_content = msg["content"]
+                    if msg.get("role", "") == "tool":
+                        continue
+                    if msg.get("role", "") == "user" and msg.get("tool_call_id", ""):
+                        continue
+                    if isinstance(processing_content, str):
+                        content = msg.get("content", "")
+                    elif (
+                        isinstance(processing_content, list)
+                        and len(processing_content) > 0
+                    ):
+                        if "text" == processing_content[0].get("type", ""):
+                            content = processing_content[0]["text"]
+                        elif processing_content[0].get("type", "") == "image_url":
+                            direct_injected_messages.append(msg)
                             source_agent.shared_context_pool[target_agent_name].append(
                                 i
                             )
+                            continue
+                    if content.strip():
+                        if content.startswith(
+                            "Content of "
+                        ):  # file should be shared across agents
+                            direct_injected_messages.append(msg)
+                            # Set the new current agent
+                            source_agent.shared_context_pool[target_agent_name].append(
+                                i
+                            )
+                            continue
+                        if content.startswith("<Transfer_Request>"):
+                            continue
+                        role = (
+                            "User"
+                            if msg.get("role", "user") == "user"
+                            else source_agent.name
+                        )
+                        included_conversations.append(
+                            f"<{role}_message>{content}</{role}_message>"
+                        )
+                        source_agent.shared_context_pool[target_agent_name].append(i)
 
         # Record the transfer
         transfer_record = {
@@ -357,7 +354,7 @@ class AgentManager:
         """
 
         # Update all other agents' LLM service but keep them deactivated
-        for _, agent in self.agents.items():
+        for agent in self.agents.values():
             if isinstance(agent, LocalAgent) and not agent.pinned_model_id:
                 agent.update_llm_service(llm_service)
         # If current_agent than force update llm_service even with pinned_model_id

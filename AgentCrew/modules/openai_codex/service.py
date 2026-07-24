@@ -272,9 +272,11 @@ class OpenAICodexService(OpenAIResponseService):
             if forced_sample_params.top_p is not None:
                 stream_params["top_p"] = forced_sample_params.top_p
 
-        if "thinking" in ModelRegistry.get_model_capabilities(full_model_id):
-            if self.reasoning_effort:
-                stream_params["reasoning"] = {"effort": self.reasoning_effort}
+        if (
+            "thinking" in ModelRegistry.get_model_capabilities(full_model_id)
+            and self.reasoning_effort
+        ):
+            stream_params["reasoning"] = {"effort": self.reasoning_effort}
 
         if self._extra_headers:
             stream_params["extra_headers"] = self._extra_headers

@@ -5,6 +5,7 @@ import sys
 import markdown
 import pyperclip
 import qtawesome as qta
+from loguru import logger
 from PySide6.QtCore import QByteArray, QFileInfo, Qt, QTimer
 from PySide6.QtGui import QPixmap, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
@@ -439,8 +440,7 @@ class MessageBubble(QFrame):
 
                 self.message_label.setSelection(0, len(plain_text))
         except Exception:
-            # Silent error handling
-            pass
+            logger.debug("Failed to process selection for copy")
 
     def _copy_selected_text(self):
         """Copy selected text as plain text."""
@@ -449,7 +449,7 @@ class MessageBubble(QFrame):
             if selected_text:
                 pyperclip.copy(selected_text)
         except Exception:
-            pass
+            logger.debug("Failed to copy selected text")
 
     def _copy_selected_html(self):
         """Copy selected text with HTML formatting preserved."""
@@ -496,7 +496,7 @@ class MessageBubble(QFrame):
                 if selected_text:
                     pyperclip.copy(selected_text)
             except Exception:
-                pass
+                logger.debug("HTML copy fallback to plain text failed")
 
     def copy_as_markdown(self):
         """Copy the raw markdown text to clipboard."""
@@ -504,8 +504,7 @@ class MessageBubble(QFrame):
             if hasattr(self, "raw_text") and self.raw_text:
                 pyperclip.copy(self.raw_text)
         except Exception:
-            # Silent error handling as requested
-            pass
+            logger.debug("Failed to copy markdown text")
 
     def set_text(self, text):
         """Set or update the text content of the message."""

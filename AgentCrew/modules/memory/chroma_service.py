@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -138,7 +138,7 @@ class ChromaMemoryService(BaseMemoryService):
             "assistant_messages": assistant_messages,
             "agent_name": agent_name,
             "session_id": session_id or self.session_id,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         if self._worker.queue_store(operation_data):
@@ -194,7 +194,7 @@ class ChromaMemoryService(BaseMemoryService):
                 if metadata.get("header", None):
                     timestamp = float(metadata.get("date", 0))  # type: ignore
                     headers.append(
-                        f"{metadata.get('header')} ({datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M')})"
+                        f"{metadata.get('header')} ({datetime.fromtimestamp(timestamp, tz=UTC).strftime('%Y-%m-%d %H:%M')})"
                         if timestamp > 0
                         else metadata.get("header")
                     )
@@ -260,7 +260,7 @@ class ChromaMemoryService(BaseMemoryService):
             if conv_data["timestamp"] != "unknown":
                 try:
                     try:
-                        dt = datetime.fromtimestamp(conv_data["timestamp"])
+                        dt = datetime.fromtimestamp(conv_data["timestamp"], tz=UTC)
                         timestamp = dt.strftime("%Y-%m-%d %H:%M")
                     except Exception:
                         dt = datetime.fromisoformat(conv_data["timestamp"])
@@ -277,7 +277,7 @@ class ChromaMemoryService(BaseMemoryService):
 
     def cleanup_old_memories(self, months: int = 1) -> int:
         collection = self._initialize_collection()
-        cutoff_date = datetime.now() - timedelta(days=30 * months)
+        cutoff_date = datetime.now(UTC) - timedelta(days=30 * months)
 
         all_memories = collection.get()
 
@@ -285,7 +285,7 @@ class ChromaMemoryService(BaseMemoryService):
         if all_memories["metadatas"]:
             for i, metadata in enumerate(all_memories["metadatas"]):
                 timestamp_str = str(
-                    metadata.get("timestamp", datetime.now().isoformat())
+                    metadata.get("timestamp", datetime.now(UTC).isoformat())
                 )
                 try:
                     timestamp_dt = datetime.fromisoformat(timestamp_str)
@@ -360,7 +360,7 @@ class ChromaMemoryService(BaseMemoryService):
             return 0
 
         collection = self._initialize_collection()
-        timestamp = datetime.now().isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         marked = 0
 
         existing = collection.get(
@@ -497,5 +497,5 @@ class ChromaMemoryService(BaseMemoryService):
     def __del__(self):
         try:
             self.shutdown()
-        except Exception:
+        except Exception:  # noqa: S110 - best-effort cleanup in __del__
             pass

@@ -381,17 +381,16 @@ class MessageHandler:
             tool_uses = _tool_uses
             token_usage = token_usage.merge(_token_usage)
             # keep tracking token usage in middle of stream
-            if self.persistent_service and self.current_conversation_id:
-                if token_usage:
-                    metadata = {
-                        "input_tokens": token_usage.input_tokens,
-                        "output_tokens": token_usage.output_tokens,
-                        "cached_tokens": token_usage.cached_tokens,
-                        "cache_creation_tokens": token_usage.cache_creation_tokens,
-                    }
-                    self.persistent_service.store_conversation_metadata(
-                        self.current_conversation_id, metadata
-                    )
+            if self.persistent_service and self.current_conversation_id and token_usage:
+                metadata = {
+                    "input_tokens": token_usage.input_tokens,
+                    "output_tokens": token_usage.output_tokens,
+                    "cached_tokens": token_usage.cached_tokens,
+                    "cache_creation_tokens": token_usage.cache_creation_tokens,
+                }
+                self.persistent_service.store_conversation_metadata(
+                    self.current_conversation_id, metadata
+                )
 
         try:
             self.stream_generator = self.agent.process_messages(callback=process_result)
@@ -659,7 +658,7 @@ class MessageHandler:
                 try:
                     await self.stream_generator.aclose()
                 except Exception:
-                    pass
+                    logger.warning("Failed to close stream generator")
             if not session.finished.is_set():
                 session.finalize("canceled")
 

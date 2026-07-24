@@ -97,6 +97,7 @@ def _find_git_root(path: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,  # returncode checked manually below
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -122,6 +123,7 @@ def _git_capture(git_root: str, *args: str) -> tuple[int, str]:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,  # returncode returned to caller for manual handling
         )
         return result.returncode, result.stdout
     except (subprocess.SubprocessError, FileNotFoundError) as exc:
@@ -568,7 +570,8 @@ class AnalyzeRepoCache:
                     continue
                 last_at = entry.get("last_accessed_at", "")
                 candidates.append((last_at, entry))
-            except Exception:
+            except (json.JSONDecodeError, KeyError, OSError, ValueError, TypeError):
+                logger.debug("Skipping corrupted cache entry: %s", entry_path)
                 continue
 
         def _sort_key(item: tuple[str, dict[str, Any]]) -> tuple[float, str]:

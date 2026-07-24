@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import os
 
 from loguru import logger
 
 from .base import BaseImageProvider, ImageGenerationResult
+
+
+def _read_file_sync(path: str) -> bytes:
+    """Synchronous helper: read file as bytes."""
+    with open(path, "rb") as f:
+        return f.read()
 
 
 class GeminiImageProvider(BaseImageProvider):
@@ -57,8 +64,7 @@ class GeminiImageProvider(BaseImageProvider):
                 mime_type, _ = mimetypes.guess_type(img_path)
                 if not mime_type:
                     mime_type = "image/png"
-                with open(img_path, "rb") as f:
-                    img_data = f.read()
+                img_data = await asyncio.to_thread(_read_file_sync, img_path)
                 contents.append(
                     self._types.Part.from_bytes(data=img_data, mime_type=mime_type)
                 )

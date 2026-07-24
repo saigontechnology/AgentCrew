@@ -288,11 +288,8 @@ class CustomLLMService(OpenAIService):
                 if (
                     hasattr(chunk.usage, "prompt_tokens_details")
                     and chunk.usage.prompt_tokens_details
-                ):
-                    if hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
-                        cached_tokens = (
-                            chunk.usage.prompt_tokens_details.cached_tokens or 0
-                        )
+                ) and hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
+                    cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
 
         if cached_tokens:
             input_tokens = input_tokens - cached_tokens
@@ -687,9 +684,8 @@ class CustomLLMService(OpenAIService):
             if (
                 hasattr(chunk.usage, "prompt_tokens_details")
                 and chunk.usage.prompt_tokens_details
-            ):
-                if hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
-                    cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
+            ) and hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
+                cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
 
         if (not chunk.choices) or (len(chunk.choices) == 0):
             return (

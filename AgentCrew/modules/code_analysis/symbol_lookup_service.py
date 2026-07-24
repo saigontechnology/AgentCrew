@@ -3,7 +3,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import subprocess
-from typing import Any
+from typing import Any, ClassVar
 
 from .tree_sitter_runtime import EXTENSION_TO_LANGUAGE, TreeSitterRuntime
 
@@ -17,15 +17,15 @@ class SymbolLookupService:
 
     _instance: SymbolLookupService | None = None
 
-    DEFAULT_MAX_RESULTS = 50
-    MAX_RESULTS = 500
-    DEFAULT_EXCLUDE_PATTERNS = [
+    DEFAULT_MAX_RESULTS: ClassVar[int] = 50
+    MAX_RESULTS: ClassVar[int] = 500
+    DEFAULT_EXCLUDE_PATTERNS: ClassVar[list[str]] = [
         ".git/*",
         ".agentcrew/*",
         "**/__pycache__/*",
     ]
 
-    IDENTIFIER_TYPES = {
+    IDENTIFIER_TYPES: ClassVar[set[str]] = {
         "constant",
         "field_identifier",
         "identifier",
@@ -36,7 +36,7 @@ class SymbolLookupService:
         "variable_name",
     }
 
-    DECLARATION_KINDS = {
+    DECLARATION_KINDS: ClassVar[dict[str, set[str]]] = {
         "class": {
             "class",
             "class_declaration",
@@ -72,7 +72,7 @@ class SymbolLookupService:
         },
     }
 
-    ASSIGNMENT_TYPES = {
+    ASSIGNMENT_TYPES: ClassVar[set[str]] = {
         "annotated_assignment",
         "assignment",
         "augmented_assignment",
@@ -80,7 +80,7 @@ class SymbolLookupService:
         "short_var_declaration",
     }
 
-    PARAMETER_TYPES = {
+    PARAMETER_TYPES: ClassVar[set[str]] = {
         "default_parameter",
         "formal_parameter",
         "optional_parameter",

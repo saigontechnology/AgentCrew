@@ -476,9 +476,12 @@ class VisualModeUI:
                 if current_style is not None and segment_start < len(visible_text):
                     content.append(visible_text[segment_start:], style=current_style)
 
-                if i == self._cursor_line and self._cursor_col >= len(line_text):
-                    if self._cursor_col == self._horizontal_scroll + len(visible_text):
-                        content.append(" ", style="reverse")
+                if (
+                    i == self._cursor_line
+                    and self._cursor_col >= len(line_text)
+                    and self._cursor_col == self._horizontal_scroll + len(visible_text)
+                ):
+                    content.append(" ", style="reverse")
 
             content.append("\n")
 

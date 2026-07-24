@@ -2,7 +2,7 @@ import os
 import re
 import shutil
 import sys
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from loguru import logger
 
@@ -28,13 +28,13 @@ class GrepTextService:
 
     # Tool priority by platform (best to fallback)
     # git-grep is inserted dynamically if directory is a git repo
-    TOOL_PRIORITY_UNIX = ["rg", "git-grep", "grep"]
-    TOOL_PRIORITY_WINDOWS = ["rg", "git-grep", "Select-String"]
+    TOOL_PRIORITY_UNIX: ClassVar[list[str]] = ["rg", "git-grep", "grep"]
+    TOOL_PRIORITY_WINDOWS: ClassVar[list[str]] = ["rg", "git-grep", "Select-String"]
 
     # Default search parameters
     DEFAULT_MAX_RESULTS = 100
     DEFAULT_TIMEOUT = 30
-    DEFAULT_EXCLUDE_DIRS = [".agentcrew"]
+    DEFAULT_EXCLUDE_DIRS: ClassVar[list[str]] = [".agentcrew"]
     MATCH_CONTEXT_CHARS = 120
 
     @classmethod

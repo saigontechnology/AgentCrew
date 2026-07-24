@@ -210,7 +210,7 @@ class MCPsConfigTab(QWidget):
         if not current_item:
             return
 
-        server_id, old_config = current_item.data(Qt.ItemDataRole.UserRole)
+        server_id, _old_config = current_item.data(Qt.ItemDataRole.UserRole)
 
         if self.json_sync.is_code_view:
             try:

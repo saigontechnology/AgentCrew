@@ -97,9 +97,8 @@ class AnthropicService(BaseLLMService):
                     event.type == "message_delta"
                     and hasattr(event, "usage")
                     and event.usage
-                ):
-                    if hasattr(event.usage, "output_tokens"):
-                        output_tokens = event.usage.output_tokens
+                ) and hasattr(event.usage, "output_tokens"):
+                    output_tokens = event.usage.output_tokens
 
         total_cost = self.calculate_cost(input_tokens, output_tokens, cached_tokens)
 
@@ -242,9 +241,11 @@ class AnthropicService(BaseLLMService):
 
                     if isinstance(tool_result["content"], list):
                         for content_item in tool_result["content"]:
-                            if isinstance(content_item, dict):
-                                if "annotations" in content_item:
-                                    del content_item["annotations"]
+                            if (
+                                isinstance(content_item, dict)
+                                and "annotations" in content_item
+                            ):
+                                del content_item["annotations"]
 
                     claude_msg["content"] = [tool_result]
                 else:
@@ -394,7 +395,7 @@ class AnthropicService(BaseLLMService):
 
         content_block = message.content[0]
         if not isinstance(content_block, TextBlock):
-            raise ValueError(
+            raise TypeError(
                 "Unexpected response type: message content is not a TextBlock"
             )
 

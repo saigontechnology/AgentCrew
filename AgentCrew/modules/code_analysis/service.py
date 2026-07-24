@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from loguru import logger
 
@@ -30,12 +31,18 @@ if TYPE_CHECKING:
     from AgentCrew.modules.llm.base import BaseLLMService
 
 
+def _read_file_sync(path: str) -> bytes:
+    """Synchronous helper: read file as bytes."""
+    with open(path, "rb") as file:
+        return file.read()
+
+
 class CodeAnalysisService:
     """Service for analyzing code structure using tree-sitter."""
 
-    LANGUAGE_MAP = EXTENSION_TO_LANGUAGE
+    LANGUAGE_MAP: ClassVar[dict[str, str | None]] = EXTENSION_TO_LANGUAGE
 
-    CUSTOM_PARSER_LANGUAGES = set(LANGUAGE_PARSER_MAP.keys())
+    CUSTOM_PARSER_LANGUAGES: ClassVar[set[str]] = set(LANGUAGE_PARSER_MAP.keys())
 
     def __init__(self, llm_service: BaseLLMService | None = None):
         """Initialize the code analysis service with tree-sitter.
@@ -578,9 +585,7 @@ class CodeAnalysisService:
             elif result is None:
                 raise ValueError(f"Failed to process document file: {file_path}")
 
-        with open(file_path, "rb") as file:
-            content = file.read()
-
+        content = await asyncio.to_thread(_read_file_sync, file_path)
         decoded_content = content.decode("utf-8")
 
         if start_line is not None and end_line is not None:
@@ -731,11 +736,11 @@ class CodeAnalysisService:
             }
 
         analysis_results = structured["analysis_results"]
-        analyzed_files_abs = structured["analyzed_files_abs"]
-        analyzed_relative_paths = structured["analyzed_relative_paths"]
+        structured["analyzed_files_abs"]
+        structured["analyzed_relative_paths"]
         errors = structured["errors"]
-        non_analyzed_files = structured["non_analyzed_files"]
-        total_supported_files = structured["total_supported_files"]
+        structured["non_analyzed_files"]
+        structured["total_supported_files"]
 
         # Build unified files map: combine manifest hashes with formatted results
         norm_path = os.path.normpath(path)
@@ -851,10 +856,12 @@ class CodeAnalysisService:
         analysis_results: list[dict[str, Any]],
         analyzed_files: list[str],
         errors: list[dict[str, str]],
-        non_analyzed_files: list[str] = [],
+        non_analyzed_files: list[str] | None = None,
         total_supported_files: int = 0,
     ) -> str:
         """Format the analysis results into a clear text format."""
+        if non_analyzed_files is None:
+            non_analyzed_files = []
         return self._result_formatter.format_analysis_results(
             analysis_results,
             analyzed_files,

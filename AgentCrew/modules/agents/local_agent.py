@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
 from loguru import logger
@@ -152,7 +152,7 @@ class LocalAgent(BaseAgent):
             prompt: The system prompt
         """
         return (
-            prompt.replace("{current_date}", datetime.today().strftime("%A, %d %B %Y"))
+            prompt.replace("{current_date}", datetime.now(UTC).strftime("%A, %d %B %Y"))
             .replace("{cwd}", os.getcwd())
             .replace("{current_agent_name}", self.name)
             .replace("{current_agent_description}", self.description)
@@ -876,4 +876,4 @@ class LocalAgent(BaseAgent):
                 self.llm.model = _original_model
             logger.error(f"Error during message processing: {e}")
             logger.debug(f"Final messages at error time: {final_messages}")
-            raise e
+            raise

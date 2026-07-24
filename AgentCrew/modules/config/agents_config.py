@@ -182,11 +182,11 @@ class AgentsConfig:
             else:
                 clone_agent = agent_manager.get_current_agent()
                 if not isinstance(clone_agent, LocalAgent):
-                    clone_agent = [
+                    clone_agent = next(
                         agent
                         for agent in agent_manager.agents.values()
                         if isinstance(agent, LocalAgent)
-                    ][0]
+                    )
 
                 voice_enabled = (
                     "enabled"
@@ -217,16 +217,14 @@ class AgentsConfig:
                 agent_manager.register_agent(new_agent)
 
         new_agent_names = [a["name"] for a in new_agents_config]
-        old_agent_names = [
-            n for n in agent_manager.agents.keys() if n not in new_agent_names
-        ]
+        old_agent_names = [n for n in agent_manager.agents if n not in new_agent_names]
         for agent_name in old_agent_names:
             old_agent = agent_manager.get_agent(agent_name)
             if old_agent and old_agent.is_active:
                 agent_manager.select_agent(new_agent_names[0])
             agent_manager.deregister_agent(agent_name)
 
-        for _, agent in agent_manager.agents.items():
+        for agent in agent_manager.agents.values():
             was_active = False
             if agent.is_active:
                 was_active = True
@@ -372,12 +370,11 @@ class AgentsConfig:
                     if "json" in response.headers.get("content-type", "")
                     else ".toml"
                 )
-                temp_file = tempfile.NamedTemporaryFile(
+                with tempfile.NamedTemporaryFile(
                     mode="w", suffix=suffix, delete=False, encoding="utf-8"
-                )
-                temp_file.write(response.text)
-                temp_file.close()
-                import_file_path = temp_file.name
+                ) as temp_file:
+                    temp_file.write(response.text)
+                    import_file_path = temp_file.name
 
             import_file_path = os.path.expanduser(import_file_path)
 

@@ -305,7 +305,7 @@ class TestHandleCopy:
 
         assert result.handled is True
         message_handler.bus.emit.assert_awaited_once()
-        args, kwargs = message_handler.bus.emit.await_args
+        args, _kwargs = message_handler.bus.emit.await_args
         assert args[0] == AppEvents.ERROR
 
     @pytest.mark.asyncio
@@ -315,7 +315,7 @@ class TestHandleCopy:
 
         assert result.handled is True
         message_handler.bus.emit.assert_awaited_once()
-        args, kwargs = message_handler.bus.emit.await_args
+        args, _kwargs = message_handler.bus.emit.await_args
         assert args[0] == AppEvents.ERROR
 
     @pytest.mark.asyncio
@@ -370,7 +370,7 @@ class TestHandleCopy:
 
         assert result.handled is True
         message_handler.bus.emit.assert_awaited_once()
-        args, kwargs = message_handler.bus.emit.await_args
+        args, _kwargs = message_handler.bus.emit.await_args
         assert args[0] == AppEvents.ERROR
 
     @pytest.mark.asyncio
@@ -495,7 +495,7 @@ class TestCommandProcessorRouting:
         result = await utility_commands.handle_copy("/copy 1.5")
         assert result.handled is True
         message_handler.bus.emit.assert_awaited_once()
-        args, kwargs = message_handler.bus.emit.await_args
+        args, _kwargs = message_handler.bus.emit.await_args
         assert args[0] == AppEvents.ERROR
 
 

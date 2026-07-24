@@ -78,9 +78,10 @@ class MCPService:
         """Look up a server config by name from the config manager or ACP cache."""
         if self._config_manager is not None:
             for config in self._config_manager.configs.values():
-                if config.name == server_name:
-                    if agent_name is None or agent_name in config.enabledForAgents:
-                        return config
+                if config.name == server_name and (
+                    agent_name is None or agent_name in config.enabledForAgents
+                ):
+                    return config
         for config in self._acp_server_configs.values():
             if config.name == server_name:
                 return config
@@ -569,7 +570,7 @@ class MCPService:
         namespaced_prefix = f"{server_name}__"
         tool_names_to_remove = [
             tool_name
-            for tool_name in local_agent.tool_definitions.keys()
+            for tool_name in local_agent.tool_definitions
             if tool_name.startswith(namespaced_prefix)
         ]
 
@@ -597,7 +598,7 @@ class MCPService:
             if server_name in self.tools_cache:
                 self._remove_agent_server_tool_definitions(local_agent, server_name)
         else:
-            for current_agent_name in agent_manager.agents.keys():
+            for current_agent_name in agent_manager.agents:
                 local_agent = agent_manager.get_local_agent(current_agent_name)
                 if not local_agent:
                     continue

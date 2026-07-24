@@ -45,30 +45,24 @@ class CommandHandler:
             return True
 
         # Copy command
-        elif (
-            user_input.startswith("/copy")
-            or user_input.startswith("/debug")
-            or (
-                user_input.startswith("/mcp")
-                or user_input.startswith("/model")
-                or user_input.startswith("/think")
-                or user_input.startswith("/usage")
-                or user_input.startswith("/toggle_transfer")
-                or user_input.startswith("/agent_mode")
-                or user_input.startswith("/file")
+        elif user_input.startswith(
+            (
+                "/copy",
+                "/debug",
+                "/mcp",
+                "/model",
+                "/think",
+                "/usage",
+                "/toggle_transfer",
+                "/agent_mode",
+                "/file",
             )
         ):
             self.chat_window.llm_worker.process_request.emit(user_input)
             self.chat_window.ui_state_manager.set_input_controls_enabled(True)
             return True
-        elif (
-            user_input.startswith("/consolidate")
-            or user_input.startswith("/agent")
-            or user_input.startswith("/evolve")
-            or user_input.startswith("/learn")
-            or user_input.startswith("/jump")
-            or user_input.startswith("/fork")
-            or user_input.startswith("/drop")
+        elif user_input.startswith(
+            ("/consolidate", "/agent", "/evolve", "/learn", "/jump", "/fork", "/drop")
         ):
             self.chat_window.llm_worker.process_request.emit(user_input)
             self.chat_window.ui_state_manager.set_input_controls_enabled(False)

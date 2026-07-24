@@ -1,6 +1,6 @@
 [project]
 name = "agentcrew-ai"
-version = "0.19.1"
+version = "0.20.0"
 requires-python = ">=3.12"
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -36,7 +36,7 @@ dependencies = [
   "numpy==1.26.4; python_version < '3.13' and sys_platform == 'darwin'",
   "pywin32; sys_platform == 'win32'",
   "pyobjc; sys_platform == 'darwin'",
-  "a2a-sdk==0.3.26",
+  "a2a-sdk[http-server]==1.1.2",
   "agent-client-protocol==0.10.0",
   "xmltodict==1.0.4",
   "jsonref==1.1.0",

@@ -99,9 +99,8 @@ class OpenCodeService(CustomLLMService):
             if (
                 hasattr(chunk.usage, "prompt_tokens_details")
                 and chunk.usage.prompt_tokens_details
-            ):
-                if hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
-                    cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
+            ) and hasattr(chunk.usage.prompt_tokens_details, "cached_tokens"):
+                cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens or 0
 
         if chunk.choices and len(chunk.choices) > 0:
             delta = chunk.choices[0].delta

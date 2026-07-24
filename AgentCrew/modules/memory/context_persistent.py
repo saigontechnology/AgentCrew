@@ -463,7 +463,9 @@ class ContextPersistenceService:
                     file_path = os.path.join(self.conversations_dir, filename)
                     try:
                         mtime = os.path.getmtime(file_path)
-                        timestamp = datetime.datetime.fromtimestamp(mtime).isoformat()
+                        timestamp = datetime.datetime.fromtimestamp(
+                            mtime, tz=datetime.UTC
+                        ).isoformat()
 
                         metadata = self.get_conversation_metadata(conversation_id)
                         preview = metadata.get("preview")
@@ -748,7 +750,7 @@ Rules:
                 new_conversation_id, forked_messages, force=True
             )
 
-            now = datetime.datetime.now().isoformat()
+            now = datetime.datetime.now(datetime.UTC).isoformat()
 
             # ---- Trace effective parent for inherited content ----
             # If the current conversation is itself a fork and the fork point
@@ -863,7 +865,9 @@ Rules:
                 file_path = os.path.join(self.conversations_dir, filename)
                 try:
                     mtime = os.path.getmtime(file_path)
-                    timestamp = datetime.datetime.fromtimestamp(mtime).isoformat()
+                    timestamp = datetime.datetime.fromtimestamp(
+                        mtime, tz=datetime.UTC
+                    ).isoformat()
 
                     metadata = self.get_conversation_metadata(conversation_id)
                     preview = metadata.get("preview")
@@ -973,7 +977,7 @@ Rules:
             agent_history = []
 
         stored_record = {
-            "timestamp": datetime.datetime.now().isoformat(),
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
             **record,
         }
         agent_history.append(stored_record)

@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import os
 
+from loguru import logger
 from openai import AsyncOpenAI
 
 from .base import BaseImageProvider, ImageGenerationResult
+
+
+def _read_file_sync(path: str) -> bytes:
+    """Synchronous helper: read file as bytes."""
+    with open(path, "rb") as f:
+        return f.read()
+
 
 CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
@@ -57,9 +66,9 @@ class OpenAIImageProvider(BaseImageProvider):
                 self._auth_source = "chatgpt_subscription"
                 return
         except ImportError:
-            pass
+            logger.debug("OAuth dependencies not available for OpenAI provider")
         except Exception:
-            pass
+            logger.debug("ChatGPT OAuth failed, falling back to API key")
 
         # Priority 2: Standard OpenAI API key (standard images API)
         api_key = os.getenv("OPENAI_API_KEY")
@@ -131,8 +140,7 @@ class OpenAIImageProvider(BaseImageProvider):
         if not mime_type:
             mime_type = "image/png"
 
-        with open(image_file, "rb") as f:
-            image_data = f.read()
+        image_data = await asyncio.to_thread(_read_file_sync, image_file)
 
         response = await self._client.images.edit(
             model=self.model_id,

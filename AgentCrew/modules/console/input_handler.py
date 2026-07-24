@@ -83,13 +83,12 @@ class InputHandler:
             """Submit on Ctrl+S."""
             if _stop_voice_recording(event):
                 return
-            if event.current_buffer.text.strip():
-                if (
-                    event.current_buffer.text == "/exit"
-                    or event.current_buffer.text == "/quit"
-                    or not self.is_message_processing
-                ):
-                    event.current_buffer.validate_and_handle()
+            if event.current_buffer.text.strip() and (
+                event.current_buffer.text == "/exit"
+                or event.current_buffer.text == "/quit"
+                or not self.is_message_processing
+            ):
+                event.current_buffer.validate_and_handle()
 
         @kb.add(*newline_keys)
         def _(event):
@@ -135,7 +134,7 @@ class InputHandler:
                         event.app.clipboard.get_data()
                     )
                 except Exception:
-                    pass  # Ignore if even default paste fails
+                    logger.debug("Default paste fallback failed")
 
         @kb.add(Keys.ControlU)
         def _(event):
@@ -472,7 +471,7 @@ class InputHandler:
                 ):
                     self._current_prompt_session.app.exit()
             except Exception:
-                pass
+                logger.debug("Failed to exit prompt session")
 
         self._input_thread.join(timeout=1.5)
 
