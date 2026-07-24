@@ -1,18 +1,19 @@
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QFormLayout,
-    QLineEdit,
-    QCheckBox,
-    QLabel,
-    QScrollArea,
-)
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.gui.themes import StyleProvider
+
 from .dynamic_fields import DynamicFieldList
-from .mcp_config_mapper import normalize_include_tools, form_data_to_dict
+from .mcp_config_mapper import form_data_to_dict, normalize_include_tools
 
 
 class MCPForm(QWidget):

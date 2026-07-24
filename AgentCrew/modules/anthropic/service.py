@@ -1,15 +1,17 @@
 import os
 import re
-from typing import Any, Union
+from typing import Any
+
 from anthropic import AsyncAnthropic
 from anthropic.types import TextBlock, TextDelta
 from dotenv import load_dotenv
+from loguru import logger
+
 from AgentCrew.modules.llm.base import (
     BaseLLMService,
 )
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.token_usage import TokenUsage
-from loguru import logger
 
 
 class AnthropicService(BaseLLMService):
@@ -123,7 +125,7 @@ class AnthropicService(BaseLLMService):
             Content object for the file or None if processing failed
         """
 
-        return None
+        return
 
     def process_file_for_message(self, file_path: str) -> dict[str, Any] | None:
         """Process a file and return the appropriate message content."""
@@ -165,7 +167,7 @@ class AnthropicService(BaseLLMService):
 
     def _convert_content_to_claude_format(
         self,
-        content: Union[dict[str, Any], list[dict[str, Any]], str],
+        content: dict[str, Any] | list[dict[str, Any]] | str,
     ):
         new_content = None
 
@@ -202,9 +204,7 @@ class AnthropicService(BaseLLMService):
         claude_messages = []
         for msg in messages:
             claude_msg = {"role": msg.get("role", "")}
-            if claude_msg["role"] == "tool":
-                claude_msg["role"] = "user"
-            elif claude_msg["role"] == "consolidated":
+            if claude_msg["role"] == "tool" or claude_msg["role"] == "consolidated":
                 claude_msg["role"] = "user"
             # Handle content
             if "content" in msg:

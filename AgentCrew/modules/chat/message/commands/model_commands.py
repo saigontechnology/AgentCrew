@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from AgentCrew.modules.events import AppEvents
-from typing import Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from AgentCrew.modules.config.global_config import GlobalConfig
+from AgentCrew.modules.events import AppEvents
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.service_manager import ServiceManager
 
@@ -17,7 +17,7 @@ class ModelCommands:
     def __init__(self, message_handler: MessageHandler):
         self.message_handler = message_handler
 
-    def handle_model(self, command: str) -> Tuple[bool, bool]:
+    def handle_model(self, command: str) -> tuple[bool, bool]:
         """
         Handle the /model command to switch models or list available models.
 

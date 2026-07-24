@@ -1,17 +1,17 @@
+import asyncio
+import json
 import os
 import sys
-import json
-import asyncio
-import nest_asyncio
 from typing import Any
 
 import click
+import nest_asyncio
 from loguru import logger
 
-from AgentCrew.setup import ApplicationSetup
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
 from AgentCrew.modules.llm.service_manager import ServiceManager
+from AgentCrew.setup import ApplicationSetup
 
 nest_asyncio.apply()
 
@@ -39,10 +39,11 @@ class AgentCrewApplication:
         with_voice: bool = False,
         model_id: str | None = None,
     ) -> None:
-        from AgentCrew.modules.console import ConsoleUI
-        from AgentCrew.modules.chat import MessageHandler
-        from AgentCrew.modules.mcpclient import MCPSessionManager
         import asyncio
+
+        from AgentCrew.modules.chat import MessageHandler
+        from AgentCrew.modules.console import ConsoleUI
+        from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
             if provider is None:
@@ -86,12 +87,12 @@ class AgentCrewApplication:
             ui.start()
         except Exception as e:
             logger.exception("Failed to run console mode")
-            click.echo(f"❌ Error: {str(e)}", err=True)
+            click.echo(f"❌ Error: {e!s}", err=True)
         finally:
             try:
-                asyncio.run(self.setup.shutdown_plugins())
+                asyncio.run(self.setup.shutdown())
             except Exception:
-                logger.exception("Failed to unload plugins")
+                logger.exception("Failed to shut down application resources")
             MCPSessionManager.get_instance().cleanup()
 
     def run_gui(
@@ -103,13 +104,14 @@ class AgentCrewApplication:
         with_voice: bool = False,
         model_id: str | None = None,
     ) -> None:
-        from PySide6.QtCore import QCoreApplication
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-        from AgentCrew.modules.gui import ChatWindow
-        from AgentCrew.modules.chat import MessageHandler
-        from AgentCrew.modules.mcpclient import MCPSessionManager
         import asyncio
+
+        from PySide6.QtCore import QCoreApplication, Qt
+        from PySide6.QtWidgets import QApplication
+
+        from AgentCrew.modules.chat import MessageHandler
+        from AgentCrew.modules.gui import ChatWindow
+        from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
             if provider is None:
@@ -172,12 +174,12 @@ class AgentCrewApplication:
             sys.exit(app.exec())
         except Exception as e:
             logger.exception("Failed to run GUI mode")
-            click.echo(f"❌ Error: {str(e)}", err=True)
+            click.echo(f"❌ Error: {e!s}", err=True)
         finally:
             try:
-                asyncio.run(self.setup.shutdown_plugins())
+                asyncio.run(self.setup.shutdown())
             except Exception:
-                logger.exception("Failed to unload plugins")
+                logger.exception("Failed to shut down application resources")
             MCPSessionManager.get_instance().cleanup()
 
     def run_server(
@@ -246,8 +248,12 @@ class AgentCrewApplication:
             server.start()
         except Exception as e:
             logger.exception("Failed to run A2A server")
-            click.echo(f"❌ Error: {str(e)}", err=True)
+            click.echo(f"❌ Error: {e!s}", err=True)
         finally:
+            try:
+                asyncio.run(self.setup.shutdown())
+            except Exception:
+                logger.exception("Failed to shut down application resources")
             MCPSessionManager.get_instance().cleanup()
 
     def run_acp(
@@ -297,8 +303,12 @@ class AgentCrewApplication:
             asyncio.run(run_acp_agent(self.agent_manager, agent))
         except Exception as e:
             logger.exception("Failed to run ACP agent")
-            click.echo(f"❌ Error: {str(e)}", err=True)
+            click.echo(f"❌ Error: {e!s}", err=True)
         finally:
+            try:
+                asyncio.run(self.setup.shutdown())
+            except Exception:
+                logger.exception("Failed to shut down application resources")
             MCPSessionManager.get_instance().cleanup()
 
     def _parse_output_schema(self, schema_input: str) -> tuple[str, dict]:
@@ -336,7 +346,7 @@ class AgentCrewApplication:
     def _validate_response_against_schema(
         self, response: str, schema_dict: dict[str, Any]
     ) -> tuple[bool, str | None]:
-        from jsonschema import validate, ValidationError
+        from jsonschema import ValidationError, validate
 
         try:
             cleaned_response = self._clean_json_response(response)
@@ -377,9 +387,9 @@ class AgentCrewApplication:
         output_schema: str | None = None,
         token_usage_file: str | None = None,
     ) -> str:
-        from AgentCrew.modules.agents import run_agent_loop, LocalAgent
-        from AgentCrew.modules.mcpclient import MCPSessionManager
+        from AgentCrew.modules.agents import LocalAgent, run_agent_loop
         from AgentCrew.modules.llm.model_registry import ModelRegistry
+        from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
             if provider is None:
@@ -547,4 +557,8 @@ class AgentCrewApplication:
             logger.exception("Failed to run job")
             raise
         finally:
+            try:
+                asyncio.run(self.setup.shutdown())
+            except Exception:
+                logger.exception("Failed to shut down application resources")
             MCPSessionManager.get_instance().cleanup()

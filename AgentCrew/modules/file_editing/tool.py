@@ -4,7 +4,9 @@ File editing tool definitions and handlers for AgentCrew.
 Provides file_write_or_edit tool for intelligent file editing with search/replace blocks.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
+
 from .service import FileEditingService
 
 
@@ -108,12 +110,10 @@ def get_file_write_or_edit_tool_handler(
         blocks = params.get("write_blocks")
 
         if not file_path:
-            raise ValueError("Error: No file path provided.")
+            raise ValueError("Error: No file_path provided.")
 
         if blocks is None:
-            raise ValueError(
-                "Error: No file content or search/replace blocks provided."
-            )
+            raise ValueError("Error: No write_blocks provided.")
 
         # String mode — full file write
         if isinstance(blocks, str):

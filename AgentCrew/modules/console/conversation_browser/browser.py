@@ -5,14 +5,15 @@ Provides Rich-based UI for listing and loading conversations with preview.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from rich.console import Console
 from rich.text import Text
 
 from ..constants import RICH_STYLE_YELLOW
-from .browser_ui import ConversationBrowserUI
 from .browser_input_handler import ConversationBrowserInputHandler
+from .browser_ui import ConversationBrowserUI
 
 
 class ConversationBrowser:

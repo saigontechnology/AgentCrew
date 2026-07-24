@@ -5,10 +5,9 @@ import json
 import os
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 _SAFE_SESSION_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
 
@@ -27,7 +26,7 @@ class AcpStoredSession:
     updated_at: str = field(default_factory=lambda: _utc_now())
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AcpStoredSession":
+    def from_dict(cls, data: dict[str, Any]) -> AcpStoredSession:
         now = _utc_now()
         raw_token_usage = data.get("token_usage") or {}
         return cls(
@@ -167,4 +166,4 @@ class AcpSessionStore:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()

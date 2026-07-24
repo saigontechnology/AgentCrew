@@ -1,29 +1,31 @@
 from __future__ import annotations
-from typing import Tuple, TYPE_CHECKING
+
 import asyncio
 import os
 import re
 import shlex
 import traceback
+from typing import TYPE_CHECKING
 
 from loguru import logger
+
+from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.chat.history import ChatHistoryManager
-from AgentCrew.modules.agents import AgentManager
-
+from AgentCrew.modules.chat.stream_session import StreamSession
+from AgentCrew.modules.events import AppEvents, EventBus, HookRegistry
+from AgentCrew.modules.llm.token_usage import TokenUsage
+from AgentCrew.modules.mcpclient import MCPSessionManager
 from AgentCrew.modules.memory import (
     BaseMemoryService,
     ContextPersistenceService,
 )
-from AgentCrew.modules.mcpclient import MCPSessionManager
+
 from .command_processor import CommandProcessor
-from .tool_manager import ToolManager
 from .conversation import ConversationManager
-from AgentCrew.modules.events import AppEvents, EventBus, HookRegistry
-from .prompt_evolution_coordinator import PromptEvolutionCoordinator
 from .learn_review_coordinator import LearnReviewCoordinator
-from AgentCrew.modules.chat.stream_session import StreamSession
-from AgentCrew.modules.llm.token_usage import TokenUsage
+from .prompt_evolution_coordinator import PromptEvolutionCoordinator
+from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
     from AgentCrew.modules.utils.file_handler import FileHandler
@@ -137,7 +139,7 @@ class MessageHandler:
     async def process_user_input(
         self,
         user_input: str,
-    ) -> Tuple[bool, bool]:
+    ) -> tuple[bool, bool]:
         """
         Processes user input, handles commands, and updates message history.
 
@@ -169,8 +171,8 @@ class MessageHandler:
             )
 
         # ── user.message before hook ────────────────────────────────
-        from AgentCrew.modules.events.hooks import HookPoints
         from AgentCrew.modules.events.hook_payloads import UserMessageContext
+        from AgentCrew.modules.events.hooks import HookPoints
 
         _um_ctx: UserMessageContext = {
             "raw_input": user_input,
@@ -321,7 +323,7 @@ class MessageHandler:
                         AppEvents.CONVERSATION_SAVED, id=self.current_conversation_id
                     )
             except Exception as e:
-                error_message = f"Failed to save conversation turn to {self.current_conversation_id}: {str(e)}"
+                error_message = f"Failed to save conversation turn to {self.current_conversation_id}: {e!s}"
                 logger.error(f"ERROR: {error_message}")
                 self.bus.emit_sync(AppEvents.ERROR, message=error_message)
 
@@ -352,7 +354,7 @@ class MessageHandler:
         session: StreamSession,
         prior_token_usage: TokenUsage | None = None,
         _empty_response_retry_count: int = 0,
-    ) -> Tuple[str | None, TokenUsage]:
+    ) -> tuple[str | None, TokenUsage]:
         """
         Stream the assistant's response and return the response and token usage.
 
@@ -402,7 +404,7 @@ class MessageHandler:
                     next_item = await asyncio.wait_for(
                         stream_iter.__anext__(), timeout=session.first_chunk_timeout
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     session.finalize("timed_out")
                     await self.bus.emit(
                         AppEvents.STREAM_OPEN_TIMEOUT,
@@ -453,10 +455,10 @@ class MessageHandler:
                         store_memory=False,
                     )
                     # ── response.complete after hook ──────────────
-                    from AgentCrew.modules.events.hooks import HookPoints
                     from AgentCrew.modules.events.hook_payloads import (
                         ResponseCompleteResult,
                     )
+                    from AgentCrew.modules.events.hooks import HookPoints
 
                     _rc_result: ResponseCompleteResult = {
                         "response": assistant_response,
@@ -621,8 +623,8 @@ class MessageHandler:
             )
 
             # ── response.complete after hook ────────────────────
-            from AgentCrew.modules.events.hooks import HookPoints
             from AgentCrew.modules.events.hook_payloads import ResponseCompleteResult
+            from AgentCrew.modules.events.hooks import HookPoints
 
             _rc_result: ResponseCompleteResult = {
                 "response": assistant_response,
@@ -679,8 +681,8 @@ class MessageHandler:
                 store_memory=False,
             )
             # ── response.complete after hook ────────────────────
-            from AgentCrew.modules.events.hooks import HookPoints
             from AgentCrew.modules.events.hook_payloads import ResponseCompleteResult
+            from AgentCrew.modules.events.hooks import HookPoints
 
             _rc_result: ResponseCompleteResult = {
                 "response": assistant_response,
@@ -769,7 +771,7 @@ class MessageHandler:
         self,
         token_usage: TokenUsage | None = None,
         _empty_response_retry_count: int = 0,
-    ) -> Tuple[str | None, TokenUsage]:
+    ) -> tuple[str | None, TokenUsage]:
         if token_usage is None:
             token_usage = TokenUsage()
         loop = asyncio.get_running_loop()
@@ -827,7 +829,7 @@ class MessageHandler:
                 return False
 
             if hasattr(self.agent, "voice_enabled"):
-                return getattr(self.agent, "voice_enabled") == "enabled"
+                return self.agent.voice_enabled == "enabled"
 
             return False
         except Exception as e:

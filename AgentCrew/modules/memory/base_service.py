@@ -1,5 +1,5 @@
-from typing import Any
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 class BaseMemoryService(ABC):
@@ -43,7 +43,6 @@ class BaseMemoryService(ABC):
         Returns:
             list of memory IDs created
         """
-        pass
 
     @abstractmethod
     def clear_conversation_context(self):
@@ -72,7 +71,6 @@ class BaseMemoryService(ABC):
         Returns:
             Formatted string of relevant memories
         """
-        pass
 
     @abstractmethod
     def list_memory_headers(
@@ -91,7 +89,6 @@ class BaseMemoryService(ABC):
         Returns:
             list of memory IDs
         """
-        pass
 
     @abstractmethod
     def cleanup_old_memories(self, months: int = 1) -> int:
@@ -104,7 +101,6 @@ class BaseMemoryService(ABC):
         Returns:
             Number of memories removed
         """
-        pass
 
     @abstractmethod
     def forget_topic(
@@ -123,7 +119,6 @@ class BaseMemoryService(ABC):
         Returns:
             dict with success status and information about the operation
         """
-        pass
 
     @abstractmethod
     def forget_ids(self, ids: list[str], agent_name: str = "None") -> dict[str, Any]:
@@ -136,7 +131,6 @@ class BaseMemoryService(ABC):
         Returns:
             dict with success status and information about the operation
         """
-        pass
 
     @abstractmethod
     def delete_by_conversation_id(self, conversation_id: str) -> dict[str, Any]:
@@ -149,7 +143,6 @@ class BaseMemoryService(ABC):
         Returns:
             dict with success status and count of deleted memories
         """
-        pass
 
     @abstractmethod
     def get_agent_memory_corpus(
@@ -169,7 +162,6 @@ class BaseMemoryService(ABC):
         Returns:
             list of memory records containing id, document, and metadata.
         """
-        pass
 
     @abstractmethod
     def mark_memories_evolved(
@@ -187,4 +179,3 @@ class BaseMemoryService(ABC):
         Returns:
             Number of memories successfully marked.
         """
-        pass

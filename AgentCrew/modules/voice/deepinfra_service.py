@@ -1,21 +1,20 @@
 import os
+import queue
 import tempfile
 import threading
 import time
-from typing import Any, Callable
-import queue
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
-import soundfile as sf
 import sounddevice as sd
+import soundfile as sf
+from loguru import logger
 from openai import OpenAI
 
-from .text_cleaner import TextCleaner
 from .audio_handler import AudioHandler
 from .base import BaseVoiceService
-
-from loguru import logger
-
+from .text_cleaner import TextCleaner
 
 DEEPINFRA_OPENAI_BASE_URL = "https://api.deepinfra.com/v1/openai"
 DEEPINFRA_TTS_RESPONSE_FORMAT = "pcm"
@@ -66,8 +65,8 @@ class DeepInfraVoiceService(BaseVoiceService):
             self.audio_handler.start_recording(sample_rate, voice_completed_cb)
             return {"success": True, "message": "Recording started."}
         except Exception as e:
-            logger.error(f"Failed to start recording: {str(e)}")
-            return {"success": False, "error": f"Failed to start recording: {str(e)}"}
+            logger.error(f"Failed to start recording: {e!s}")
+            return {"success": False, "error": f"Failed to start recording: {e!s}"}
 
     def stop_voice_recording(self) -> dict[str, Any]:
         try:
@@ -85,8 +84,8 @@ class DeepInfraVoiceService(BaseVoiceService):
                 "message": f"Recording stopped. Duration: {duration:.2f} seconds",
             }
         except Exception as e:
-            logger.error(f"Failed to stop recording: {str(e)}")
-            return {"success": False, "error": f"Failed to stop recording: {str(e)}"}
+            logger.error(f"Failed to stop recording: {e!s}")
+            return {"success": False, "error": f"Failed to stop recording: {e!s}"}
 
     def is_recording(self) -> bool:
         return self.audio_handler.is_recording()
@@ -119,8 +118,8 @@ class DeepInfraVoiceService(BaseVoiceService):
                 "words": [],
             }
         except Exception as e:
-            logger.error(f"Speech-to-text failed: {str(e)}")
-            return {"success": False, "error": f"Failed to transcribe audio: {str(e)}"}
+            logger.error(f"Speech-to-text failed: {e!s}")
+            return {"success": False, "error": f"Failed to transcribe audio: {e!s}"}
         finally:
             if tmp_file_path and os.path.exists(tmp_file_path):
                 try:
@@ -153,7 +152,7 @@ class DeepInfraVoiceService(BaseVoiceService):
             except queue.Empty:
                 continue
             except Exception as e:
-                logger.error(f"TTS worker error: {str(e)}")
+                logger.error(f"TTS worker error: {e!s}")
 
         logger.debug("TTS worker thread stopped (DeepInfra)")
 
@@ -216,7 +215,7 @@ class DeepInfraVoiceService(BaseVoiceService):
         except Exception as e:
             failed_after = time.perf_counter() - started_at
             logger.error(
-                f"DeepInfra TTS API request failed after {failed_after:.3f}s model={request_kwargs['model']} voice={request_kwargs['voice']}: {str(e)}"
+                f"DeepInfra TTS API request failed after {failed_after:.3f}s model={request_kwargs['model']} voice={request_kwargs['voice']}: {e!s}"
             )
             raise
 
@@ -277,7 +276,7 @@ class DeepInfraVoiceService(BaseVoiceService):
             logger.debug("TTS streaming completed (DeepInfra)")
         except Exception as e:
             self.audio_handler.is_host_playing = False
-            logger.error(f"Text-to-speech processing failed: {str(e)}")
+            logger.error(f"Text-to-speech processing failed: {e!s}")
 
     def text_to_speech_stream(
         self, text: str, voice_id: str | None = None, model_id: str | None = None
@@ -298,7 +297,7 @@ class DeepInfraVoiceService(BaseVoiceService):
                     f"TTS queue is full (size: {self.tts_queue.qsize()}), dropping request"
                 )
         except Exception as e:
-            logger.error(f"Failed to queue TTS request: {str(e)}")
+            logger.error(f"Failed to queue TTS request: {e!s}")
 
     def list_voices(self) -> dict[str, Any]:
         return {"success": True, "voices": DEEPINFRA_FALLBACK_VOICES}

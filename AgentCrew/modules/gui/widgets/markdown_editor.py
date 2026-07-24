@@ -2,13 +2,13 @@ import re
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import (
-    QTextCharFormat,
     QColor,
-    QSyntaxHighlighter,
-    QTextDocument,
     QFont,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextDocument,
 )
-from PySide6.QtWidgets import QPlainTextEdit, QWidget, QVBoxLayout, QLabel
+from PySide6.QtWidgets import QLabel, QPlainTextEdit, QVBoxLayout, QWidget
 
 from AgentCrew.modules.gui.themes import StyleProvider
 
@@ -173,7 +173,7 @@ class MarkdownEditor(QWidget):
         try:
             self.text_edit.setPlainText(markdown_text)
         except Exception as e:
-            self.error_label.setText(f"Error setting markdown: {str(e)}")
+            self.error_label.setText(f"Error setting markdown: {e!s}")
             self.error_label.show()
 
     def get_markdown(self) -> str:

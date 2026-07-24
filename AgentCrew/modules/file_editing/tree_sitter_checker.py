@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from AgentCrew.modules.code_analysis.tree_sitter_runtime import TreeSitterRuntime
 
@@ -106,7 +106,7 @@ class TreeSitterChecker:
                     SyntaxError(
                         line=line,
                         column=column,
-                        message=f"Syntax error near: {repr(error_preview)}",
+                        message=f"Syntax error near: {error_preview!r}",
                         node_type="ERROR",
                         severity="error",
                     )

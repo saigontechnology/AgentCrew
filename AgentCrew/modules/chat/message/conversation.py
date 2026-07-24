@@ -1,12 +1,12 @@
 from __future__ import annotations
-from AgentCrew.modules.events import AppEvents
-from typing import Any
+
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from AgentCrew.modules.chat.history import ConversationTurn
-from AgentCrew.modules.agents import RemoteAgent
 
-from typing import TYPE_CHECKING
+from AgentCrew.modules.agents import RemoteAgent
+from AgentCrew.modules.chat.history import ConversationTurn
+from AgentCrew.modules.events import AppEvents
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message import MessageHandler
@@ -61,7 +61,7 @@ class ConversationManager:
                 f"INFO: Started new persistent conversation {self.message_handler.current_conversation_id}"
             )
         except Exception as e:
-            error_message = f"Failed to start new persistent conversation: {str(e)}"
+            error_message = f"Failed to start new persistent conversation: {e!s}"
             logger.warning(f"Warning: {error_message}")
             self.message_handler.bus.emit_sync(AppEvents.ERROR, message=error_message)
             self.message_handler.current_conversation_id = None
@@ -348,7 +348,7 @@ class ConversationManager:
         except Exception as e:
             logger.error(f"Error forking conversation: {e}")
             self.message_handler.bus.emit_sync(
-                AppEvents.ERROR, message=f"Failed to fork conversation: {str(e)}"
+                AppEvents.ERROR, message=f"Failed to fork conversation: {e!s}"
             )
             return None
 

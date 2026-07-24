@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from AgentCrew.modules.events import AppEvents
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from AgentCrew.modules.chat.message.commands.base import CommandResult
+from AgentCrew.modules.events import AppEvents
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message import MessageHandler
@@ -70,7 +70,7 @@ class VoiceCommands:
 
         except Exception as e:
             await self.message_handler.bus.emit(
-                AppEvents.ERROR, message=f"Voice command failed: {str(e)}"
+                AppEvents.ERROR, message=f"Voice command failed: {e!s}"
             )
             return CommandResult(handled=True, clear_flag=True)
 
@@ -118,7 +118,7 @@ class VoiceCommands:
 
         except Exception as e:
             await self.message_handler.bus.emit(
-                AppEvents.ERROR, message=f"End voice command failed: {str(e)}"
+                AppEvents.ERROR, message=f"End voice command failed: {e!s}"
             )
             await self.message_handler.bus.emit(AppEvents.VOICE_RECORDING_COMPLETED)
             return CommandResult(handled=True, clear_flag=True)

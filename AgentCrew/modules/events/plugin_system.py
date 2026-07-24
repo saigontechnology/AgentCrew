@@ -2,27 +2,28 @@
 
 from __future__ import annotations
 
-import os
-import sys
-import types
 import importlib
 import importlib.machinery
 import importlib.util
 import inspect
-from loguru import logger
+import os
+import sys
+import types
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
+
+from loguru import logger
 
 from AgentCrew.modules.events import (
     EventBus,
-    Subscription,
     Hook,
     HookRegistration,
     HookRegistry,
+    Subscription,
 )
-
 
 # ── Private namespace for all plugin modules ─────────────────────
 _GLOBAL_NS = "_agentcrew_plugins.global"
@@ -64,7 +65,7 @@ class Plugin(ABC):
     @abstractmethod
     async def deactivate(self) -> None:
         """Release resources owned outside EventBus and HookRegistry."""
-        return None
+        return
 
 
 @dataclass

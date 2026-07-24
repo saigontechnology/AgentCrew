@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from AgentCrew.modules.events import AppEvents
 from datetime import datetime
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -11,6 +10,7 @@ from AgentCrew.modules.chat.message.commands.copy_utils import (
     extract_assistant_text,
     get_copyable_assistants,
 )
+from AgentCrew.modules.events import AppEvents
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message import MessageHandler
@@ -173,7 +173,7 @@ class UtilityCommands:
         except Exception as e:
             logger.debug(f"Usage retrieval failed: {e}")
             await self.message_handler.bus.emit(
-                AppEvents.ERROR, message=f"Failed to retrieve usage: {str(e)}"
+                AppEvents.ERROR, message=f"Failed to retrieve usage: {e!s}"
             )
         return CommandResult(handled=True, clear_flag=True)
 
@@ -283,9 +283,9 @@ class UtilityCommands:
                 AppEvents.SYSTEM_MESSAGE, message=message
             )
         except Exception as e:
-            logger.error(f"clean behaviors error: {str(e)}", exc_info=True)
+            logger.error(f"clean behaviors error: {e!s}", exc_info=True)
             await self.message_handler.bus.emit(
-                AppEvents.ERROR, message=f"Error cleaning behaviors: {str(e)}"
+                AppEvents.ERROR, message=f"Error cleaning behaviors: {e!s}"
             )
         return CommandResult(handled=True, clear_flag=True)
 

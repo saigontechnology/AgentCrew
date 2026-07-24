@@ -6,26 +6,26 @@ Handles loading animations, live displays, and other visual effects.
 from __future__ import annotations
 
 import colorsys
-import math
-import time
-import threading
 import itertools
+import math
 import random
-from rich.live import Live
+import threading
+import time
+from typing import TYPE_CHECKING
+
 from rich.box import HORIZONTALS
 from rich.console import Group
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
 from .constants import (
     CODE_THEME,
+    COMMAND_HELP_MESSAGES,
     RICH_STYLE_GRAY,
     RICH_STYLE_GREEN,
-    COMMAND_HELP_MESSAGES,
 )
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .console_ui import ConsoleUI
@@ -390,7 +390,7 @@ class UIEffects:
         self.live = Live(
             live_panel,
             auto_refresh=True,
-            refresh_per_second=20,
+            refresh_per_second=10,
             console=self.console,
             vertical_overflow="crop",
         )

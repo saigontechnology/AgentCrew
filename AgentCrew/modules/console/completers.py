@@ -1,13 +1,14 @@
-from prompt_toolkit.completion import Completer, PathCompleter
+import os
+import re
+
+from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
-from prompt_toolkit.completion import Completion
-from AgentCrew.modules.llm.model_registry import ModelRegistry
+
 from AgentCrew.modules.chat.message.commands.copy_utils import (
     extract_assistant_text_preview,
     get_copyable_assistants,
 )
-import os
-import re
+from AgentCrew.modules.llm.model_registry import ModelRegistry
 
 COMPLETER_PATTERN = re.compile(r"[a-zA-Z0-9-_.]*")
 

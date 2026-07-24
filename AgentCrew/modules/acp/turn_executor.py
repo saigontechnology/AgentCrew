@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-
 from AgentCrew.modules.acp.session_state import AcpSessionState
 from AgentCrew.modules.acp.tools.permission_broker import AcpPermissionBroker
 from AgentCrew.modules.agents.base import MessageType
@@ -13,10 +12,11 @@ from AgentCrew.modules.tools.parallel_executor import (
 )
 
 if TYPE_CHECKING:
+    from acp import Client
+
     from AgentCrew.modules.acp.client_communication import ClientCommunication
     from AgentCrew.modules.acp.tool_manager import AcpToolManager
     from AgentCrew.modules.agents import LocalAgent
-    from acp import Client
 
 
 class TurnExecutor:
@@ -423,6 +423,7 @@ class TurnExecutor:
             _kill_terminal,
             _release_terminal,
         )
+
         from .tools.context import AcpSessionContext
 
         for terminal_id in list(state.tool_state.acp_active_terminals.values()):

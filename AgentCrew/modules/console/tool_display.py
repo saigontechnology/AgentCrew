@@ -4,24 +4,26 @@ Handles rendering of tool-related information like tool use, results, errors, an
 """
 
 from __future__ import annotations
+
 import json
+from typing import TYPE_CHECKING
+
+from rich.box import HORIZONTALS
 from rich.console import Group
 from rich.panel import Panel
-from rich.box import HORIZONTALS
 from rich.text import Text
 
-from .diff_display import DiffDisplay
 from .constants import (
-    RICH_STYLE_GRAY,
-    RICH_STYLE_YELLOW,
-    RICH_STYLE_GREEN,
     RICH_STYLE_BLUE,
-    RICH_STYLE_RED,
-    RICH_STYLE_WHITE,
+    RICH_STYLE_GRAY,
+    RICH_STYLE_GREEN,
     RICH_STYLE_GREEN_BOLD,
+    RICH_STYLE_RED,
     RICH_STYLE_RED_BOLD,
+    RICH_STYLE_WHITE,
+    RICH_STYLE_YELLOW,
 )
-from typing import TYPE_CHECKING
+from .diff_display import DiffDisplay
 
 if TYPE_CHECKING:
     from .console_ui import ConsoleUI

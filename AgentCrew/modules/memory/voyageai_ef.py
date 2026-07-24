@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
+from typing import TYPE_CHECKING, cast
+
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from chromadb.api.types import Space
-from typing import cast, TYPE_CHECKING
 from chromadb.utils.embedding_functions.schemas import validate_config_schema
-import os
 
 if TYPE_CHECKING:
     from typing import Any
@@ -83,7 +84,7 @@ class VoyageEmbeddingFunction(EmbeddingFunction[Documents]):
         return ["cosine", "l2", "ip"]
 
     @staticmethod
-    def build_from_config(config: dict[str, Any]) -> "EmbeddingFunction[Documents]":
+    def build_from_config(config: dict[str, Any]) -> EmbeddingFunction[Documents]:
         api_key_env_var = config.get("api_key_env_var")
         model_name = config.get("model_name")
         task_type = config.get("task_type")

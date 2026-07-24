@@ -1,18 +1,21 @@
-import re
 import os
+import re
+
+import qtawesome as qta
+from PySide6.QtCore import QStringListModel, Qt, Slot
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
     QCompleter,
     QFileDialog,
+    QHBoxLayout,
+    QPushButton,
     QSizePolicy,
+    QVBoxLayout,
 )
-from PySide6.QtCore import Qt, QStringListModel, Slot
-from PySide6.QtGui import QTextCursor
-import qtawesome as qta
+
 from AgentCrew.modules.console.completers import DirectoryListingCompleter
 from AgentCrew.modules.gui.widgets.paste_aware_textedit import PasteAwareTextEdit
+
 from .completers import GuiChatCompleter
 
 

@@ -1,5 +1,8 @@
 import json
 from typing import Any
+
+import pyperclip
+from PySide6.QtCore import Slot
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -8,9 +11,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
-from PySide6.QtCore import Slot
-
-import pyperclip
 
 from AgentCrew.modules.gui.widgets.evolution_loading_dialog import (
     EvolutionLoadingDialog,
@@ -45,25 +45,18 @@ class CommandHandler:
             return True
 
         # Copy command
-        elif user_input.startswith("/copy"):
-            self.chat_window.llm_worker.process_request.emit(user_input)
-            self.chat_window.ui_state_manager.set_input_controls_enabled(True)
-            return True
-
-        # Debug command
-        elif user_input.startswith("/debug"):
-            self.chat_window.llm_worker.process_request.emit(user_input)
-            self.chat_window.ui_state_manager.set_input_controls_enabled(True)
-            return True
-
         elif (
-            user_input.startswith("/mcp")
-            or user_input.startswith("/model")
-            or user_input.startswith("/think")
-            or user_input.startswith("/usage")
-            or user_input.startswith("/toggle_transfer")
-            or user_input.startswith("/agent_mode")
-            or user_input.startswith("/file")
+            user_input.startswith("/copy")
+            or user_input.startswith("/debug")
+            or (
+                user_input.startswith("/mcp")
+                or user_input.startswith("/model")
+                or user_input.startswith("/think")
+                or user_input.startswith("/usage")
+                or user_input.startswith("/toggle_transfer")
+                or user_input.startswith("/agent_mode")
+                or user_input.startswith("/file")
+            )
         ):
             self.chat_window.llm_worker.process_request.emit(user_input)
             self.chat_window.ui_state_manager.set_input_controls_enabled(True)

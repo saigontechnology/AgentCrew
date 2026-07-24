@@ -1,9 +1,9 @@
-from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
 import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
 
 from AgentCrew.modules.events.hooks import CancelOperation
-
 
 SEQUENTIAL_TOOLS = frozenset({"transfer", "ask"})
 SEQUENTIAL_PREFIXES = ("browser_",)

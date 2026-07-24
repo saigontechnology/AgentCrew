@@ -1,27 +1,29 @@
-import os
-import sys
-import time
-import uuid
-import threading
-import subprocess
-import re
 import atexit
 import hashlib
-from typing import Any, Tuple
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+import uuid
 from datetime import datetime
-from .types import CommandState, CommandProcess
-from .constants import (
-    MAX_CONCURRENT_COMMANDS,
-    MAX_COMMAND_LIFETIME,
-    MAX_OUTPUT_LINES,
-    MAX_COMMANDS_PER_MINUTE,
-    MAX_INPUT_SIZE,
-    BLOCKED_PATTERNS,
-    PROHIBITED_WORKING_PATHS,
-    USER_SENSITIVE_PATHS,
-    PROTECTED_ENV_VARS,
-)
+from typing import Any
+
 from loguru import logger
+
+from .constants import (
+    BLOCKED_PATTERNS,
+    MAX_COMMAND_LIFETIME,
+    MAX_COMMANDS_PER_MINUTE,
+    MAX_CONCURRENT_COMMANDS,
+    MAX_INPUT_SIZE,
+    MAX_OUTPUT_LINES,
+    PROHIBITED_WORKING_PATHS,
+    PROTECTED_ENV_VARS,
+    USER_SENSITIVE_PATHS,
+)
+from .types import CommandProcess, CommandState
 
 
 class CommandExecutionService:
@@ -71,7 +73,7 @@ class CommandExecutionService:
 
         logger.info(f"CommandExecutionService initialized (platform: {self.platform})")
 
-    def _get_shell_config(self) -> Tuple[str, list[str]]:
+    def _get_shell_config(self) -> tuple[str, list[str]]:
         """Get platform-specific shell configuration"""
         if self._is_windows:
             # Windows PowerShell with UTF-8 encoding and text output
@@ -88,7 +90,7 @@ class CommandExecutionService:
             # Unix: bash shell
             return "/bin/bash", ["-c"]
 
-    def _validate_command(self, command: str) -> Tuple[bool, str]:
+    def _validate_command(self, command: str) -> tuple[bool, str]:
         """
         Validate command against security policy.
 
@@ -104,7 +106,7 @@ class CommandExecutionService:
 
         return True, ""
 
-    def _check_rate_limit(self) -> Tuple[bool, str]:
+    def _check_rate_limit(self) -> tuple[bool, str]:
         """
         Check if application is within rate limits.
 
@@ -140,7 +142,7 @@ class CommandExecutionService:
 
     def _validate_working_dir(
         self, working_dir: str | None
-    ) -> Tuple[bool, str, str | None]:
+    ) -> tuple[bool, str, str | None]:
         """
         Validate and resolve working directory against security blacklist.
 
@@ -192,7 +194,7 @@ class CommandExecutionService:
         except Exception as e:
             return False, f"Invalid working directory: {e}", None
 
-    def _validate_env_vars(self, env_vars: dict[str, str] | None) -> Tuple[bool, str]:
+    def _validate_env_vars(self, env_vars: dict[str, str] | None) -> tuple[bool, str]:
         """
         Validate environment variables.
 
@@ -453,7 +455,7 @@ class CommandExecutionService:
             if command_id in self._instances:
                 self._cleanup_command_internal(command_id)
 
-            return {"status": "error", "error": f"Execution failed: {str(e)}"}
+            return {"status": "error", "error": f"Execution failed: {e!s}"}
 
     def get_command_status(self, command_id: str) -> dict[str, Any]:
         """
@@ -568,7 +570,7 @@ class CommandExecutionService:
                 cmd_process.process.stdin.write(input_text.encode("utf-8"))
                 cmd_process.process.stdin.flush()
 
-            logger.debug(f"Sent input to command {command_id}: {repr(input_text)}")
+            logger.debug(f"Sent input to command {command_id}: {input_text!r}")
 
             if cmd_process.state == CommandState.WAITING_INPUT:
                 cmd_process.transition_to(CommandState.RUNNING)
@@ -581,7 +583,7 @@ class CommandExecutionService:
 
         except Exception as e:
             logger.error(f"Failed to send input to command {command_id}: {e}")
-            return {"status": "error", "error": f"Failed to send input: {str(e)}"}
+            return {"status": "error", "error": f"Failed to send input: {e!s}"}
 
     def cleanup_command(self, command_id: str) -> dict[str, Any]:
         """
@@ -609,7 +611,7 @@ class CommandExecutionService:
             }
         except Exception as e:
             logger.error(f"Cleanup error for {command_id}: {e}")
-            return {"status": "error", "error": f"Cleanup failed: {str(e)}"}
+            return {"status": "error", "error": f"Cleanup failed: {e!s}"}
 
     def _cleanup_command_internal(self, command_id: str):
         """

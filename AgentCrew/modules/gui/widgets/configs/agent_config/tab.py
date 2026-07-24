@@ -1,3 +1,6 @@
+import os
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QMessageBox,
@@ -8,9 +11,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-import os
-from PySide6.QtCore import Qt, Signal
 
+from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.agents_config import (
     AgentsConfig,
@@ -18,16 +20,15 @@ from AgentCrew.modules.config.agents_config import (
     LocalAgentConfig,
     RemoteAgentConfig,
 )
-from AgentCrew.modules.agents import AgentManager
-from AgentCrew.modules.memory.context_persistent import ContextPersistenceService
-
 from AgentCrew.modules.gui.themes import StyleProvider
 from AgentCrew.modules.gui.widgets.loading_overlay import LoadingOverlay
+from AgentCrew.modules.memory.context_persistent import ContextPersistenceService
+
 from ..save_worker import SaveWorker
 from .agent_list_panel import AgentListPanel
+from .import_export_actions import determine_file_format_and_path
 from .local_agent_editor import LocalAgentEditor
 from .remote_agent_editor import RemoteAgentEditor
-from .import_export_actions import determine_file_format_and_path
 
 
 class AgentsConfigTab(QWidget):
@@ -147,7 +148,6 @@ class AgentsConfigTab(QWidget):
     def on_selection_changed(self):
         """Handle selection changes to update button states."""
         # The AgentListPanel already manages export/remove enable state
-        pass
 
     def on_agent_selected(self, current):
         """Handle agent selection."""
@@ -211,9 +211,7 @@ class AgentsConfigTab(QWidget):
             if (
                 current_editor_widget == self.local_agent_editor
                 and self.local_agent_editor.local_agent_tab_widget.isEnabled()
-            ):
-                is_editor_active = True
-            elif (
+            ) or (
                 current_editor_widget == self.remote_agent_editor
                 and self.remote_agent_editor.remote_name_input.isEnabled()
             ):
@@ -538,7 +536,7 @@ class AgentsConfigTab(QWidget):
 
         except Exception as e:
             QMessageBox.critical(
-                self, "Import Error", f"Failed to import agent configuration: {str(e)}"
+                self, "Import Error", f"Failed to import agent configuration: {e!s}"
             )
 
     def export_agents(self):
@@ -619,7 +617,7 @@ class AgentsConfigTab(QWidget):
 
         except Exception as e:
             QMessageBox.critical(
-                self, "Export Error", f"Failed to export agents:\n{str(e)}"
+                self, "Export Error", f"Failed to export agents:\n{e!s}"
             )
 
     # ------------------------------------------------------------------

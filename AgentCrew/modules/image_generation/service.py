@@ -30,9 +30,9 @@ class ImageGenerationService:
 
     def _initialize_providers(self) -> None:
         """Initialize providers in priority order."""
-        from .providers.openai_provider import OpenAIImageProvider
-        from .providers.gemini_provider import GeminiImageProvider
         from .providers.deepinfra_provider import DeepInfraImageProvider
+        from .providers.gemini_provider import GeminiImageProvider
+        from .providers.openai_provider import OpenAIImageProvider
 
         self._providers = [
             GeminiImageProvider(),

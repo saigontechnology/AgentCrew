@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 from enum import Enum
-
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Callable
+    from typing import Any
+
     from AgentCrew.modules.llm.base import BaseLLMService
-    from typing import AsyncGenerator, Any, Callable, Union
 
 
 class MessageType(Enum):
@@ -35,7 +36,6 @@ class BaseAgent(ABC):
         Returns:
             True if activation was successful, False otherwise
         """
-        pass
 
     @abstractmethod
     def deactivate(self) -> bool:
@@ -45,12 +45,10 @@ class BaseAgent(ABC):
         Returns:
             True if deactivation was successful, False otherwise
         """
-        pass
 
     @abstractmethod
-    def append_message(self, messages: Union[dict, list[dict]]):
+    def append_message(self, messages: dict | list[dict]):
         """Append a message or list of messages to the agent's history."""
-        pass
 
     @property
     @abstractmethod

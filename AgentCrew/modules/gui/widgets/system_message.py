@@ -1,18 +1,17 @@
 import markdown
-
-from PySide6.QtWidgets import (
-    QSizePolicy,
-    QWidget,
-    QVBoxLayout,
-    QPushButton,
-    QLabel,
-)
 from PySide6.QtCore import (
     Qt,
 )
-from AgentCrew.modules.gui.themes import StyleProvider
-
 from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from AgentCrew.modules.gui.themes import StyleProvider
 
 
 class SystemMessageWidget(QWidget):

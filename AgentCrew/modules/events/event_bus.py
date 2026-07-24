@@ -15,8 +15,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import weakref
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
+
 from loguru import logger
 
 
@@ -64,7 +66,7 @@ class _WeakMethod:
     def dead(self) -> bool:
         return self._is_bound and self._self() is None  # type: ignore
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, _WeakMethod)
             and self._func == other._func

@@ -1,5 +1,5 @@
-from PySide6.QtCore import QTimer
 import qtawesome as qta
+from PySide6.QtCore import QTimer
 from qtpy.QtGui import QIcon
 
 

@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
-import os
 import copy
+import os
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal, cast
 
-from .base import BaseAgent, MessageType
-from AgentCrew.modules.llm.token_usage import TokenUsage
 from loguru import logger
 
+from AgentCrew.modules.llm.token_usage import TokenUsage
+
+from .base import BaseAgent, MessageType
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
+
     from AgentCrew.modules.llm import BaseLLMService
-    from typing import Any, Callable, Union
 
 
 def normalize_voice_enabled(value) -> Literal["enabled", "disabled"]:
@@ -75,8 +79,8 @@ class LocalAgent(BaseAgent):
 
         self._colaboration_mode = AgentMode.NONE
 
-        from .tool_registrar import AgentToolRegistrar
         from .context_manager import AgentContextManager
+        from .tool_registrar import AgentToolRegistrar
 
         self._tool_registrar = AgentToolRegistrar(self)
         self._context_manager = AgentContextManager(self)
@@ -114,7 +118,7 @@ class LocalAgent(BaseAgent):
 
         return extract_tool_name(tool_def)
 
-    def append_message(self, messages: Union[dict, list[dict]]):
+    def append_message(self, messages: dict | list[dict]):
         copy_messages = copy.deepcopy(messages)
         if isinstance(copy_messages, list):
             self.history.extend(copy_messages)
@@ -287,9 +291,9 @@ class LocalAgent(BaseAgent):
 
         # Add error indication if needed
         if is_error:
-            message["content"] = f"ERROR: {str(message['content'])}"
+            message["content"] = f"ERROR: {message['content']!s}"
         if is_rejected:
-            message["content"] = f"DENIED: {str(message['content'])}"
+            message["content"] = f"DENIED: {message['content']!s}"
             message["is_rejected"] = True
 
         return message
@@ -372,9 +376,9 @@ class LocalAgent(BaseAgent):
             ToolExecuteResult,
         )
         from AgentCrew.modules.events.hooks import (
-            HookRegistry,
-            HookPoints,
             CancelOperation,
+            HookPoints,
+            HookRegistry,
         )
 
         hooks = HookRegistry.get_instance()
@@ -687,13 +691,13 @@ class LocalAgent(BaseAgent):
 
         preparing_messages = messages or self.history
 
-        from AgentCrew.modules.events.hooks import (
-            HookRegistry,
-            HookPoints,
-        )
         from AgentCrew.modules.events.hook_payloads import (
             ContextBuildContext,
             ContextBuildResult,
+        )
+        from AgentCrew.modules.events.hooks import (
+            HookPoints,
+            HookRegistry,
         )
 
         _hooks = HookRegistry.get_instance()
@@ -776,13 +780,13 @@ class LocalAgent(BaseAgent):
         _tool_uses: list[dict[str, Any]] = []
         _token_usage = TokenUsage()
 
-        from AgentCrew.modules.events.hooks import (
-            HookRegistry,
-            HookPoints,
-        )
         from AgentCrew.modules.events.hook_payloads import (
             AgentProcessContext,
             AgentProcessResult,
+        )
+        from AgentCrew.modules.events.hooks import (
+            HookPoints,
+            HookRegistry,
         )
 
         _hooks = HookRegistry.get_instance()

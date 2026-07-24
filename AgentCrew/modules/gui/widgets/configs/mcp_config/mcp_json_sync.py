@@ -1,8 +1,8 @@
-from PySide6.QtWidgets import QStackedWidget, QPushButton, QMessageBox
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import QMessageBox, QPushButton, QStackedWidget
 
-from AgentCrew.modules.gui.widgets.json_editor import JsonEditor
 from AgentCrew.modules.gui.themes import StyleProvider
+from AgentCrew.modules.gui.widgets.json_editor import JsonEditor
 
 
 class MCPJsonSync(QObject):
@@ -60,7 +60,7 @@ class MCPJsonSync(QObject):
                 QMessageBox.warning(
                     None,
                     "Invalid JSON",
-                    f"Cannot switch to form view: {str(e)}\n"
+                    f"Cannot switch to form view: {e!s}\n"
                     "Please fix the JSON syntax first.",
                 )
                 return False

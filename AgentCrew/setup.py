@@ -1,26 +1,25 @@
-import os
+import functools
 import json
+import os
 import time
 import webbrowser
-import functools
 from typing import Any
 
 import click
 import requests
 from loguru import logger
 
+from AgentCrew.modules.agents import AgentManager, LocalAgent, RemoteAgent
+from AgentCrew.modules.agents.example import (
+    DEFAULT_DESCRIPTION,
+    DEFAULT_NAME,
+    DEFAULT_PROMPT,
+)
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
 from AgentCrew.modules.events import PluginManager
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.service_manager import ServiceManager
-from AgentCrew.modules.agents import AgentManager, LocalAgent, RemoteAgent
-from AgentCrew.modules.agents.example import (
-    DEFAULT_NAME,
-    DEFAULT_DESCRIPTION,
-    DEFAULT_PROMPT,
-)
-
 
 PROVIDER_LIST = [
     "claude",
@@ -138,6 +137,14 @@ class ApplicationSetup:
         finally:
             self._plugins_initialized = False
 
+    async def shutdown(self) -> None:
+        """Release application-owned plugin and remote-agent resources."""
+        try:
+            await self.shutdown_plugins()
+        finally:
+            if self.agent_manager is not None:
+                await self.agent_manager.close_all_remote_agents()
+
     def load_api_keys_from_config(self) -> None:
         config_file_path = os.getenv("AGENTCREW_CONFIG_PATH")
         if not config_file_path:
@@ -186,7 +193,7 @@ class ApplicationSetup:
         ]
 
         for key_name in keys_to_check:
-            if key_name in api_keys_config and api_keys_config[key_name]:
+            if api_keys_config.get(key_name):
                 os.environ[key_name] = str(api_keys_config[key_name]).strip()
 
     def detect_provider(self) -> str | None:
@@ -345,7 +352,7 @@ class ApplicationSetup:
             search_service = TavilySearchService()
         except ValueError as e:
             click.echo(
-                f"\u26a0\ufe0f Web search tools not available: {str(e)}\n"
+                f"\u26a0\ufe0f Web search tools not available: {e!s}\n"
                 "   Without web search, agents cannot look up current information, recent events,\n"
                 "   documentation, or real-time data from the internet.\n"
                 "   \U0001f4a1 Get a free Tavily API key (no credit card, 1,000 calls/month) at:\n"
@@ -354,7 +361,7 @@ class ApplicationSetup:
             )
             search_service = None
         except Exception as e:
-            click.echo(f"\u26a0\ufe0f Web search tools not available: {str(e)}")
+            click.echo(f"\u26a0\ufe0f Web search tools not available: {e!s}")
             search_service = None
 
         try:
@@ -375,7 +382,7 @@ class ApplicationSetup:
 
             code_analysis_service = CodeAnalysisService(llm_service=code_analysis_llm)
         except Exception as e:
-            click.echo(f"\u26a0\ufe0f Code analysis tool not available: {str(e)}")
+            click.echo(f"\u26a0\ufe0f Code analysis tool not available: {e!s}")
             code_analysis_service = None
 
         try:
@@ -383,9 +390,7 @@ class ApplicationSetup:
 
             browser_automation_service = BrowserAutomationService()
         except Exception as e:
-            click.echo(
-                f"\u26a0\ufe0f Browser automation service not available: {str(e)}"
-            )
+            click.echo(f"\u26a0\ufe0f Browser automation service not available: {e!s}")
             browser_automation_service = None
 
         try:
@@ -393,7 +398,7 @@ class ApplicationSetup:
 
             file_editing_service = FileEditingService()
         except Exception as e:
-            click.echo(f"\u26a0\ufe0f File editing service not available: {str(e)}")
+            click.echo(f"\u26a0\ufe0f File editing service not available: {e!s}")
             file_editing_service = None
 
         try:
@@ -401,9 +406,7 @@ class ApplicationSetup:
 
             command_execution_service = CommandExecutionService.get_instance()
         except Exception as e:
-            click.echo(
-                f"\u26a0\ufe0f Command execution service not available: {str(e)}"
-            )
+            click.echo(f"\u26a0\ufe0f Command execution service not available: {e!s}")
             command_execution_service = None
 
         try:
@@ -411,7 +414,7 @@ class ApplicationSetup:
 
             skills_service = SkillsService()
         except Exception as e:
-            click.echo(f"\u26a0\ufe0f Skills service not available: {str(e)}")
+            click.echo(f"\u26a0\ufe0f Skills service not available: {e!s}")
             skills_service = None
 
         try:
@@ -429,7 +432,7 @@ class ApplicationSetup:
                 )
                 image_generation_service = None
         except Exception as e:
-            click.echo(f"⚠️ Image generation service not available: {str(e)}")
+            click.echo(f"⚠️ Image generation service not available: {e!s}")
             image_generation_service = None
 
         voice_service = None
@@ -450,7 +453,7 @@ class ApplicationSetup:
 
                     voice_service = DeepInfraVoiceService()
             except Exception as e:
-                click.echo(f"\u26a0\ufe0f Voice service not available: {str(e)}")
+                click.echo(f"\u26a0\ufe0f Voice service not available: {e!s}")
 
         self.services = {
             "llm": llm_service,
@@ -770,7 +773,7 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
             click.echo("Install it with: pip install requests")
             return False
         except Exception as e:
-            click.echo(f"\u274c Authentication failed: {str(e)}", err=True)
+            click.echo(f"\u274c Authentication failed: {e!s}", err=True)
             return False
 
     @staticmethod
@@ -796,5 +799,5 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
                 click.echo("\u274c ChatGPT authentication failed.", err=True)
                 return False
         except Exception as e:
-            click.echo(f"\u274c ChatGPT authentication failed: {str(e)}", err=True)
+            click.echo(f"\u274c ChatGPT authentication failed: {e!s}", err=True)
             return False

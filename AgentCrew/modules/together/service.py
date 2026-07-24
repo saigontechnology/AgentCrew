@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Tuple
+from typing import Any
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -164,7 +164,7 @@ class TogetherAIService(BaseLLMService):
                 ):
                     msg["reasoning_content"] = (
                         msg["reasoning_content"]
-                        if "reasoning_content" in msg and msg["reasoning_content"]
+                        if msg.get("reasoning_content")
                         else " "
                     )
                 msg["tool_calls"] = converted_tool_calls
@@ -351,7 +351,7 @@ class TogetherAIService(BaseLLMService):
 
     def process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         chunk_text = None
         input_tokens = 0
         output_tokens = 0

@@ -4,8 +4,8 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from AgentCrew.modules.openai import OpenAIResponseService
 from AgentCrew.modules.llm.model_registry import ModelRegistry
+from AgentCrew.modules.openai import OpenAIResponseService
 from AgentCrew.modules.openai_codex.oauth import OpenAICodexOAuth
 
 CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"

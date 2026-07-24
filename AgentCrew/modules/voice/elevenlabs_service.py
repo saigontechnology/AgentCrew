@@ -1,18 +1,19 @@
 import os
+import queue
 import tempfile
 import threading
 import time
-from typing import Any, Callable
+from collections.abc import Callable
 from io import BytesIO
-import queue
-import soundfile as sf
-from elevenlabs import ElevenLabs, VoiceSettings, stream, SpeechToTextChunkResponseModel
-from .text_cleaner import TextCleaner
-from .audio_handler import AudioHandler
-from .base import BaseVoiceService
+from typing import Any
 
+import soundfile as sf
+from elevenlabs import ElevenLabs, SpeechToTextChunkResponseModel, VoiceSettings, stream
 from loguru import logger
 
+from .audio_handler import AudioHandler
+from .base import BaseVoiceService
+from .text_cleaner import TextCleaner
 
 ELEVENLABS_INTER_SENTENCE_GAP_SECONDS = 0.12
 
@@ -69,8 +70,8 @@ class ElevenLabsVoiceService(BaseVoiceService):
                 "message": "Recording started.",
             }
         except Exception as e:
-            logger.error(f"Failed to start recording: {str(e)}")
-            return {"success": False, "error": f"Failed to start recording: {str(e)}"}
+            logger.error(f"Failed to start recording: {e!s}")
+            return {"success": False, "error": f"Failed to start recording: {e!s}"}
 
     def stop_voice_recording(self) -> dict[str, Any]:
         """
@@ -95,8 +96,8 @@ class ElevenLabsVoiceService(BaseVoiceService):
             }
 
         except Exception as e:
-            logger.error(f"Failed to stop recording: {str(e)}")
-            return {"success": False, "error": f"Failed to stop recording: {str(e)}"}
+            logger.error(f"Failed to stop recording: {e!s}")
+            return {"success": False, "error": f"Failed to stop recording: {e!s}"}
 
     def is_recording(self) -> bool:
         """Check if currently recording."""
@@ -146,8 +147,8 @@ class ElevenLabsVoiceService(BaseVoiceService):
             }
 
         except Exception as e:
-            logger.error(f"Speech-to-text failed: {str(e)}")
-            return {"success": False, "error": f"Failed to transcribe audio: {str(e)}"}
+            logger.error(f"Speech-to-text failed: {e!s}")
+            return {"success": False, "error": f"Failed to transcribe audio: {e!s}"}
 
     def clean_text_for_speech(self, text: str) -> str:
         """
@@ -185,7 +186,7 @@ class ElevenLabsVoiceService(BaseVoiceService):
             except queue.Empty:
                 continue
             except Exception as e:
-                logger.error(f"TTS worker error: {str(e)}")
+                logger.error(f"TTS worker error: {e!s}")
 
         logger.debug("TTS worker thread stopped")
 
@@ -258,7 +259,7 @@ class ElevenLabsVoiceService(BaseVoiceService):
 
         except Exception as e:
             self.audio_handler.is_host_playing = False
-            logger.error(f"Text-to-speech processing failed: {str(e)}")
+            logger.error(f"Text-to-speech processing failed: {e!s}")
 
     def text_to_speech_stream(
         self, text: str, voice_id: str | None = None, model_id: str | None = None
@@ -291,7 +292,7 @@ class ElevenLabsVoiceService(BaseVoiceService):
                     f"TTS queue is full (size: {self.tts_queue.qsize()}), dropping request"
                 )
         except Exception as e:
-            logger.error(f"Failed to queue TTS request: {str(e)}")
+            logger.error(f"Failed to queue TTS request: {e!s}")
 
     def list_voices(self) -> dict[str, Any]:
         """list available ElevenLabs voices."""
@@ -310,7 +311,7 @@ class ElevenLabsVoiceService(BaseVoiceService):
                 ],
             }
         except Exception as e:
-            return {"success": False, "error": f"Failed to list voices: {str(e)}"}
+            return {"success": False, "error": f"Failed to list voices: {e!s}"}
 
     def set_voice(self, voice_id: str):
         """Set the default voice for TTS."""

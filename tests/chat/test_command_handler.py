@@ -1,9 +1,11 @@
 import unittest
 from unittest.mock import MagicMock, patch
+
 from AgentCrew.modules.chat.command_handler import CommandHandler
 from AgentCrew.modules.chat.types import CommandType
-from AgentCrew.modules.llm.base import BaseLLMService
+
 from AgentCrew.modules.agents import AgentManager
+from AgentCrew.modules.llm.base import BaseLLMService
 
 
 class TestCommandHandler(unittest.TestCase):

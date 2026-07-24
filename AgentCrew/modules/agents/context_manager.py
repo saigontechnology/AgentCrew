@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from typing import TYPE_CHECKING, Any
+
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -20,7 +21,7 @@ class AgentContextManager:
     - Pruning tool results when approaching the model token limit
     """
 
-    def __init__(self, agent: "LocalAgent") -> None:
+    def __init__(self, agent: LocalAgent) -> None:
         self._agent = agent
 
     def build_adaptive_context(self) -> list[str]:
@@ -47,13 +48,11 @@ You must analyze and plan out the steps then execute it with your available tool
             catalog = skills_service.get_catalog()
             skill_lines = [f"- **{s['name']}**: {s['description']}" for s in catalog]
             adaptive_messages.append(
-                (
-                    "## Available Skills\n"
-                    f"{'\n'.join(skill_lines)}\n\n"
-                    "When a task matches a skill's description, call the "
-                    "`activate_skill` tool with the skill's name to load its "
-                    "full instructions before proceeding."
-                )
+                "## Available Skills\n"
+                f"{'\n'.join(skill_lines)}\n\n"
+                "When a task matches a skill's description, call the "
+                "`activate_skill` tool with the skill's name to load its "
+                "full instructions before proceeding."
             )
 
         from AgentCrew.modules.memory.context_persistent import (
@@ -93,15 +92,13 @@ You must analyze and plan out the steps then execute it with your available tool
 
         if adaptive_sections:
             adaptive_messages.append(
-                (
-                    "## Current Behaviors\n"
-                    "### How to Apply\n"
-                    "Each behavior follows the format: `when [condition], [action steps]`.\n"
-                    "- **Condition matching**: At the start of every task, scan all behaviors. If the current task matches a condition, apply its action steps.\n"
-                    "- **Multiple matches**: Apply all matching behaviors. Project behaviors override global ones when they conflict.\n"
-                    "- **What counts as a match**: The condition describes a triggering situation — project context, user preferences, task type, etc. Use your best judgment.\n\n"
-                    f"{'\n\n'.join(adaptive_sections)}"
-                )
+                "## Current Behaviors\n"
+                "### How to Apply\n"
+                "Each behavior follows the format: `when [condition], [action steps]`.\n"
+                "- **Condition matching**: At the start of every task, scan all behaviors. If the current task matches a condition, apply its action steps.\n"
+                "- **Multiple matches**: Apply all matching behaviors. Project behaviors override global ones when they conflict.\n"
+                "- **What counts as a match**: The condition describes a triggering situation — project context, user preferences, task type, etc. Use your best judgment.\n\n"
+                f"{'\n\n'.join(adaptive_sections)}"
             )
 
         return adaptive_messages

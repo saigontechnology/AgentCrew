@@ -5,26 +5,26 @@ Handles tool confirmation requests and MCP prompt confirmations.
 
 from __future__ import annotations
 
-from rich.text import Text
-from rich.panel import Panel
-from rich.box import HORIZONTALS
-from rich.console import Group
-from prompt_toolkit.formatted_text import HTML
 import textwrap
 import time
+from typing import TYPE_CHECKING
 
-from .diff_display import DiffDisplay
+from prompt_toolkit.formatted_text import HTML
+from rich.box import HORIZONTALS
+from rich.console import Group
+from rich.panel import Panel
+from rich.text import Text
 
 from .constants import (
     RICH_STYLE_BLUE,
     RICH_STYLE_BLUE_BOLD,
-    RICH_STYLE_YELLOW,
+    RICH_STYLE_GRAY,
     RICH_STYLE_GREEN,
     RICH_STYLE_RED,
-    RICH_STYLE_GRAY,
     RICH_STYLE_WHITE,
+    RICH_STYLE_YELLOW,
 )
-from typing import TYPE_CHECKING
+from .diff_display import DiffDisplay
 
 if TYPE_CHECKING:
     from .console_ui import ConsoleUI

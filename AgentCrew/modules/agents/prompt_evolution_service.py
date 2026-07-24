@@ -7,9 +7,9 @@ from typing import Any
 import xmltodict
 from loguru import logger
 
+from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.config.agents_config import AgentsConfig
-from AgentCrew.modules.agents import AgentManager
 
 
 class PromptEvolutionService:
@@ -112,10 +112,10 @@ Before finalizing, deduplicate and consolidate the full prompt so the output is 
 Output ONLY the complete revised system prompt. No commentary, no explanation, no markdown wrapping, no current_system_prompt tags warning."""
 
     PROJECT_SPECIFIC_PATTERNS = [
-        re.compile(r"(tests?/|src/|lib/|modules/|components/)[^\s]+", re.I),
+        re.compile(r"(tests?/|src/|lib/|modules/|components/)[^\s]+", re.IGNORECASE),
         re.compile(r"\.\w{1,5}\b"),
-        re.compile(r"\b(JIRA|TICK|ISSUE|PR|MR)-?\d+\b", re.I),
-        re.compile(r"\b(branch|commit|merge|rebase)\s+\w+/\w+", re.I),
+        re.compile(r"\b(JIRA|TICK|ISSUE|PR|MR)-?\d+\b", re.IGNORECASE),
+        re.compile(r"\b(branch|commit|merge|rebase)\s+\w+/\w+", re.IGNORECASE),
     ]
 
     def __init__(
@@ -391,7 +391,7 @@ Output ONLY the complete revised system prompt. No commentary, no explanation, n
         try:
             return json.loads(raw_response)
         except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", raw_response, re.S)
+            match = re.search(r"\{.*\}", raw_response, re.DOTALL)
             if not match:
                 raise ValueError(
                     "Evolution analysis returned invalid structured output."

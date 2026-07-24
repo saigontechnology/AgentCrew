@@ -1,31 +1,30 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QListWidget,
-    QListWidgetItem,
-    QLineEdit,
-    QMenu,
-    QMessageBox,
-    QAbstractItemView,
-)
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import (
     Qt,
-    Slot,
     QThread,
     Signal,
+    Slot,
 )
 from PySide6.QtGui import QAction
-
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QHBoxLayout,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 from qtpy.QtWidgets import QApplication
 
-from AgentCrew.modules.gui.themes import StyleProvider
 from AgentCrew.modules.chat.fork_utils import format_fork_title
-
-from typing import TYPE_CHECKING
+from AgentCrew.modules.gui.themes import StyleProvider
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message_handler import MessageHandler
@@ -111,7 +110,7 @@ class ConversationSidebar(QWidget):
             self._conversations = self.message_handler.list_conversations_with_forks()
             self.filter_conversations()  # Apply current filter
         except Exception as e:
-            self.error_occurred.emit(f"Failed to load conversations: {str(e)}")
+            self.error_occurred.emit(f"Failed to load conversations: {e!s}")
             self._conversations = []  # Clear local cache on error
             self.conversation_list.clear()  # Clear UI list
 
@@ -303,4 +302,4 @@ class ConversationLoader(QThread):
             print(
                 f"Error loading conversation {self.conv_id}: {traceback.format_exc()}"
             )
-            self.error.emit(f"Failed to load conversation '{self.conv_id}': {str(e)}")
+            self.error.emit(f"Failed to load conversation '{self.conv_id}': {e!s}")

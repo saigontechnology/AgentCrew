@@ -1,10 +1,12 @@
-import unittest
 import os
+import unittest
+
 from dotenv import load_dotenv
+
 from AgentCrew.modules.web_search.service import TavilySearchService
 from AgentCrew.modules.web_search.tool import (
-    get_web_search_tool_handler,
     get_web_extract_tool_handler,
+    get_web_search_tool_handler,
 )
 
 

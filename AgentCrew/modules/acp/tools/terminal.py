@@ -4,7 +4,8 @@ import asyncio
 import os
 import shlex
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from loguru import logger
 
@@ -139,7 +140,7 @@ def get_acp_run_command_tool_handler() -> Callable:
                     )
                     exit_code = getattr(wait_response, "exit_code", None)
                     output_text = await _terminal_output_text(ctx, terminal_id)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     timed_out = True
                     await _kill_terminal(ctx, terminal_id)
                     output_text = await _terminal_output_text(ctx, terminal_id)

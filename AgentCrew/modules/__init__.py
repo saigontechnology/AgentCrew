@@ -1,9 +1,7 @@
+import os
 import tempfile
 from datetime import datetime
-import os
-
-
-from typing import TextIO, AnyStr
+from typing import AnyStr, TextIO
 
 
 class FileLogIO(TextIO):

@@ -1,15 +1,15 @@
-import os
 import base64
 import hashlib
 import mimetypes
+import os
 import re
+import sys
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-import sys
+
 from loguru import logger
 from pydantic import AnyUrl
-
 
 # Docling Configuration
 DOCLING_ENABLED = True  # Toggle to enable/disable Docling integration
@@ -111,7 +111,7 @@ def read_binary_file(file_path):
             content = f.read()
         return base64.b64encode(content).decode("utf-8")
     except Exception as e:
-        logger.error(f"❌ Error reading file {file_path}: {str(e)}")
+        logger.error(f"❌ Error reading file {file_path}: {e!s}")
         return None
 
 
@@ -160,7 +160,7 @@ def optimize_image_file(file_path: str, output_dir: str | None = None) -> str | 
             _save_webp_image(image, output_path)
         return str(output_path)
     except Exception as e:
-        logger.warning(f"Failed to optimize image {file_path}: {str(e)}")
+        logger.warning(f"Failed to optimize image {file_path}: {e!s}")
         return None
 
 
@@ -181,7 +181,7 @@ def optimize_image_bytes(
 
         return str(output_path), read_binary_file(str(output_path)) or ""
     except Exception as e:
-        logger.warning(f"Failed to optimize image bytes: {str(e)}")
+        logger.warning(f"Failed to optimize image bytes: {e!s}")
         return None
 
 
@@ -298,7 +298,9 @@ class FileHandler:
             from docling.datamodel.pipeline_options import (
                 PictureDescriptionApiOptions,
             )
+
             from AgentCrew.modules.config import GlobalConfig
+
             from .vision_preprocessing import VISION_DESCRIPTION_PROMPT
 
             last_used_provider = GlobalConfig().get_last_used_provider()
@@ -361,7 +363,7 @@ class FileHandler:
             )
             return None
         except Exception as e:
-            logger.warning(f"Failed to resolve picture description options: {str(e)}")
+            logger.warning(f"Failed to resolve picture description options: {e!s}")
             return None
 
     def initialize_docling_parser(self):
@@ -369,22 +371,22 @@ class FileHandler:
             return self.converter
         if DOCLING_ENABLED:
             try:
-                from docling.datamodel.base_models import InputFormat
                 from docling.datamodel.accelerator_options import (
                     AcceleratorDevice,
                     AcceleratorOptions,
                 )
+                from docling.datamodel.base_models import InputFormat
                 from docling.datamodel.pipeline_options import (
-                    PdfPipelineOptions,
                     ConvertPipelineOptions,
+                    PdfPipelineOptions,
                     PictureDescriptionApiOptions,
                 )
                 from docling.document_converter import (
                     DocumentConverter,
-                    PdfFormatOption,
-                    WordFormatOption,
                     ExcelFormatOption,
+                    PdfFormatOption,
                     PowerpointFormatOption,
+                    WordFormatOption,
                 )
 
                 pdf_pipeline_options = PdfPipelineOptions(document_timeout=600)
@@ -445,7 +447,7 @@ class FileHandler:
                 )
                 logger.info("Docling converter initialized successfully")
             except Exception as e:
-                logger.error(f"Failed to initialize Docling converter: {str(e)}")
+                logger.error(f"Failed to initialize Docling converter: {e!s}")
 
     def process_file(self, file_path: str) -> dict[str, Any] | None:
         """
@@ -483,10 +485,10 @@ class FileHandler:
                     "text": f"Content of {file_path} (converted to Markdown):\n\n{markdown_content}",
                 }
             except ConversionError as e:
-                logger.warning(f"Docling conversion failed for {file_path}: {str(e)}")
+                logger.warning(f"Docling conversion failed for {file_path}: {e!s}")
                 # Fall through to fallback methods
             except Exception as e:
-                logger.error(f"Unexpected error in Docling conversion: {str(e)}")
+                logger.error(f"Unexpected error in Docling conversion: {e!s}")
                 # Fall through to fallback methods
 
         elif mime_type and mime_type.startswith("image/"):
@@ -511,7 +513,7 @@ class FileHandler:
                     content = f.read()
                 return {"type": "text", "text": f"Content of {file_path}:\n\n{content}"}
             except Exception as e:
-                logger.warning(f"Cannot reading text file {file_path}: {str(e)}")
+                logger.warning(f"Cannot reading text file {file_path}: {e!s}")
                 return None
 
         # Fallback to other file types

@@ -1,16 +1,18 @@
 from __future__ import annotations
-from typing_extensions import deprecated
+
+import base64
+import json
+import re
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
-import re
-import json
-import base64
+
 from loguru import logger
+from typing_extensions import deprecated
 
 from .token_usage import TokenUsage
 
 if TYPE_CHECKING:
-    from typing import Any, Tuple
+    from typing import Any
 
 
 def read_text_file(file_path):
@@ -24,7 +26,7 @@ def read_text_file(file_path):
             with open(file_path, "r", encoding="cp1252") as f:
                 return f.read()
         except Exception as e:
-            logger.error(f"❌ Error reading file {file_path}: {str(e)}")
+            logger.error(f"❌ Error reading file {file_path}: {e!s}")
             return None
 
 
@@ -35,7 +37,7 @@ def read_binary_file(file_path):
             content = f.read()
         return base64.b64encode(content).decode("utf-8")
     except Exception as e:
-        logger.error(f"❌ Error reading file {file_path}: {str(e)}")
+        logger.error(f"❌ Error reading file {file_path}: {e!s}")
         return None
 
 
@@ -44,7 +46,7 @@ def base64_to_bytes(base64_str: str):
     try:
         return base64.b64decode(base64_str)
     except Exception as e:
-        logger.error(f"❌ Error decoding base64: {str(e)}")
+        logger.error(f"❌ Error decoding base64: {e!s}")
         return None
 
 
@@ -124,7 +126,7 @@ class BaseLLMService(ABC):
     def parse_user_context_summary(
         self,
         assistant_response: str,
-    ) -> Tuple[dict[str, Any] | None, str]:
+    ) -> tuple[dict[str, Any] | None, str]:
         """
         Parses the <user_context_summary> JSON block from the beginning of a string.
 
@@ -208,7 +210,6 @@ class BaseLLMService(ABC):
         self, input_tokens: int, output_tokens: int, cached_tokens: int = 0
     ) -> float:
         """Calculate the cost of a request based on token usage."""
-        pass
 
     @abstractmethod
     async def process_message(
@@ -226,7 +227,6 @@ class BaseLLMService(ABC):
         Returns:
             str: The processed response from the LLM
         """
-        pass
 
     @abstractmethod
     @deprecated(
@@ -234,18 +234,15 @@ class BaseLLMService(ABC):
     )
     def process_file_for_message(self, file_path: str) -> dict[str, Any] | None:
         """Process a file and return the appropriate message content."""
-        pass
 
     @abstractmethod
     @deprecated("This method is not used anymore and will be remove soon")
     def handle_file_command(self, file_path: str) -> list[dict[str, Any]] | None:
         """Handle the /file command and return message content."""
-        pass
 
     @abstractmethod
     async def stream_assistant_response(self, messages: list[dict[str, Any]]) -> Any:
         """Stream the assistant's response."""
-        pass
 
     @abstractmethod
     def register_tool(self, tool_definition, handler_function):
@@ -256,11 +253,9 @@ class BaseLLMService(ABC):
             tool_definition (dict): The tool definition following Anthropic's schema
             handler_function (callable): Function to call when tool is used
         """
-        pass
 
     async def close(self):
         """Close the underlying HTTP client and release connections."""
-        pass
 
     async def get_usage(self) -> dict[str, Any]:
         """Return provider usage/limit information when supported."""
@@ -295,7 +290,6 @@ class BaseLLMService(ABC):
         """
         Convert agent message format to the provider-specific format.
         """
-        pass
 
     @abstractmethod
     def set_think(self, budget_tokens) -> bool:
@@ -308,7 +302,6 @@ class BaseLLMService(ABC):
         Returns:
             bool: True if thinking mode is supported and successfully set, False otherwise.
         """
-        pass
 
     @abstractmethod
     def process_stream_chunk(
@@ -331,7 +324,6 @@ class BaseLLMService(ABC):
                 thinking_content (tuple or None) - thinking content from this chunk
             )
         """
-        pass
 
     @abstractmethod
     async def validate_spec(self, prompt: str) -> str:
@@ -344,7 +336,6 @@ class BaseLLMService(ABC):
         Returns:
             Validation result as a string (typically JSON)
         """
-        pass
 
     @abstractmethod
     def set_system_prompt(self, system_prompt: str):
@@ -354,7 +345,6 @@ class BaseLLMService(ABC):
         Args:
             system_prompt: The system prompt to use
         """
-        pass
 
     def get_system_prompt(self) -> str:
         """
@@ -368,4 +358,3 @@ class BaseLLMService(ABC):
         """
         Clear all registered tools from the LLM service.
         """
-        pass

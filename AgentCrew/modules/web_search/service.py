@@ -1,5 +1,6 @@
 import os
 from typing import Any
+
 from dotenv import load_dotenv
 from tavily import TavilyClient
 
@@ -55,7 +56,7 @@ class TavilySearchService:
 
             return self.client.search(**params)
         except Exception as e:
-            print(f"❌ Search error: {str(e)}")
+            print(f"❌ Search error: {e!s}")
             return {"error": str(e)}
 
     def extract(self, url: str, include_images: bool = False) -> dict[str, Any]:
@@ -74,7 +75,7 @@ class TavilySearchService:
                 url, include_images=include_images, extract_depth="advanced"
             )
         except Exception as e:
-            print(f"❌ Extract error: {str(e)}")
+            print(f"❌ Extract error: {e!s}")
             return {"error": str(e)}
 
     def crawl(
@@ -118,7 +119,7 @@ class TavilySearchService:
 
             return self.client.crawl(**kwargs)
         except Exception as e:
-            print(f"❌ Crawl error: {str(e)}")
+            print(f"❌ Crawl error: {e!s}")
             return {"error": str(e)}
 
     def format_search_results(self, results: dict[str, Any]) -> str:
@@ -149,11 +150,11 @@ class TavilySearchService:
     def format_extract_results(self, results: dict[str, Any]) -> str:
         """Format extract results into a readable string."""
 
-        if "failed_results" in results and results["failed_results"]:
+        if results.get("failed_results"):
             result = results["failed_results"][0]
             return f"Extract failed: {result.get('error', 'Unknown error')}"
 
-        if "results" in results and results["results"]:
+        if results.get("results"):
             result = results["results"][0]
             url = result.get("url", "Unknown URL")
             content = result.get("raw_content", "No content available")

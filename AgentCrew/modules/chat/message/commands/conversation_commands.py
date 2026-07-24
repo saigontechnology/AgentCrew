@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from AgentCrew.modules.events import AppEvents
-from typing import Callable, Tuple, TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.chat.consolidation import ConversationConsolidator
 from AgentCrew.modules.chat.message.commands.base import CommandResult
+from AgentCrew.modules.events import AppEvents
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message import MessageHandler
@@ -17,7 +18,7 @@ class ConversationCommands:
     def __init__(
         self,
         message_handler: MessageHandler,
-        agent_command_handler: Callable[[str], Tuple[bool, str]],
+        agent_command_handler: Callable[[str], tuple[bool, str]],
     ):
         self.message_handler = message_handler
         self._agent_command_handler = agent_command_handler
@@ -60,7 +61,7 @@ class ConversationCommands:
                         except Exception as e:
                             await self.message_handler.bus.emit(
                                 AppEvents.ERROR,
-                                message=f"Failed to save consolidated conversation: {str(e)}",
+                                message=f"Failed to save consolidated conversation: {e!s}",
                             )
 
                     message = (
@@ -87,12 +88,12 @@ class ConversationCommands:
         except ValueError as e:
             await self.message_handler.bus.emit(
                 AppEvents.ERROR,
-                message=f"Invalid consolidation parameter: {str(e)}. Use /consolidate [number]",
+                message=f"Invalid consolidation parameter: {e!s}. Use /consolidate [number]",
             )
             return CommandResult(handled=True, clear_flag=True)
         except Exception as e:
             await self.message_handler.bus.emit(
-                AppEvents.ERROR, message=f"Error during consolidation: {str(e)}"
+                AppEvents.ERROR, message=f"Error during consolidation: {e!s}"
             )
             return CommandResult(handled=True, clear_flag=True)
 
@@ -128,7 +129,7 @@ class ConversationCommands:
                         except Exception as e:
                             await self.message_handler.bus.emit(
                                 AppEvents.ERROR,
-                                message=f"Failed to save unconsolidated conversation: {str(e)}",
+                                message=f"Failed to save unconsolidated conversation: {e!s}",
                             )
 
                     message = (
@@ -153,7 +154,7 @@ class ConversationCommands:
                 return CommandResult(handled=False, clear_flag=False)
         except Exception as e:
             await self.message_handler.bus.emit(
-                AppEvents.ERROR, message=f"Error during unconsolidation: {str(e)}"
+                AppEvents.ERROR, message=f"Error during unconsolidation: {e!s}"
             )
             return CommandResult(handled=True, clear_flag=True)
 
@@ -332,6 +333,6 @@ class ConversationCommands:
             return CommandResult(handled=True, clear_flag=True)
         except Exception as e:
             self.message_handler.bus.emit_sync(
-                AppEvents.ERROR, message=f"Failed to fork conversation: {str(e)}"
+                AppEvents.ERROR, message=f"Failed to fork conversation: {e!s}"
             )
             return CommandResult(handled=True, clear_flag=True)

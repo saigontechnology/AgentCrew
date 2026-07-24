@@ -13,15 +13,17 @@ Focus areas:
 9. Turn boundaries without assistant response
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from AgentCrew.modules.chat.message.commands.utility_commands import UtilityCommands
+
+import pytest
+
+from AgentCrew.modules.chat.message.command_processor import CommandProcessor
 from AgentCrew.modules.chat.message.commands.copy_utils import (
-    get_copyable_assistants,
     extract_assistant_text,
     extract_assistant_text_preview,
+    get_copyable_assistants,
 )
-from AgentCrew.modules.chat.message.command_processor import CommandProcessor
+from AgentCrew.modules.chat.message.commands.utility_commands import UtilityCommands
 from AgentCrew.modules.events.constants import AppEvents
 
 

@@ -1,4 +1,4 @@
-from .service import OpenAICodexService
 from .oauth import OpenAICodexOAuth
+from .service import OpenAICodexService
 
-__all__ = ["OpenAICodexService", "OpenAICodexOAuth"]
+__all__ = ["OpenAICodexOAuth", "OpenAICodexService"]

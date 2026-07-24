@@ -1,22 +1,22 @@
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget,
     QHBoxLayout,
-    QVBoxLayout,
-    QSplitter,
     QMessageBox,
     QPushButton,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt, Signal
 
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.mcp_config import MCPConfig, MCPServerEntry
 from AgentCrew.modules.gui.themes import StyleProvider
 from AgentCrew.modules.gui.widgets.loading_overlay import LoadingOverlay
-from ..save_worker import SaveWorker
 
-from .mcp_list_panel import MCPListPanel
+from ..save_worker import SaveWorker
 from .mcp_form import MCPForm
 from .mcp_json_sync import MCPJsonSync
+from .mcp_list_panel import MCPListPanel
 
 
 class MCPsConfigTab(QWidget):
@@ -219,7 +219,7 @@ class MCPsConfigTab(QWidget):
                 QMessageBox.warning(
                     self,
                     "Invalid JSON",
-                    f"Cannot save configuration: {str(e)}\n"
+                    f"Cannot save configuration: {e!s}\n"
                     "Please fix the JSON syntax first.",
                 )
                 return

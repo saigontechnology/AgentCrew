@@ -5,34 +5,39 @@ import base64
 import os
 import random
 import tempfile
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
 
 from loguru import logger
-from typing import TYPE_CHECKING
-
-from AgentCrew.modules.utils.file_handler import optimize_image_data_uri
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.sse import sse_client
+from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.types import (
     BlobResourceContents,
     ImageContent,
-    Resource,
     PaginatedRequestParams,
+    Resource,
     ResourceLink,
     TextContent,
     TextResourceContents,
 )
-from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamable_http_client
-from mcp.client.sse import sse_client
-from AgentCrew.modules.agents import LocalAgent, AgentManager
-from .auth import OAuthClientResolver, FileTokenStorage, InlineTokenStorage
+
 from AgentCrew.modules import FileLogIO
+from AgentCrew.modules.agents import AgentManager, LocalAgent
+from AgentCrew.modules.utils.file_handler import optimize_image_data_uri
+
+from .auth import FileTokenStorage, InlineTokenStorage, OAuthClientResolver
 
 if TYPE_CHECKING:
-    from typing import Any, Callable
+    from collections.abc import Callable
+    from typing import Any
+
     from mcp.types import ContentBlock, Prompt, Tool
+
     from AgentCrew.modules.utils.file_handler import FileHandler
-    from .config import MCPServerConfig, MCPConfigManager
+
+    from .config import MCPConfigManager, MCPServerConfig
 
 # Initialize the logger
 mcp_log_io = FileLogIO("mcpclient_agentcrew")
@@ -334,7 +339,7 @@ class MCPService:
                     return [
                         {
                             "type": "text",
-                            "text": f"Error calling MCP tool '{tool_name}': {str(e)}",
+                            "text": f"Error calling MCP tool '{tool_name}': {e!s}",
                         }
                     ]
                 finally:
@@ -365,7 +370,7 @@ class MCPService:
             finally:
                 await self._close_session(session, ctx)
         except Exception as e:
-            return {"content": f"Error: {str(e)}", "status": "error"}
+            return {"content": f"Error: {e!s}", "status": "error"}
 
     async def get_prompt_stateless(
         self,
@@ -382,7 +387,7 @@ class MCPService:
             finally:
                 await self._close_session(session, ctx)
         except Exception as e:
-            return {"content": f"Error: {str(e)}", "status": "error"}
+            return {"content": f"Error: {e!s}", "status": "error"}
 
     def _get_server_id_format(
         self, server_name: str, agent_name: str | None = None
@@ -615,8 +620,9 @@ class MCPService:
         # Create namespaced tool name
         namespaced_name = f"{server_id}__{tool.name}"
 
-        from jsonref import replace_refs
         import json
+
+        from jsonref import replace_refs
 
         merged_inputSchema_string = json.dumps(
             replace_refs(
@@ -699,10 +705,10 @@ class MCPService:
                 await self._close_session(session, ctx)
         except Exception as e:
             logger.error(
-                f"Error retrieving prompt '{prompt_name}' from server '{server_id}': {str(e)}"
+                f"Error retrieving prompt '{prompt_name}' from server '{server_id}': {e!s}"
             )
             return {
-                "content": f"Error retrieving prompt '{prompt_name}' on server '{server_id}': {str(e)}",
+                "content": f"Error retrieving prompt '{prompt_name}' on server '{server_id}': {e!s}",
                 "status": "error",
             }
 

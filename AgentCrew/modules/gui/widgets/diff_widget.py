@@ -4,13 +4,14 @@ Provides visual diff comparison for search/replace blocks.
 """
 
 import difflib
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QLabel,
-    QFrame,
-)
+
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QFrame,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class DiffWidget(QWidget):

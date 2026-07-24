@@ -1,6 +1,7 @@
 import subprocess
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from AgentCrew.modules.coding.service import AiderConfig, CodeAssistant
 
 

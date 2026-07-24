@@ -5,9 +5,10 @@ This module provides utilities to load JavaScript files and inject variables
 for use with Chrome DevTools Protocol.
 """
 
+import time
 from pathlib import Path
 from typing import Any
-import time
+
 from loguru import logger
 
 
@@ -64,7 +65,7 @@ class JavaScriptExecutor:
 
         except Exception as e:
             logger.error(f"JavaScript execution error: {e}")
-            return {"success": False, "error": f"JavaScript execution error: {str(e)}"}
+            return {"success": False, "error": f"JavaScript execution error: {e!s}"}
 
     @staticmethod
     def get_current_url(chrome_interface: Any) -> str:
@@ -152,7 +153,7 @@ class JavaScriptExecutor:
 
         except Exception as e:
             logger.error(f"Draw element boxes error: {e}")
-            return {"success": False, "error": f"Draw element boxes error: {str(e)}"}
+            return {"success": False, "error": f"Draw element boxes error: {e!s}"}
 
     @staticmethod
     def remove_element_boxes(chrome_interface: Any) -> dict[str, Any]:
@@ -178,7 +179,7 @@ class JavaScriptExecutor:
 
         except Exception as e:
             logger.error(f"Remove element boxes error: {e}")
-            return {"success": False, "error": f"Remove element boxes error: {str(e)}"}
+            return {"success": False, "error": f"Remove element boxes error: {e!s}"}
 
     @staticmethod
     def trigger_input_events(
@@ -216,28 +217,22 @@ class JavaScriptExecutor:
 
                 if char == "\n":
                     chrome_interface.Input.dispatchKeyEvent(
-                        **{
-                            "type": "rawKeyDown",
-                            "windowsVirtualKeyCode": 13,
-                            "unmodifiedText": "\r",
-                            "text": "\r",
-                        }
+                        type="rawKeyDown",
+                        windowsVirtualKeyCode=13,
+                        unmodifiedText="\r",
+                        text="\r",
                     )
                     chrome_interface.Input.dispatchKeyEvent(
-                        **{
-                            "type": "char",
-                            "windowsVirtualKeyCode": 13,
-                            "unmodifiedText": "\r",
-                            "text": "\r",
-                        }
+                        type="char",
+                        windowsVirtualKeyCode=13,
+                        unmodifiedText="\r",
+                        text="\r",
                     )
                     chrome_interface.Input.dispatchKeyEvent(
-                        **{
-                            "type": "keyUp",
-                            "windowsVirtualKeyCode": 13,
-                            "unmodifiedText": "\r",
-                            "text": "\r",
-                        }
+                        type="keyUp",
+                        windowsVirtualKeyCode=13,
+                        unmodifiedText="\r",
+                        text="\r",
                     )
                 elif char == "\t":
                     chrome_interface.Input.dispatchKeyEvent(type="char", text="\t")
@@ -252,7 +247,7 @@ class JavaScriptExecutor:
 
         except Exception as e:
             logger.error(f"Error during typing simulation: {e}")
-            return {"success": False, "error": f"Typing simulation failed: {str(e)}"}
+            return {"success": False, "error": f"Typing simulation failed: {e!s}"}
 
     @staticmethod
     def _get_key_definition(key: str) -> dict[str, Any] | None:
@@ -475,7 +470,7 @@ class JavaScriptExecutor:
             logger.error(f"Key dispatch error: {e}")
             return {
                 "success": False,
-                "error": f"Key dispatch error: {str(e)}",
+                "error": f"Key dispatch error: {e!s}",
                 "key": key,
                 "modifiers": modifiers,
             }

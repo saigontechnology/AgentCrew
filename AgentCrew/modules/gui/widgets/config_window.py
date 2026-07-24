@@ -1,17 +1,18 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
-    QTabWidget,
-    QVBoxLayout,
     QHBoxLayout,
     QPushButton,
+    QTabWidget,
+    QVBoxLayout,
 )
 
-from PySide6.QtCore import Qt
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.gui.themes import StyleProvider
+
+from .configs.agent_config import AgentsConfigTab
 from .configs.custom_llm_provider import CustomLLMProvidersConfigTab
 from .configs.global_settings import SettingsTab
-from .configs.agent_config import AgentsConfigTab
 from .configs.mcp_config import MCPsConfigTab
 
 

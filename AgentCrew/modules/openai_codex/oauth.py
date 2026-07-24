@@ -5,7 +5,7 @@ import os
 import secrets
 import time
 import webbrowser
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Event, Thread
 from typing import Any
@@ -45,13 +45,13 @@ def _current_time_ms() -> int:
 
 
 def _current_time_rfc3339() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _normalize_refresh_time(value: Any) -> str | None:
     if isinstance(value, (int, float)) and value > 0:
         return (
-            datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+            datetime.fromtimestamp(value / 1000, tz=UTC)
             .isoformat()
             .replace("+00:00", "Z")
         )
@@ -229,7 +229,7 @@ class OpenAICodexOAuth:
         try:
             with open(self.token_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
+        except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Could not load OAuth tokens from {self.token_path}: {e}")
             self._tokens = None
             return
@@ -275,7 +275,7 @@ class OpenAICodexOAuth:
                     loaded = json.load(f)
                 if isinstance(loaded, dict):
                     existing = loaded
-            except (json.JSONDecodeError, IOError):
+            except (OSError, json.JSONDecodeError):
                 existing = {}
 
         current_time_rfc3339 = _current_time_rfc3339()

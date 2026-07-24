@@ -2,18 +2,19 @@ import json
 import re
 from typing import Any
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QProgressBar,
-    QFrame,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt
+
 from AgentCrew.modules.gui.themes import StyleProvider
-from AgentCrew.modules.gui.widgets.diff_widget import DiffWidget, CompactDiffWidget
+from AgentCrew.modules.gui.widgets.diff_widget import CompactDiffWidget, DiffWidget
 
 
 class ToolWidget(QWidget):
@@ -286,7 +287,7 @@ class ToolWidget(QWidget):
                 self.content_layout.addWidget(input_text)
 
         except Exception as e:
-            error_label = QLabel(f"Error displaying input: {str(e)}")
+            error_label = QLabel(f"Error displaying input: {e!s}")
             error_label.setProperty("role", "error")
             error_label.setStyleSheet(self.style_provider.get_tool_content_style())
             self.content_layout.addWidget(error_label)

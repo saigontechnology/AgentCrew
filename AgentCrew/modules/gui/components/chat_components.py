@@ -1,20 +1,21 @@
-from PySide6.QtWidgets import (
-    QSizePolicy,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QScrollArea,
-    QApplication,
-    QLabel,
-    QFrame,
-)
 from PySide6.QtCore import Qt
-from AgentCrew.modules.gui.widgets import (
-    TokenUsageWidget,
-    SystemMessageWidget,
-    MessageBubble,
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
+
 from AgentCrew.modules.gui.themes.style_provider import StyleProvider
+from AgentCrew.modules.gui.widgets import (
+    MessageBubble,
+    SystemMessageWidget,
+    TokenUsageWidget,
+)
 
 
 class ChatComponents:

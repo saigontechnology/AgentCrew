@@ -1,6 +1,7 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime as dt
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from .base_service import BaseMemoryService
 from .context_persistent import ContextPersistenceService
@@ -94,7 +95,7 @@ def get_memory_forget_tool_handler(
                 else f"Removal incomplete: {result.get('message', 'Not found')}"
             )
         except Exception as e:
-            return f"Memories removal failed: {str(e)}"
+            return f"Memories removal failed: {e!s}"
 
     return handle_memory_forget
 
@@ -214,7 +215,7 @@ def get_memory_retrieve_tool_handler(
             return f"Found relevant memories:\n\n{result}"
 
         except Exception as e:
-            return f"Memory search failed: {str(e)}"
+            return f"Memory search failed: {e!s}"
 
     return handle_memory_retrieve
 
@@ -326,9 +327,9 @@ def get_learn_behavior_tool_handler(
                 else "Storage completed but may need verification."
             )
         except ValueError as e:
-            return f"Invalid format: {str(e)}"
+            return f"Invalid format: {e!s}"
         except Exception as e:
-            return f"Storage failed: {str(e)}"
+            return f"Storage failed: {e!s}"
 
     return handle_learn_behavior
 

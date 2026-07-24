@@ -4,15 +4,15 @@ File editing service orchestrating search/replace, syntax checking, and safety v
 Main service for file editing operations in AgentCrew.
 """
 
-from typing import Any
 import os
 import shutil
 import uuid
 from datetime import datetime
+from typing import Any
 
+from .safety_validator import SafetyConfig, SafetyValidator
 from .search_replace_engine import SearchReplaceEngine
 from .tree_sitter_checker import TreeSitterChecker
-from .safety_validator import SafetyValidator, SafetyConfig
 
 
 class FileEditingService:

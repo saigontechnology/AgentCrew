@@ -5,28 +5,29 @@ Manages user input threads, key bindings, and prompt sessions.
 
 from __future__ import annotations
 
-import time
-import threading
 import queue
-from threading import Thread, Event
-from prompt_toolkit import PromptSession
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.keys import Keys
-from prompt_toolkit.formatted_text import HTML
-from rich.text import Text
+import threading
+import time
+from threading import Event, Thread
+from typing import TYPE_CHECKING
 
 from loguru import logger
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
+from rich.text import Text
+
 from AgentCrew.modules.clipboard.service import ClipboardService
+
 from .completers import ChatCompleter
 from .constants import (
+    PROMPT_CHAR,
+    RICH_STYLE_BLUE,
+    RICH_STYLE_RED,
     RICH_STYLE_YELLOW,
     RICH_STYLE_YELLOW_BOLD,
-    RICH_STYLE_RED,
-    RICH_STYLE_BLUE,
-    PROMPT_CHAR,
 )
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .console_ui import ConsoleUI
@@ -101,7 +102,6 @@ class InputHandler:
         def _(event):
             """Copy latest assistant response to clipboard."""
             # This will be handled by the main console UI
-            pass
 
         @kb.add(Keys.ControlV)
         def _(event):
@@ -220,7 +220,7 @@ class InputHandler:
                     event.current_buffer.text[-(len(PROMPT_CHAR) + 1) :]
                     == f"\n{PROMPT_CHAR}"
                 ):
-                    event.current_buffer.delete_before_cursor((len(PROMPT_CHAR) + 1))
+                    event.current_buffer.delete_before_cursor(len(PROMPT_CHAR) + 1)
                 else:
                     event.current_buffer.delete_before_cursor()
 
@@ -437,7 +437,7 @@ class InputHandler:
                     self._input_queue.put("__INTERRUPT__")
                     continue
             except Exception as e:
-                self._input_queue.put(f"__ERROR__:{str(e)}")
+                self._input_queue.put(f"__ERROR__:{e!s}")
                 break
 
     def _start_input_thread(self):

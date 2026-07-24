@@ -1,9 +1,11 @@
 from typing import Any
+
 from PySide6.QtCore import Slot
-from PySide6.QtWidgets import QMessageBox, QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
+
 from AgentCrew.modules.chat.agent_evaluation import parse_agent_evaluation
-from AgentCrew.modules.gui.widgets import ConversationLoader
 from AgentCrew.modules.gui.utils.strings import need_print_check, tag_action_strip
+from AgentCrew.modules.gui.widgets import ConversationLoader
 
 
 class ConversationComponents:

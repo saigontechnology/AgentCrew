@@ -3,26 +3,24 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, Tuple
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
-from rich.live import Live
+from typing import Any
+
 from rich.box import HORIZONTALS, SIMPLE
-from rich.table import Table
+from rich.console import Console
 from rich.layout import Layout
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from ..constants import (
     RICH_STYLE_BLUE,
-    RICH_STYLE_GREEN,
-    RICH_STYLE_GRAY,
-    RICH_STYLE_YELLOW_BOLD,
-    RICH_STYLE_GREEN_BOLD,
     RICH_STYLE_BLUE_BOLD,
+    RICH_STYLE_GRAY,
+    RICH_STYLE_GREEN,
+    RICH_STYLE_GREEN_BOLD,
+    RICH_STYLE_YELLOW_BOLD,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 class VisualModeUI:
@@ -31,20 +29,20 @@ class VisualModeUI:
     def __init__(self, console: Console):
         self.console = console
         self._messages: list[dict[str, Any]] = []
-        self._lines: list[Tuple[str, str, int]] = []
+        self._lines: list[tuple[str, str, int]] = []
         self._line_styles: list[Any] = []
         self._cursor_line = 0
         self._cursor_col = 0
         self._scroll_offset = 0
         self._horizontal_scroll = 0
-        self._selection_start: Tuple[int, int] | None = None
-        self._selection_end: Tuple[int, int] | None = None
+        self._selection_start: tuple[int, int] | None = None
+        self._selection_end: tuple[int, int] | None = None
         self._visual_mode = False
         self._live: Live | None = None
         self._layout: Layout | None = None
         self._search_mode = False
         self._search_query = ""
-        self._search_matches: list[Tuple[int, int]] = []
+        self._search_matches: list[tuple[int, int]] = []
         self._current_match_idx = -1
         self._cached_search_set: set = set()
 

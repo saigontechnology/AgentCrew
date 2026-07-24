@@ -1,14 +1,16 @@
-import os
 import json
-from typing import Any, Tuple
-from openai import AsyncOpenAI
+import os
+from typing import Any
+
 from dotenv import load_dotenv
+from loguru import logger
+from openai import AsyncOpenAI
+
 from AgentCrew.modules.llm.base import (
     BaseLLMService,
 )
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.token_usage import TokenUsage
-from loguru import logger
 
 
 class OpenAIResponseService(BaseLLMService):
@@ -194,7 +196,7 @@ class OpenAIResponseService(BaseLLMService):
 
     def _process_file(self, file_path):
         """Process file - same as original implementation."""
-        return None
+        return
 
     def process_file_for_message(self, file_path):
         """Process a file and return the appropriate message content."""
@@ -310,7 +312,7 @@ class OpenAIResponseService(BaseLLMService):
 
     def process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from Response API streaming.
         Response API uses structured event objects with semantic types.
@@ -328,10 +330,7 @@ class OpenAIResponseService(BaseLLMService):
         try:
             event_type = getattr(chunk, "type", None)
 
-            if event_type == "response.created":
-                pass
-
-            elif event_type == "response.in_progress":
+            if event_type == "response.created" or event_type == "response.in_progress":
                 pass
 
             elif event_type == "response.output_item.added":
@@ -609,7 +608,7 @@ class OpenAIResponseService(BaseLLMService):
                 "model": getattr(response, "model", self.model),
             }
         except Exception as e:
-            raise Exception(f"Failed to retrieve response {response_id}: {str(e)}")
+            raise Exception(f"Failed to retrieve response {response_id}: {e!s}")
 
     async def cancel_response(self, response_id: str) -> bool:
         """Cancel a background response by ID."""
@@ -618,7 +617,7 @@ class OpenAIResponseService(BaseLLMService):
             logger.info(f"Successfully cancelled response: {response_id}")
             return True
         except Exception as e:
-            logger.error(f"Failed to cancel response {response_id}: {str(e)}")
+            logger.error(f"Failed to cancel response {response_id}: {e!s}")
             return False
 
     async def delete_response(self, response_id: str) -> bool:
@@ -628,7 +627,7 @@ class OpenAIResponseService(BaseLLMService):
             logger.info(f"Successfully deleted response: {response_id}")
             return True
         except Exception as e:
-            logger.error(f"Failed to delete response {response_id}: {str(e)}")
+            logger.error(f"Failed to delete response {response_id}: {e!s}")
             return False
 
     def get_conversation_state(self) -> dict[str, Any]:

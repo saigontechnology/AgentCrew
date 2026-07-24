@@ -27,16 +27,16 @@ import copy
 
 import pytest
 
+from AgentCrew.modules.events.hook_payloads import (
+    ContextBuildContext,
+    ContextBuildResult,
+)
 from AgentCrew.modules.events.hooks import (
     CancelOperation,
     Hook,
     HookPhase,
     HookPoints,
     HookRegistry,
-)
-from AgentCrew.modules.events.hook_payloads import (
-    ContextBuildContext,
-    ContextBuildResult,
 )
 
 # ---------------------------------------------------------------------------

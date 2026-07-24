@@ -4,7 +4,8 @@ This tool allows agents to request additional information from users with guided
 Supports multiple questions in a single call to reduce round trips.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 def get_ask_tool_definition() -> dict[str, Any]:

@@ -146,7 +146,7 @@ class GlobalConfig:
             ).get("shrink_excluded", [])
         except Exception as e:
             raise ValueError(
-                f"Error writing global configuration to {config_path}: {str(e)}"
+                f"Error writing global configuration to {config_path}: {e!s}"
             )
 
     def get_last_used_settings(self) -> dict[str, Any]:

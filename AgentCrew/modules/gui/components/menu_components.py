@@ -1,8 +1,8 @@
-from PySide6.QtWidgets import QMenuBar
 from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QMenuBar
 
-from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.agents import AgentManager
+from AgentCrew.modules.llm.model_registry import ModelRegistry
 
 
 class MenuBuilder:

@@ -1,15 +1,14 @@
 """Background CDP console log listener with ring-buffer storage."""
 
-import json
-import socket
-import threading
 import collections
+import json
+import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-import requests
 import PyChromeDevTools
+import requests
 import websocket
 from loguru import logger
 
@@ -155,7 +154,7 @@ class ConsoleListener:
                 message = json.loads(raw)
                 self._dispatch(message)
 
-            except (websocket.WebSocketTimeoutException, socket.timeout):
+            except (TimeoutError, websocket.WebSocketTimeoutException):
                 continue
             except Exception as e:
                 if not self._stop_event.is_set():
@@ -258,9 +257,9 @@ class ConsoleListener:
         timestamp: float | None = None,
     ):
         if timestamp:
-            ts = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).isoformat()
+            ts = datetime.fromtimestamp(timestamp / 1000, tz=UTC).isoformat()
         else:
-            ts = datetime.now(tz=timezone.utc).isoformat()
+            ts = datetime.now(tz=UTC).isoformat()
 
         entry = {
             "timestamp": ts,

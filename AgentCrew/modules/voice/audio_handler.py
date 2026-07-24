@@ -1,12 +1,15 @@
-from typing import Callable, Tuple, Any
-import threading
-import queue
-import numpy as np
-import torch
-from scipy import signal
-import sounddevice as sd
 import asyncio
+import queue
+import threading
+from collections.abc import Callable
+from typing import Any
+
+import numpy as np
+import sounddevice as sd
+import torch
 from loguru import logger
+from scipy import signal
+
 from .base import BaseAudioHandler
 
 INT16_MAX_ABS_VALUE = 32768.0
@@ -142,7 +145,7 @@ class AudioHandler(BaseAudioHandler):
         self.recording_thread.start()
         logger.info("Recording started")
 
-    def stop_recording(self) -> Tuple[Any | None, int]:
+    def stop_recording(self) -> tuple[Any | None, int]:
         """
         Stop recording and return the recorded audio.
 
@@ -303,7 +306,7 @@ class AudioHandler(BaseAudioHandler):
                     sd.sleep(100)  # Sleep for 100ms chunks
 
         except Exception as e:
-            logger.error(f"Recording error: {str(e)}")
+            logger.error(f"Recording error: {e!s}")
             self.recording = False
 
     def is_recording(self) -> bool:

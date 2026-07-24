@@ -4,11 +4,13 @@ Provides split view diff display with syntax highlighting.
 """
 
 import difflib
+
+from rich.box import HORIZONTALS, SIMPLE_HEAD
 from rich.console import Group
 from rich.panel import Panel
-from rich.text import Text
 from rich.table import Table
-from rich.box import SIMPLE_HEAD, HORIZONTALS
+from rich.text import Text
+
 from .constants import (
     RICH_STYLE_BLUE_BOLD,
     RICH_STYLE_GREEN,
@@ -224,17 +226,13 @@ class DiffDisplay:
                 segment = orig_line[i1:i2]
                 if tag == "equal":
                     result.append(segment, style="dim")
-                elif tag == "delete":
-                    result.append(segment, style="red on #3d0000")
-                elif tag == "replace":
+                elif tag == "delete" or tag == "replace":
                     result.append(segment, style="red on #3d0000")
             else:
                 segment = mod_line[j1:j2]
                 if tag == "equal":
                     result.append(segment, style="dim")
-                elif tag == "insert":
-                    result.append(segment, style="green on #003d00")
-                elif tag == "replace":
+                elif tag == "insert" or tag == "replace":
                     result.append(segment, style="green on #003d00")
 
         return result

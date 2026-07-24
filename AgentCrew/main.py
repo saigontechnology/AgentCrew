@@ -1,10 +1,12 @@
-import click
 import os
-import sys
-import requests
-import subprocess
 import platform
-from AgentCrew.setup import common_options, PROVIDER_LIST
+import subprocess
+import sys
+
+import click
+import requests
+
+from AgentCrew.setup import PROVIDER_LIST, common_options
 
 
 def _custom_unraisable_hook(unraisable):
@@ -24,9 +26,10 @@ sys.unraisablehook = _custom_unraisable_hook
 @click.group()
 def cli():
     """Agentcrew - AI Assistant and Agent Framework"""
-    from loguru import logger
-    import tempfile
     import logging
+    import tempfile
+
+    from loguru import logger
 
     formatter = "{time} - {name} - {level} - {message}"
     logger.remove(0)
@@ -136,7 +139,7 @@ def check_and_update():
             click.echo("✅ You are running the latest version")
 
     except Exception as e:
-        click.echo(f"❌ Update check failed: {str(e)}", err=True)
+        click.echo(f"❌ Update check failed: {e!s}", err=True)
 
 
 def get_current_version():
@@ -268,7 +271,7 @@ def run_update_command():
                 click.echo(f"Error: {result.stderr}")
 
     except Exception as e:
-        click.echo(f"❌ Update execution failed: {str(e)}", err=True)
+        click.echo(f"❌ Update execution failed: {e!s}", err=True)
 
 
 @cli.command()
@@ -484,7 +487,7 @@ def job(
         import traceback
 
         print(traceback.format_exc())
-        click.echo(f"❌ Error: {str(e)}", err=True)
+        click.echo(f"❌ Error: {e!s}", err=True)
         raise SystemExit(1)
 
 
@@ -537,9 +540,9 @@ def create_agent_command(
     description,
 ):
     """Create a new agent interactively using the same flow as onboarding"""
-    from AgentCrew.setup import ApplicationSetup
-    from AgentCrew.modules.onboarding import OnboardingService
     from AgentCrew.modules.config import ConfigManagement
+    from AgentCrew.modules.onboarding import OnboardingService
+    from AgentCrew.setup import ApplicationSetup
 
     if agent_config:
         os.environ["SW_AGENTS_CONFIG"] = agent_config

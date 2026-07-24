@@ -1,8 +1,10 @@
 import unittest
 from unittest.mock import MagicMock, patch
+
+from rich.console import Console
+
 from AgentCrew.modules.chat.message_handler import MessageHandler
 from AgentCrew.modules.llm.base import BaseLLMService
-from rich.console import Console
 
 
 class TestMessageHandler(unittest.TestCase):

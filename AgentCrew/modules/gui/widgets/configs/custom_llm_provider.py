@@ -1,29 +1,30 @@
+from typing import Any
+
+from loguru import logger
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QVBoxLayout,
-    QHBoxLayout,
-    QWidget,
-    QListWidget,
-    QListWidgetItem,
-    QPushButton,
-    QLabel,
-    QLineEdit,
-    QFormLayout,
-    QMessageBox,
+    QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QTextEdit,
     QDoubleSpinBox,
-    QSpinBox,
-    QComboBox,
-    QCheckBox,
+    QFormLayout,
     QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt, Signal
-from loguru import logger
 
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
-from typing import Any
 from AgentCrew.modules.gui.themes import StyleProvider
 
 
@@ -956,7 +957,7 @@ class CustomLLMProvidersConfigTab(QWidget):
                 "Error saving provider configuration"
             )  # Log with stack trace
             QMessageBox.critical(
-                self, "Error Saving", f"Could not save provider configuration: {str(e)}"
+                self, "Error Saving", f"Could not save provider configuration: {e!s}"
             )
 
     def remove_selected_provider(self):
@@ -1007,7 +1008,7 @@ class CustomLLMProvidersConfigTab(QWidget):
                 QMessageBox.critical(
                     self,
                     "Error Removing",
-                    f"Could not remove provider configuration: {str(e)}",
+                    f"Could not remove provider configuration: {e!s}",
                 )
                 # Optionally, reload providers to revert to consistent state if save failed
                 self.load_providers()

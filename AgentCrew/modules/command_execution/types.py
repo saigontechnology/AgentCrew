@@ -1,7 +1,7 @@
-import threading
 import subprocess
-from enum import Enum
+import threading
 from dataclasses import dataclass, field
+from enum import Enum
 
 from loguru import logger
 

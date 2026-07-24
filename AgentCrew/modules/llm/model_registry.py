@@ -1,7 +1,10 @@
 import os
-from .types import Model
+
 from loguru import logger
+
 from AgentCrew.modules.config.global_config import GlobalConfig
+
+from .types import Model
 
 # Mapping of provider/service names to their required API key environment variables.
 # Models whose provider (or resolved service_name) maps to a key that is not set

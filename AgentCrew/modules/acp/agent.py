@@ -9,22 +9,23 @@ from acp import Agent, RequestError
 from loguru import logger
 
 if TYPE_CHECKING:
-    from AgentCrew.modules.agents import AgentManager
     from acp import Client
 
-from AgentCrew.modules.llm.token_usage import TokenUsage
+    from AgentCrew.modules.agents import AgentManager
+
 from AgentCrew.modules.acp.client_communication import ClientCommunication
 from AgentCrew.modules.acp.mcp_orchestrator import McpOrchestrator
 from AgentCrew.modules.acp.model_controller import ModelController
 from AgentCrew.modules.acp.session_lifecycle import SessionLifecycle
 from AgentCrew.modules.acp.session_state import AcpSessionState
-from AgentCrew.modules.acp.tool_manager import AcpToolManager
 from AgentCrew.modules.acp.session_store import AcpSessionStore
+from AgentCrew.modules.acp.tool_manager import AcpToolManager
 from AgentCrew.modules.acp.tools.context import (
     AcpSessionContext,
     _current_acp_session,
 )
 from AgentCrew.modules.acp.turn_executor import TurnExecutor
+from AgentCrew.modules.llm.token_usage import TokenUsage
 
 
 class AgentCrewAcpAgent(Agent):
@@ -80,6 +81,8 @@ class AgentCrewAcpAgent(Agent):
         from acp import PROTOCOL_VERSION
         from acp.schema import (
             AgentCapabilities,
+            AuthMethodAgent,
+            EnvVarAuthMethod,
             Implementation,
             InitializeResponse,
             McpCapabilities,
@@ -89,8 +92,6 @@ class AgentCrewAcpAgent(Agent):
             SessionListCapabilities,
             SessionResumeCapabilities,
             TerminalAuthMethod,
-            AuthMethodAgent,
-            EnvVarAuthMethod,
         )
 
         import AgentCrew

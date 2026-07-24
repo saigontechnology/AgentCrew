@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
 from loguru import logger
+
 from AgentCrew.modules.tools.utils import extract_tool_name
 
 if TYPE_CHECKING:
@@ -31,6 +34,8 @@ class AgentToolRegistrar:
         if voice_service and getattr(agent, "voice_enabled", "disabled") != "disabled":
             from AgentCrew.modules.voice.tool import (
                 register as register_speak,
+            )
+            from AgentCrew.modules.voice.tool import (
                 speak_tool_prompt,
             )
 
@@ -43,9 +48,11 @@ class AgentToolRegistrar:
                 if service:
                     if tool_name == "memory":
                         from AgentCrew.modules.memory.tool import (
-                            register as register_memory,
                             adaptive_instruction_prompt,
                             memory_instruction_prompt,
+                        )
+                        from AgentCrew.modules.memory.tool import (
+                            register as register_memory,
                         )
 
                         register_memory(
@@ -76,8 +83,10 @@ class AgentToolRegistrar:
                         register_web_search(service, agent)
                     elif tool_name == "browser":
                         from AgentCrew.modules.browser_automation.tool import (
-                            register as register_browser,
                             browser_instruction_prompt,
+                        )
+                        from AgentCrew.modules.browser_automation.tool import (
+                            register as register_browser,
                         )
 
                         register_browser(service, agent)
@@ -120,6 +129,8 @@ class AgentToolRegistrar:
             if not agent.is_remoting_mode and mode == AgentMode.TRANSFER:
                 from AgentCrew.modules.agents.tools.transfer import (
                     register as register_transfer,
+                )
+                from AgentCrew.modules.agents.tools.transfer import (
                     transfer_tool_prompt,
                 )
 
@@ -136,8 +147,10 @@ class AgentToolRegistrar:
                 and len(agent.services["agent_manager"].agents) > 1
             ):  # DELEGATE MODE for remoting mode also
                 from AgentCrew.modules.agents.tools.delegate import (
-                    register as register_delegate,
                     delegate_tool_prompt,
+                )
+                from AgentCrew.modules.agents.tools.delegate import (
+                    register as register_delegate,
                 )
 
                 agent.tool_prompts.append(
@@ -151,8 +164,10 @@ class AgentToolRegistrar:
 
             if not agent.services["agent_manager"].one_turn_process:
                 from AgentCrew.modules.agents.tools.ask import (
-                    register as register_ask,
                     ask_tool_prompt,
+                )
+                from AgentCrew.modules.agents.tools.ask import (
+                    register as register_ask,
                 )
 
                 register_ask(agent)

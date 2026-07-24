@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from chromadb import Documents, EmbeddingFunction, Embeddings
-from chromadb.api.types import Space
-from typing import cast, TYPE_CHECKING
-from google.genai import types
-from chromadb.utils.embedding_functions.schemas import validate_config_schema
+import os
+from typing import TYPE_CHECKING, cast
+
 import numpy as np
 import numpy.typing as npt
-import os
+from chromadb import Documents, EmbeddingFunction, Embeddings
+from chromadb.api.types import Space
+from chromadb.utils.embedding_functions.schemas import validate_config_schema
+from google.genai import types
 
 if TYPE_CHECKING:
     from typing import Any
@@ -94,7 +95,7 @@ class GoogleGenAiEmbeddingFunction(EmbeddingFunction[Documents]):
         return ["cosine", "l2", "ip"]
 
     @staticmethod
-    def build_from_config(config: dict[str, Any]) -> "EmbeddingFunction[Documents]":
+    def build_from_config(config: dict[str, Any]) -> EmbeddingFunction[Documents]:
         api_key_env_var = config.get("api_key_env_var")
         model_name = config.get("model_name")
         task_type = config.get("task_type")

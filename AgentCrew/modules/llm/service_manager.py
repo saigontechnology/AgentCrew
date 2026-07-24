@@ -1,9 +1,13 @@
 from __future__ import annotations
-from typing import Callable, TYPE_CHECKING
+
+import os
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+from loguru import logger
+
 from AgentCrew.modules.llm.base import BaseLLMService
 from AgentCrew.modules.llm.model_registry import ModelRegistry
-from loguru import logger
-import os
 
 if TYPE_CHECKING:
     from AgentCrew.modules.llm.types import Model
@@ -278,7 +282,7 @@ class ServiceManager:
                 f"Unknown service: {service_name}. Available services: {', '.join(sorted(list(set(known))))}"
             )
 
-    def initialize_standalone_service_for_model(self, model: "Model") -> BaseLLMService:
+    def initialize_standalone_service_for_model(self, model: Model) -> BaseLLMService:
         """Initialize a standalone service for the given model."""
         return self.initialize_standalone_service(model.resolved_service_name())
 
@@ -329,7 +333,7 @@ class ServiceManager:
                     )
             except Exception as e:
                 raise RuntimeError(
-                    f"Failed to initialize custom provider service '{service_name}': {str(e)}"
+                    f"Failed to initialize custom provider service '{service_name}': {e!s}"
                 )
 
         elif service_name in self.service_factories:
@@ -337,7 +341,7 @@ class ServiceManager:
                 service_instance = self.service_factories[service_name]()
             except Exception as e:
                 raise RuntimeError(
-                    f"Failed to initialize built-in '{service_name}' service: {str(e)}"
+                    f"Failed to initialize built-in '{service_name}' service: {e!s}"
                 )
 
         if service_instance:
@@ -384,4 +388,4 @@ class ServiceManager:
             return
 
         if model.default_reasoning is not None:
-            setattr(service, "reasoning_effort", model.default_reasoning)
+            service.reasoning_effort = model.default_reasoning

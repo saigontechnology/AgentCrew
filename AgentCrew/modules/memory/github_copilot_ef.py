@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from chromadb.api.types import Embeddings, Documents, EmbeddingFunction, Space
-from typing import TYPE_CHECKING
 import os
-import numpy as np
-from chromadb.utils.embedding_functions.schemas import validate_config_schema
 import warnings
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+import numpy as np
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings, Space
+from chromadb.utils.embedding_functions.schemas import validate_config_schema
 
 if TYPE_CHECKING:
     from typing import Any
@@ -180,7 +181,7 @@ class GithubCopilotEmbeddingFunction(EmbeddingFunction[Documents]):
         return ["cosine", "l2", "ip"]
 
     @staticmethod
-    def build_from_config(config: dict[str, Any]) -> "EmbeddingFunction[Documents]":
+    def build_from_config(config: dict[str, Any]) -> EmbeddingFunction[Documents]:
         # Extract parameters from config
         api_key_env_var = config.get("api_key_env_var")
         model_name = config.get("model_name")

@@ -1,7 +1,8 @@
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.llm.token_usage import TokenUsage
 from AgentCrew.modules.tools.parallel_executor import (

@@ -1,22 +1,22 @@
-import markdown
+import mimetypes
 import os
 import sys
-import mimetypes
 
-from PySide6.QtWidgets import (
-    QVBoxLayout,
-    QLabel,
-    QFrame,
-    QSizePolicy,
-    QPushButton,
-    QHBoxLayout,
-    QFileIconProvider,
-    QMenu,
-)
-from PySide6.QtCore import Qt, QFileInfo, QByteArray, QTimer
-from PySide6.QtGui import QPixmap, QTextDocument, QTextCursor
-import qtawesome as qta
+import markdown
 import pyperclip
+import qtawesome as qta
+from PySide6.QtCore import QByteArray, QFileInfo, Qt, QTimer
+from PySide6.QtGui import QPixmap, QTextCursor, QTextDocument
+from PySide6.QtWidgets import (
+    QFileIconProvider,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+)
 
 from AgentCrew.modules.gui.themes import StyleProvider
 
@@ -807,6 +807,6 @@ class MessageBubble(QFrame):
             self.updateGeometry()
 
         except Exception as e:
-            error_msg = f"Error displaying base64 image: {str(e)}"
+            error_msg = f"Error displaying base64 image: {e!s}"
             print(error_msg)
             self.append_text(f"\n\n*{error_msg}*")

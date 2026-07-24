@@ -16,6 +16,11 @@ from __future__ import annotations
 
 import pytest
 
+from AgentCrew.modules.events.hook_payloads import (
+    HOOK_PAYLOAD_MAP,
+    ResponseCompleteResult,
+    UserMessageContext,
+)
 from AgentCrew.modules.events.hooks import (
     CancelOperation,
     Hook,
@@ -23,12 +28,6 @@ from AgentCrew.modules.events.hooks import (
     HookPoints,
     HookRegistry,
 )
-from AgentCrew.modules.events.hook_payloads import (
-    HOOK_PAYLOAD_MAP,
-    UserMessageContext,
-    ResponseCompleteResult,
-)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

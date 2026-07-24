@@ -1,22 +1,26 @@
 from __future__ import annotations
-import queue
+
 import asyncio
-from typing import TYPE_CHECKING
+import queue
 from datetime import datetime
-from threading import Thread, Event
-from loguru import logger
+from threading import Event, Thread
+from typing import TYPE_CHECKING
+
 import xmltodict
+from loguru import logger
 
 from AgentCrew.modules.prompts.constants import (
-    PRE_ANALYZE_PROMPT,
-    MERGE_INSTRUCTIONS,
-    FIRST_TURN_INSTRUCTIONS,
     CONSOLIDATION_PROMPT,
+    FIRST_TURN_INSTRUCTIONS,
+    MERGE_INSTRUCTIONS,
+    PRE_ANALYZE_PROMPT,
 )
 
 if TYPE_CHECKING:
     from typing import Any
+
     from chromadb import Collection, EmbeddingFunction
+
     from AgentCrew.modules.llm.base import BaseLLMService
 
 DEFAULT_QUEUE_TIMEOUT = 5.0
@@ -140,8 +144,8 @@ class MemoryWorker:
 
             # ── memory.store.before hook ────────────────────────────────
             from AgentCrew.modules.events.hooks import (
-                HookRegistry,
                 HookPoints,
+                HookRegistry,
             )
 
             _hooks = HookRegistry.get_instance()
@@ -223,7 +227,7 @@ class MemoryWorker:
                         if isinstance(analyzed_text, str):
                             analyzed_preview = analyzed_text[:500]
                         logger.warning(
-                            f"Error processing conversation with LLM on retry {retried + 1}/3: {str(e)} | analyzed_preview={analyzed_preview}",
+                            f"Error processing conversation with LLM on retry {retried + 1}/3: {e!s} | analyzed_preview={analyzed_preview}",
                         )
                         retried += 1
                         continue

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
-from concurrent.futures import ThreadPoolExecutor
-import threading
 import queue
+import threading
+from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Callable, Any
+    from collections.abc import Callable
+    from typing import Any
+
     from .text_cleaner import TextCleaner
 
 
@@ -56,7 +58,6 @@ class BaseVoiceService(ABC):
         Returns:
             Status dictionary with success/error information
         """
-        pass
 
     @abstractmethod
     def stop_voice_recording(self) -> dict[str, Any]:
@@ -66,7 +67,6 @@ class BaseVoiceService(ABC):
         Returns:
             Status dictionary with recording info including audio_data, sample_rate, and duration
         """
-        pass
 
     @abstractmethod
     def is_recording(self) -> bool:
@@ -76,7 +76,6 @@ class BaseVoiceService(ABC):
         Returns:
             True if recording is active, False otherwise
         """
-        pass
 
     @abstractmethod
     async def speech_to_text(self, audio_data: Any, sample_rate: int) -> dict[str, Any]:
@@ -96,7 +95,6 @@ class BaseVoiceService(ABC):
             - words: list[dict] (word-level timing if available)
             - error: str (error message if success is False)
         """
-        pass
 
     @abstractmethod
     def clean_text_for_speech(self, text: str) -> str:
@@ -109,7 +107,6 @@ class BaseVoiceService(ABC):
         Returns:
             Cleaned text suitable for TTS
         """
-        pass
 
     @abstractmethod
     def text_to_speech_stream(
@@ -124,7 +121,6 @@ class BaseVoiceService(ABC):
             voice_id: Voice ID (uses default if None)
             model_id: Model ID (uses default if None)
         """
-        pass
 
     @abstractmethod
     def list_voices(self) -> dict[str, Any]:
@@ -137,7 +133,6 @@ class BaseVoiceService(ABC):
             - voices: list[dict] with voice information (voice_id, name, category, labels)
             - error: str (if success is False)
         """
-        pass
 
     @abstractmethod
     def set_voice(self, voice_id: str) -> None:
@@ -147,7 +142,6 @@ class BaseVoiceService(ABC):
         Args:
             voice_id: Voice identifier to set as default
         """
-        pass
 
     @abstractmethod
     def get_configured_voice_id(self) -> str:
@@ -157,7 +151,6 @@ class BaseVoiceService(ABC):
         Returns:
             Voice ID string
         """
-        pass
 
     @abstractmethod
     def set_voice_settings(self, **kwargs) -> None:
@@ -167,21 +160,18 @@ class BaseVoiceService(ABC):
         Args:
             **kwargs: Voice setting parameters specific to the implementation
         """
-        pass
 
     @abstractmethod
     def stop_tts_thread(self) -> None:
         """
         Stop the TTS worker thread gracefully.
         """
-        pass
 
     @abstractmethod
     def clear_tts_queue(self) -> None:
         """
         Clear any pending TTS requests.
         """
-        pass
 
     def _split_text_for_tts(self, text: str, max_chunk_length: int = 80) -> list[str]:
         cleaned_text = self.clean_text_for_speech(text)
@@ -254,14 +244,12 @@ class BaseVoiceService(ABC):
         Start the TTS worker thread if not already running.
         Implementations should override this method.
         """
-        pass
 
     def _tts_worker(self) -> None:
         """
         Worker thread for processing TTS requests.
         Implementations should override this method.
         """
-        pass
 
     def _process_tts_request(
         self, text: str, voice_id: str | None, model_id: str | None
@@ -275,7 +263,6 @@ class BaseVoiceService(ABC):
             voice_id: Voice ID
             model_id: Model ID
         """
-        pass
 
     def __del__(self):
         """
@@ -304,7 +291,6 @@ class BaseTextCleaner(ABC):
         Returns:
             Cleaned text suitable for TTS
         """
-        pass
 
     @abstractmethod
     def split_into_sentences(self, text: str) -> list[str]:
@@ -317,7 +303,6 @@ class BaseTextCleaner(ABC):
         Returns:
             list of sentences
         """
-        pass
 
 
 class BaseAudioHandler(ABC):
@@ -340,7 +325,6 @@ class BaseAudioHandler(ABC):
         Args:
             sample_rate: Sample rate for recording
         """
-        pass
 
     @abstractmethod
     def stop_recording(self) -> tuple[Any | None, int]:
@@ -350,7 +334,6 @@ class BaseAudioHandler(ABC):
         Returns:
             Tuple of (audio_data, sample_rate) or (None, 0) if no data
         """
-        pass
 
     @abstractmethod
     def is_recording(self) -> bool:
@@ -360,7 +343,6 @@ class BaseAudioHandler(ABC):
         Returns:
             True if recording is active, False otherwise
         """
-        pass
 
     @abstractmethod
     def _recording_worker(self, sample_rate: int) -> None:
@@ -370,7 +352,6 @@ class BaseAudioHandler(ABC):
         Args:
             sample_rate: Sample rate for recording
         """
-        pass
 
     def __del__(self):
         """

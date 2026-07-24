@@ -1,12 +1,11 @@
 from PySide6.QtWidgets import (
     QDialog,
-    QVBoxLayout,
-    QLabel,
-    QTextEdit,
-    QPushButton,
     QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
 )
-
 
 CATEGORY_LABELS = (
     ("Durable traits", "durable_traits"),

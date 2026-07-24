@@ -4,7 +4,8 @@ import asyncio
 import hashlib
 import json
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from loguru import logger
 
@@ -76,7 +77,7 @@ class LearnReviewCoordinator:
         except Exception as e:
             logger.error(f"Learn behavior extraction failed: {e}", exc_info=True)
             await self._bus.emit(
-                AppEvents.ERROR, message=f"Failed to extract behaviors: {str(e)}"
+                AppEvents.ERROR, message=f"Failed to extract behaviors: {e!s}"
             )
             return True
 
@@ -121,7 +122,7 @@ class LearnReviewCoordinator:
                 except ValueError as e:
                     await self._bus.emit(
                         AppEvents.ERROR,
-                        message=f"❌ Invalid behavior format for '{behavior_data['id']}': {str(e)}",
+                        message=f"❌ Invalid behavior format for '{behavior_data['id']}': {e!s}",
                     )
             else:
                 skipped_count += 1

@@ -4,31 +4,32 @@ Refactored to use separate modules for different responsibilities.
 """
 
 from __future__ import annotations
+
 import asyncio
 import queue
+import signal
+import sys
 import threading
 import time
-import sys
-import signal
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from loguru import logger
 from rich.console import Console
 from rich.text import Text
-from AgentCrew.modules.events import AppEvents, EventBus
+
 from AgentCrew.modules.chat.agent_evaluation import parse_agent_evaluation
-from loguru import logger
+from AgentCrew.modules.events import AppEvents, EventBus
+from AgentCrew.modules.llm.token_usage import TokenUsage
 
 from .constants import (
-    RICH_STYLE_GREEN,
+    PROMPT_CHAR,
     RICH_STYLE_BLUE,
     RICH_STYLE_BLUE_BOLD,
-    RICH_STYLE_YELLOW,
+    RICH_STYLE_GREEN,
     RICH_STYLE_WHITE,
+    RICH_STYLE_YELLOW,
     RICH_STYLE_YELLOW_BOLD,
-    PROMPT_CHAR,
 )
-
-from AgentCrew.modules.llm.token_usage import TokenUsage
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message_handler import MessageHandler
@@ -47,13 +48,13 @@ class ConsoleUI:
             message_handler: The MessageHandler instance that this UI will observe.
         """
 
-        from .display_handlers import DisplayHandlers
-        from .tool_display import ToolDisplayHandlers
-        from .input_handler import InputHandler
-        from .ui_effects import UIEffects
+        from .command_handlers import CommandHandlers
         from .confirmation_handler import ConfirmationHandler
         from .conversation_handler import ConversationHandler
-        from .command_handlers import CommandHandlers
+        from .display_handlers import DisplayHandlers
+        from .input_handler import InputHandler
+        from .tool_display import ToolDisplayHandlers
+        from .ui_effects import UIEffects
 
         self.message_handler = message_handler
         self.bus = EventBus.get_instance()
@@ -108,7 +109,7 @@ class ConsoleUI:
             self._token_usage = self._token_usage.merge(token_usage)
         except Exception as e:
             self.message_handler.bus.emit_sync(
-                AppEvents.ERROR, message=f"Voice activation failed: {str(e)}"
+                AppEvents.ERROR, message=f"Voice activation failed: {e!s}"
             )
         finally:
             self.input_handler.is_message_processing = False

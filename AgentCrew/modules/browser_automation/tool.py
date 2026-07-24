@@ -14,8 +14,10 @@ def _truncate_text(text: str, max_chars: int) -> str:
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
+
     from .service import BrowserAutomationService
-    from typing import Any, Callable, Union
 
 
 def browser_instruction_prompt() -> str:
@@ -152,7 +154,7 @@ def get_browser_get_content_tool_handler(
 ) -> Callable:
     """Get the handler function for the browser content extraction tool."""
 
-    async def handle_browser_get_content(**params) -> Union[list[dict[str, Any]], str]:
+    async def handle_browser_get_content(**params) -> list[dict[str, Any]] | str:
         result = browser_service.get_page_content()
         browser_service._last_page_content = result.get("content", "")
         context_image = browser_service.capture_screenshot(

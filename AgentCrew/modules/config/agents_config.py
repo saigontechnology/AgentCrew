@@ -145,7 +145,7 @@ class AgentsConfig:
 
     def reload(self) -> None:
         """Hot-reload all agents from the current agents.toml without restarting."""
-        from AgentCrew.modules.agents import RemoteAgent, LocalAgent, AgentManager
+        from AgentCrew.modules.agents import AgentManager, LocalAgent, RemoteAgent
 
         agent_manager = AgentManager.get_instance()
         new_agents_config = agent_manager.load_agents_from_config(self._path)
@@ -336,7 +336,7 @@ class AgentsConfig:
 
         except Exception as e:
             result["error"] = str(e)
-            logger.error(f"Export agents error: {str(e)}", exc_info=True)
+            logger.error(f"Export agents error: {e!s}", exc_info=True)
 
         return result
 
@@ -360,8 +360,9 @@ class AgentsConfig:
 
         try:
             if import_file_path.startswith(("http://", "https://")):
-                import requests
                 import tempfile
+
+                import requests
 
                 response = requests.get(import_file_path, timeout=30)
                 response.raise_for_status()
@@ -478,7 +479,7 @@ class AgentsConfig:
 
         except Exception as e:
             result["error"] = str(e)
-            logger.error(f"Import agents error: {str(e)}", exc_info=True)
+            logger.error(f"Import agents error: {e!s}", exc_info=True)
 
         finally:
             if temp_file and os.path.exists(temp_file.name):

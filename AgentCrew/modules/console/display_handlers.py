@@ -10,36 +10,34 @@ import re
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from textual_image.renderable import Image as TextualImage
-from rich.console import Group
-from AgentCrew.modules.chat.agent_evaluation import parse_agent_evaluation
 from rich.box import HORIZONTALS, SIMPLE, SQUARE
+from rich.console import Group
 from rich.markdown import Markdown
-from rich.text import Text
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
+from textual_image.renderable import Image as TextualImage
 
+from AgentCrew.modules.chat.agent_evaluation import parse_agent_evaluation
 from AgentCrew.modules.llm.token_usage import TokenUsage
 
 from .constants import (
-    RICH_STYLE_YELLOW,
-    RICH_STYLE_BLUE,
-    RICH_STYLE_RED,
-    RICH_STYLE_GREEN,
-    RICH_STYLE_GRAY,
-    RICH_STYLE_YELLOW_BOLD,
-    RICH_STYLE_GREEN_BOLD,
-    RICH_STYLE_BLUE_BOLD,
-    RICH_STYLE_FILE_ACCENT_BOLD,
-    RICH_STYLE_WHITE,
     CODE_THEME,
     COMMAND_HELP_MESSAGES,
+    RICH_STYLE_BLUE,
+    RICH_STYLE_BLUE_BOLD,
+    RICH_STYLE_FILE_ACCENT_BOLD,
+    RICH_STYLE_GRAY,
+    RICH_STYLE_GREEN,
+    RICH_STYLE_GREEN_BOLD,
+    RICH_STYLE_RED,
+    RICH_STYLE_WHITE,
+    RICH_STYLE_YELLOW,
+    RICH_STYLE_YELLOW_BOLD,
 )
 from .diff_display import DiffDisplay
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .console_ui import ConsoleUI
@@ -138,7 +136,6 @@ class DisplayHandlers:
 
     def display_divider(self):
         """Display a divider line."""
-        pass
 
     def print_divider(self, title="", with_time=False):
         """Display a divider line."""

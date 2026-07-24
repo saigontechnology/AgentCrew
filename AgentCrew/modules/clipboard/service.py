@@ -1,12 +1,12 @@
-import pyperclip
 import base64
 import io
 import os
 import tempfile
-from PIL import ImageGrab, Image
 from typing import Any
 
+import pyperclip
 from loguru import logger
+from PIL import Image, ImageGrab
 
 
 class ClipboardService:
@@ -35,7 +35,7 @@ class ClipboardService:
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Failed to write to clipboard: {str(e)}",
+                "error": f"Failed to write to clipboard: {e!s}",
             }
 
     def _create_temp_file_from_image(self, image: Image.Image) -> str | None:
@@ -65,7 +65,7 @@ class ClipboardService:
             return temp_path
 
         except Exception as e:
-            logger.error(f"Failed to create temporary file from image: {str(e)}")
+            logger.error(f"Failed to create temporary file from image: {e!s}")
             return None
 
     def read(self) -> dict[str, Any]:
@@ -107,7 +107,7 @@ class ClipboardService:
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Failed to read from clipboard: {str(e)}",
+                "error": f"Failed to read from clipboard: {e!s}",
             }
 
     def read_and_process_paste(self) -> dict[str, Any]:
@@ -169,9 +169,7 @@ class ClipboardService:
                     os.unlink(temp_file)
                     logger.info(f"Cleaned up temporary file: {temp_file}")
             except Exception as e:
-                logger.warning(
-                    f"Failed to cleanup temporary file {temp_file}: {str(e)}"
-                )
+                logger.warning(f"Failed to cleanup temporary file {temp_file}: {e!s}")
 
         self.temp_files = []
 

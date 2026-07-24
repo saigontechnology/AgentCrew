@@ -1,7 +1,8 @@
+import sys
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QTextEdit
-import sys
 
 
 class KeyboardHandler:
@@ -58,20 +59,7 @@ class KeyboardHandler:
             if sys.platform != "darwin"
             else Qt.KeyboardModifier.MetaModifier
         )
-        if event.key() == Qt.Key.Key_Tab:
-            # Select the current completion
-            if self.chat_window.file_completer.popup().isVisible():
-                return self._handle_completer_accept(
-                    self.chat_window.file_completer, event
-                )
-            elif self.chat_window.command_completer.popup().isVisible():
-                return self._handle_completer_accept(
-                    self.chat_window.command_completer, event
-                )
-            QTextEdit.keyPressEvent(self.chat_window.message_input, event)
-
-        # Handle Enter key for completion
-        elif event.key() == Qt.Key.Key_Return:
+        if event.key() == Qt.Key.Key_Tab or event.key() == Qt.Key.Key_Return:
             # Select the current completion
             if self.chat_window.file_completer.popup().isVisible():
                 return self._handle_completer_accept(

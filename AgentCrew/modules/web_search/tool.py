@@ -126,9 +126,10 @@ def get_web_extract_tool_handler(tavily_service: TavilySearchService):
     async def _download_image_to_data_uri(img_url: str) -> str | None:
         """Download an image URL and convert to base64 data URI."""
         try:
-            import httpx
             import base64
             import mimetypes
+
+            import httpx
 
             async with httpx.AsyncClient(timeout=15) as client:
                 response = await client.get(img_url)
@@ -153,7 +154,7 @@ def get_web_extract_tool_handler(tavily_service: TavilySearchService):
         include_images = params.get("include_images", False)
         results = tavily_service.extract(url=url, include_images=include_images)
 
-        if "failed_results" in results and results["failed_results"]:
+        if results.get("failed_results"):
             err = results["failed_results"][0]
             return f"Extract failed: {err.get('error', 'Unknown error')}"
 

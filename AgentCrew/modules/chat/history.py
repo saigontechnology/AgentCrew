@@ -1,4 +1,5 @@
 import os
+
 from loguru import logger
 
 # Default constants
@@ -87,7 +88,7 @@ class ChatHistoryManager:
                             self.history = self.history[-self.history_limit :]
             self.position = len(self.history)
         except Exception as e:
-            logger.error(f"Failed to load chat history: {str(e)}")
+            logger.error(f"Failed to load chat history: {e!s}")
             self.history = []
             self.position = 0
 
@@ -99,7 +100,7 @@ class ChatHistoryManager:
             with open(self.history_file, "w", encoding="utf-8") as f:
                 f.write(ENTRY_DELIMITER.join(self.history))
         except Exception as e:
-            logger.error(f"Failed to save chat history: {str(e)}")
+            logger.error(f"Failed to save chat history: {e!s}")
 
     def add_entry(self, entry: str) -> None:
         """

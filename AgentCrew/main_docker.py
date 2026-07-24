@@ -1,6 +1,8 @@
-import click
 import os
 import sys
+
+import click
+
 from AgentCrew.app import common_options
 
 
@@ -21,8 +23,9 @@ sys.unraisablehook = _custom_unraisable_hook
 @click.group()
 def cli():
     """Agentcrew - AI Assistant and Agent Framework"""
-    from loguru import logger
     import logging
+
+    from loguru import logger
 
     formatter = "{time} - {name} - {level} - {message}"
     log_level = os.getenv("AGENTCREW_LOG_LEVEL", "ERROR").upper()
@@ -260,7 +263,7 @@ def job(
         import traceback
 
         print(traceback.format_exc())
-        click.echo(f"❌ Error: {str(e)}", err=True)
+        click.echo(f"❌ Error: {e!s}", err=True)
         raise SystemExit(1)
 
 

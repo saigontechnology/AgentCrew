@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 import os
 import uuid
-from typing import TYPE_CHECKING, Any
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any
+
 from loguru import logger
 
 from .base_service import BaseMemoryService
@@ -10,6 +12,7 @@ from .memory_worker import MemoryWorker
 
 if TYPE_CHECKING:
     from chromadb import Collection
+
     from AgentCrew.modules.llm.base import BaseLLMService
 
 MEMORY_DB_PATH = "./memory_db"
@@ -41,9 +44,10 @@ class ChromaMemoryService(BaseMemoryService):
                 self.llm_service.model = "accounts/fireworks/models/gemma-4-31b-it"
             elif self.llm_service.provider_name == "github_copilot":
                 self.llm_service.model = "claude-haiku-4.5"
-            elif self.llm_service.provider_name == "copilot_response":
-                self.llm_service.model = "gpt-5.4-mini"
-            elif self.llm_service.provider_name == "openai_codex":
+            elif (
+                self.llm_service.provider_name == "copilot_response"
+                or self.llm_service.provider_name == "openai_codex"
+            ):
                 self.llm_service.model = "gpt-5.4-mini"
             elif self.llm_service.provider_name == "together":
                 self.llm_service.model = "Qwen/Qwen3.5-9B"
@@ -70,8 +74,8 @@ class ChromaMemoryService(BaseMemoryService):
 
     def _initialize_collection(self) -> Collection:
         import chromadb
-        import chromadb.utils.embedding_functions as embedding_functions
         from chromadb.config import Settings
+        from chromadb.utils import embedding_functions
 
         if self._collection is not None:
             return self._collection
@@ -80,7 +84,7 @@ class ChromaMemoryService(BaseMemoryService):
             path=self.db_path, settings=Settings(anonymized_telemetry=False)
         )
         if os.getenv("VOYAGE_API_KEY"):
-            from .voyageai_ef import VoyageEmbeddingFunction, VOYAGE_RELEVANT_THRESHOLD
+            from .voyageai_ef import VOYAGE_RELEVANT_THRESHOLD, VoyageEmbeddingFunction
 
             voyage_ef = VoyageEmbeddingFunction(
                 api_key=os.getenv("VOYAGE_API_KEY"),
@@ -430,7 +434,7 @@ class ChromaMemoryService(BaseMemoryService):
         except Exception as e:
             return {
                 "success": False,
-                "message": f"Error forgetting topic: {str(e)}",
+                "message": f"Error forgetting topic: {e!s}",
                 "count": 0,
             }
 
@@ -481,7 +485,7 @@ class ChromaMemoryService(BaseMemoryService):
             )
             return {
                 "success": False,
-                "message": f"Error deleting memories: {str(e)}",
+                "message": f"Error deleting memories: {e!s}",
                 "count": 0,
             }
 

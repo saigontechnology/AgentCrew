@@ -1,12 +1,12 @@
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QGroupBox,
     QHBoxLayout,
     QLineEdit,
     QPushButton,
-    QGroupBox,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Signal
 
 from AgentCrew.modules.gui.themes import StyleProvider
 

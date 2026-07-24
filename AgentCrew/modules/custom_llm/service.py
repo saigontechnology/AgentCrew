@@ -1,11 +1,13 @@
-from AgentCrew.modules.llm.model_registry import ModelRegistry
-from AgentCrew.modules.openai import OpenAIService
-from AgentCrew.modules.llm.base import AsyncIterator
-from AgentCrew.modules.llm.token_usage import TokenUsage
-from typing import Any, Tuple
 import ast
 import json
+from typing import Any
+
 from loguru import logger
+
+from AgentCrew.modules.llm.base import AsyncIterator
+from AgentCrew.modules.llm.model_registry import ModelRegistry
+from AgentCrew.modules.llm.token_usage import TokenUsage
+from AgentCrew.modules.openai import OpenAIService
 
 
 class CustomLLMService(OpenAIService):
@@ -372,7 +374,7 @@ class CustomLLMService(OpenAIService):
                     ):
                         msg["reasoning_content"] = (
                             msg["reasoning_content"]
-                            if "reasoning_content" in msg and msg["reasoning_content"]
+                            if msg.get("reasoning_content")
                             else " "
                         )
 
@@ -422,7 +424,7 @@ class CustomLLMService(OpenAIService):
 
     def _build_stream_params(
         self,
-    ) -> Tuple[dict[str, Any], bool]:
+    ) -> tuple[dict[str, Any], bool]:
         """Build stream parameters for the API call.
 
         Override this in derived classes to customize parameters without
@@ -520,7 +522,7 @@ class CustomLLMService(OpenAIService):
 
     def process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         if "stream" in ModelRegistry.get_model_capabilities(
             f"{self._provider_name}/{self.model}"
         ):
@@ -530,7 +532,7 @@ class CustomLLMService(OpenAIService):
 
     def _process_non_stream_chunk(
         self, chunk, assistant_response, tool_uses
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from the streaming response.
 
@@ -652,7 +654,7 @@ class CustomLLMService(OpenAIService):
 
     def _process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from the streaming response.
 

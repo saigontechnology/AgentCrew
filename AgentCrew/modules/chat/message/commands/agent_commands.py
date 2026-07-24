@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from AgentCrew.modules.events import AppEvents
-from typing import Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from AgentCrew.modules.chat.message.commands.base import CommandResult
 from AgentCrew.modules.config.global_config import GlobalConfig
+from AgentCrew.modules.events import AppEvents
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message import MessageHandler
@@ -16,7 +16,7 @@ class AgentCommands:
     def __init__(self, message_handler: MessageHandler):
         self.message_handler = message_handler
 
-    def handle_agent(self, command: str) -> Tuple[bool, str]:
+    def handle_agent(self, command: str) -> tuple[bool, str]:
         """
         Handle the /agent command to switch agents or list available agents.
 
@@ -107,7 +107,7 @@ class AgentCommands:
         except Exception as e:
             self.message_handler.bus.emit_sync(
                 AppEvents.ERROR,
-                message=f"Failed to toggle transfer enforcement: {str(e)}",
+                message=f"Failed to toggle transfer enforcement: {e!s}",
             )
             return CommandResult(handled=True, clear_flag=True)
 
@@ -151,6 +151,6 @@ class AgentCommands:
 
         except Exception as e:
             self.message_handler.bus.emit_sync(
-                AppEvents.ERROR, message=f"Failed to switch agent mode: {str(e)}"
+                AppEvents.ERROR, message=f"Failed to switch agent mode: {e!s}"
             )
             return CommandResult(handled=True, clear_flag=True)

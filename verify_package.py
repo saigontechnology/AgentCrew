@@ -1,12 +1,6 @@
-#!/usr/bin/env python3
-"""
-Verification script for AgentCrew package.
-This script verifies that the built package contains all the necessary files.
-"""
-
 import sys
-import zipfile
 import tarfile
+import zipfile
 from pathlib import Path
 
 

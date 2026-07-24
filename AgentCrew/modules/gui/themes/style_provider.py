@@ -1,6 +1,8 @@
-from .theme_loader import ThemeLoader, ThemeData
+from PySide6.QtCore import QObject, Signal
+
 from AgentCrew.modules.config.global_config import GlobalConfig
-from PySide6.QtCore import Signal, QObject
+
+from .theme_loader import ThemeData, ThemeLoader
 
 
 class StyleProvider(QObject):
@@ -9,7 +11,7 @@ class StyleProvider(QObject):
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(StyleProvider, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 

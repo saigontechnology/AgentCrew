@@ -1,4 +1,5 @@
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from AgentCrew.modules.agents import AgentManager, run_agent_loop
 

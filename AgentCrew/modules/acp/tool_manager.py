@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from AgentCrew.modules.acp.session_state import AcpSessionState
 
 if TYPE_CHECKING:
-    from AgentCrew.modules.agents import LocalAgent, AgentManager
+    from AgentCrew.modules.agents import AgentManager, LocalAgent
 
 
 class AcpToolManager:

@@ -1,11 +1,12 @@
 from __future__ import annotations
+
 import asyncio
 import os
 import re
 import sys
+import tomllib
 from typing import TYPE_CHECKING, Any
 
-import tomllib
 from loguru import logger
 from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
@@ -14,11 +15,11 @@ from prompt_toolkit.keys import Keys
 from prompt_toolkit.shortcuts import choice
 from prompt_toolkit.styles import Style
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
-from rich.markdown import Markdown
 
-from AgentCrew.modules.agents import run_agent_loop, LocalAgent
+from AgentCrew.modules.agents import LocalAgent, run_agent_loop
 from AgentCrew.modules.config.agents_config import AgentsConfig
 from AgentCrew.modules.web_search.tool import register as register_web_search
 
@@ -239,9 +240,10 @@ class OnboardingService:
                 self.llm_service.model = "zai-org/GLM-5.2"
             elif self.llm_service.provider_name == "github_copilot":
                 self.llm_service.model = "claude-sonnet-4.6"
-            elif self.llm_service.provider_name == "copilot_response":
-                self.llm_service.model = "gpt-5.5"
-            elif self.llm_service.provider_name == "openai_codex":
+            elif (
+                self.llm_service.provider_name == "copilot_response"
+                or self.llm_service.provider_name == "openai_codex"
+            ):
                 self.llm_service.model = "gpt-5.5"
             elif self.llm_service.provider_name == "together":
                 self.llm_service.model = "zai-org/GLM-5.2"

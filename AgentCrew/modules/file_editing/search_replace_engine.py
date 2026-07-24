@@ -6,7 +6,7 @@ Implements search/replace blocks for precise file editing.
 """
 
 from dataclasses import dataclass
-from typing import Tuple, Literal
+from typing import Literal
 
 
 @dataclass
@@ -135,7 +135,7 @@ class SearchReplaceEngine:
 
     def apply_blocks(
         self, file_content: str, blocks: list[SearchReplaceBlock]
-    ) -> Tuple[str, list[BlockResult]]:
+    ) -> tuple[str, list[BlockResult]]:
         """
         Apply search/replace blocks sequentially with context-aware disambiguation.
 
@@ -257,9 +257,7 @@ class SearchReplaceEngine:
         """
         valid_matches = [m for m in matches if m.start_index >= last_match_end]
 
-        if len(valid_matches) == 1:
-            return valid_matches[0]
-        elif len(valid_matches) > 1:
+        if len(valid_matches) == 1 or len(valid_matches) > 1:
             return valid_matches[0]
         else:
             return None

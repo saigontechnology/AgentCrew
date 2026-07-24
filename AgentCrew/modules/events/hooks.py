@@ -12,10 +12,12 @@ to intercept and extend application behaviour at well-defined points.
 from __future__ import annotations
 
 import inspect
-from loguru import logger
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
+
+from loguru import logger
 
 
 class CancelOperation(BaseException):

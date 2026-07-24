@@ -13,15 +13,15 @@ testing core functionality including:
 Uses mocking to isolate tests from system dependencies and external searchers.
 """
 
+import os
+import shutil
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
-import os
-import tempfile
-import shutil
 
 from AgentCrew.modules.code_analysis.file_search_service import (
-    FileSearchService,
     FileSearchError,
+    FileSearchService,
 )
 
 

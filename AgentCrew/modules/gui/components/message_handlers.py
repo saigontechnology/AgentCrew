@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QApplication
+
 from AgentCrew.modules.chat.agent_evaluation import parse_agent_evaluation
 
 

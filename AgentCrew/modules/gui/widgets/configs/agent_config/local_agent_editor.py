@@ -1,4 +1,4 @@
-from typing import Callable
+from collections.abc import Callable
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QDoubleValidator
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from AgentCrew.modules.gui.themes import StyleProvider
 from AgentCrew.modules.gui.widgets.markdown_editor import MarkdownEditor
+
 from .behavior_editor import BehaviorEditor
 
 

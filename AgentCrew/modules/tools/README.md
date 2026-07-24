@@ -16,12 +16,8 @@ The tool registration system supports two modes of operation:
 def register(service_instance=None):
     """Register this tool with the central registry"""
     from modules.tools.registration import register_tool
-    
-    register_tool(
-        get_tool_definition,
-        get_tool_handler,
-        service_instance
-    )
+
+    register_tool(get_tool_definition, get_tool_handler, service_instance)
 ```
 
 ### After (Supporting Both Global and Agent-Specific)
@@ -30,19 +26,14 @@ def register(service_instance=None):
 def register(service_instance=None, agent=None):
     """
     Register this tool with the central registry or directly with an agent
-    
+
     Args:
         service_instance: Service instance needed by the handler
         agent: Agent instance to register with directly (optional)
     """
     from modules.tools.registration import register_tool
-    
-    register_tool(
-        get_tool_definition,
-        get_tool_handler,
-        service_instance,
-        agent
-    )
+
+    register_tool(get_tool_definition, get_tool_handler, service_instance, agent)
 ```
 
 ## Best Practices
@@ -58,20 +49,17 @@ def register(service_instance=None, agent=None):
 # In your tool module
 def register(service_instance=None, agent=None):
     from modules.tools.registration import register_tool
-    
+
     # Register primary tool
     register_tool(
-        get_primary_tool_definition,
-        get_primary_tool_handler,
-        service_instance,
-        agent
+        get_primary_tool_definition, get_primary_tool_handler, service_instance, agent
     )
-    
+
     # Register secondary tool
     register_tool(
         get_secondary_tool_definition,
         get_secondary_tool_handler,
         service_instance,
-        agent
+        agent,
     )
 ```

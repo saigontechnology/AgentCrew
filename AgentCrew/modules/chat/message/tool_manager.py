@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
 import asyncio
 import copy
+from typing import Any
 
 from loguru import logger
-from AgentCrew.modules.config.global_config import GlobalConfig
 
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.config.global_config import GlobalConfig
 from AgentCrew.modules.events import AppEvents, EventBus
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.tools.parallel_executor import (
@@ -270,7 +270,7 @@ class ToolManager:
             return result
         except Exception as e:
             logger.error(
-                f"Error while waiting for tool confirmation {confirmation_id}: {str(e)}"
+                f"Error while waiting for tool confirmation {confirmation_id}: {e!s}"
             )
             return {"action": "deny"}
         finally:

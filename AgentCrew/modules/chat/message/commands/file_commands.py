@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from AgentCrew.modules.events import AppEvents
 import os
 import shlex
 from typing import TYPE_CHECKING
 
 from AgentCrew.modules.chat.message.commands.base import CommandResult
+from AgentCrew.modules.events import AppEvents
 from AgentCrew.modules.utils.file_handler import FileHandler
 
 if TYPE_CHECKING:
@@ -117,11 +117,11 @@ class FileCommands:
 
         except ValueError as e:
             self.message_handler.bus.emit_sync(
-                AppEvents.ERROR, message=f"Invalid file ID format: {str(e)}"
+                AppEvents.ERROR, message=f"Invalid file ID format: {e!s}"
             )
             return CommandResult(handled=True, clear_flag=True)
         except Exception as e:
             self.message_handler.bus.emit_sync(
-                AppEvents.ERROR, message=f"Error removing file: {str(e)}"
+                AppEvents.ERROR, message=f"Error removing file: {e!s}"
             )
             return CommandResult(handled=True, clear_flag=True)

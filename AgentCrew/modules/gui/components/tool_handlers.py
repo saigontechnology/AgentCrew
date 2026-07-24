@@ -1,17 +1,18 @@
-from PySide6.QtWidgets import (
-    QMessageBox,
-    QTextEdit,
-    QGridLayout,
-    QDialog,
-    QVBoxLayout,
-    QPushButton,
-    QLabel,
-    QScrollArea,
-)
-from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtCore import Qt
-from AgentCrew.modules.gui.widgets.tool_widget import ToolWidget
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import (
+    QDialog,
+    QGridLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QTextEdit,
+    QVBoxLayout,
+)
+
 from AgentCrew.modules.gui.widgets.diff_widget import DiffWidget
+from AgentCrew.modules.gui.widgets.tool_widget import ToolWidget
 
 
 class ToolEventHandler:
@@ -286,7 +287,7 @@ class ToolEventHandler:
 
     def _handle_write_file_confirmation(self, tool_use, confirmation_id):
         """Handle write_or_edit_file tool confirmation with diff view."""
-        from PySide6.QtWidgets import QWidget, QHBoxLayout
+        from PySide6.QtWidgets import QHBoxLayout, QWidget
 
         tool_input = tool_use.get("input", {})
         file_path = tool_input.get("file_path", "")
@@ -521,7 +522,7 @@ class ToolEventHandler:
 
     def _build_multi_question_dialog(self, questions, current_idx, existing_answers):
         """Build a dialog showing one question with navigation."""
-        from PySide6.QtWidgets import QCheckBox, QScrollArea, QWidget, QDialogButtonBox
+        from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QScrollArea, QWidget
 
         total = len(questions)
         q = questions[current_idx]

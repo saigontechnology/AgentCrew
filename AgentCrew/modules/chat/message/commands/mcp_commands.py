@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from AgentCrew.modules.events import AppEvents
-from typing import Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message import MessageHandler
@@ -14,7 +15,7 @@ class MCPCommands:
     def __init__(self, message_handler: MessageHandler):
         self.message_handler = message_handler
 
-    async def handle_mcp(self, command: str) -> Tuple[bool, bool]:
+    async def handle_mcp(self, command: str) -> tuple[bool, bool]:
         """
         Handle the /mcp command: list prompts or fetch a specific prompt content.
 
@@ -64,7 +65,7 @@ class MCPCommands:
                     )
             except Exception as e:
                 await self.message_handler.bus.emit(
-                    AppEvents.ERROR, message=f"Error fetching prompt: {str(e)}"
+                    AppEvents.ERROR, message=f"Error fetching prompt: {e!s}"
                 )
             return False, True
         else:

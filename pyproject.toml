@@ -36,7 +36,7 @@ dependencies = [
   "numpy==1.26.4; python_version < '3.13' and sys_platform == 'darwin'",
   "pywin32; sys_platform == 'win32'",
   "pyobjc; sys_platform == 'darwin'",
-  "a2a-sdk==0.3.26",
+  "a2a-sdk[http-server]==1.1.2",
   "agent-client-protocol==0.10.0",
   "xmltodict==1.0.4",
   "elevenlabs==2.44.0",
@@ -71,7 +71,7 @@ redis = ["redis==7.4.0"]
 gui = ["qtawesome==1.4.2", "pyside6==6.11.0"]
 
 [tool.uv]
-exclude-newer = "3 days"
+exclude-newer = "2026-07-23T23:59:59Z"
 conflicts = [[{ extra = "cpu" }, { extra = "nvidia" }]]
 
 [tool.uv.sources]
@@ -107,6 +107,9 @@ explicit = true
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[tool.ruff.lint]
+ignore = ["BLE001"]
 
 
 [project.urls]

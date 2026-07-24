@@ -1,8 +1,7 @@
 import os
-from loguru import logger
 
 import yaml
-
+from loguru import logger
 
 SKILL_SCAN_DIRS = [".claude/skills", ".agents/skills", ".od-skills", ".codex/skills"]
 

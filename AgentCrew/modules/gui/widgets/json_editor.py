@@ -4,13 +4,13 @@ from typing import Any
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import (
-    QTextCharFormat,
     QColor,
-    QSyntaxHighlighter,
-    QTextDocument,
     QFont,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextDocument,
 )
-from PySide6.QtWidgets import QPlainTextEdit, QWidget, QVBoxLayout, QLabel
+from PySide6.QtWidgets import QLabel, QPlainTextEdit, QVBoxLayout, QWidget
 
 from AgentCrew.modules.gui.themes import StyleProvider
 
@@ -121,7 +121,7 @@ class JsonEditor(QWidget):
 
         except json.JSONDecodeError as e:
             # Show validation error
-            error_msg = f"JSON Error: {str(e)}"
+            error_msg = f"JSON Error: {e!s}"
             self.error_label.setText(error_msg)
             self.error_label.show()
             self.validation_error.emit(error_msg)
@@ -132,7 +132,7 @@ class JsonEditor(QWidget):
             json_text = json.dumps(json_data, indent=2, ensure_ascii=False)
             self.text_edit.setPlainText(json_text)
         except Exception as e:
-            self.error_label.setText(f"Error setting JSON: {str(e)}")
+            self.error_label.setText(f"Error setting JSON: {e!s}")
             self.error_label.show()
 
     def get_json(self) -> dict[str, Any]:

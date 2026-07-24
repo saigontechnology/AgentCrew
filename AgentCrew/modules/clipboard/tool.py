@@ -1,4 +1,5 @@
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from AgentCrew.modules.utils.file_handler import optimize_image_data_uri
 

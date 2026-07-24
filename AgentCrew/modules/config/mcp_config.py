@@ -86,4 +86,4 @@ class MCPConfig:
                 json.dump(raw, f, indent=2)
             AgentsConfig().reload()
         except Exception as e:
-            raise ValueError(f"Error writing MCP configuration: {str(e)}")
+            raise ValueError(f"Error writing MCP configuration: {e!s}")

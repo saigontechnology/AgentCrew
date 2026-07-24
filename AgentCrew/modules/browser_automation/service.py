@@ -6,27 +6,28 @@ scroll content, and extract page information using Chrome DevTools Protocol.
 """
 
 import time
-import uuid
-from typing import Any, Set
-from html_to_markdown import convert, ConversionOptions, PreprocessingOptions
 import urllib.parse
+import uuid
+from typing import Any
+
+import PyChromeDevTools
+from html_to_markdown import ConversionOptions, PreprocessingOptions, convert
+from loguru import logger
+
+from AgentCrew.modules.utils.file_handler import optimize_image_data_uri
 
 from .chrome_manager import ChromeManager
 from .console_listener import ConsoleListener
 from .element_extractor import (
-    extract_clickable_elements,
-    extract_input_elements,
-    extract_elements_by_text,
-    extract_scrollable_elements,
     clean_markdown_images,
+    extract_clickable_elements,
+    extract_elements_by_text,
+    extract_input_elements,
+    extract_scrollable_elements,
     filter_hidden_elements,
     remove_duplicate_lines,
 )
-from .js_loader import js_loader, JavaScriptExecutor
-from AgentCrew.modules.utils.file_handler import optimize_image_data_uri
-
-import PyChromeDevTools
-from loguru import logger
+from .js_loader import JavaScriptExecutor, js_loader
 
 
 class BrowserAutomationService:
@@ -80,7 +81,7 @@ class BrowserAutomationService:
         self.uuid_to_xpath_mapping.clear()
         self.xpath_to_uuid_mapping.clear()
 
-    def _set_active_content_xpaths(self, active_xpaths: Set[str]) -> None:
+    def _set_active_content_xpaths(self, active_xpaths: set[str]) -> None:
         active_uuid_to_xpath: dict[str, str] = {}
         active_xpath_to_uuid: dict[str, str] = {}
 
@@ -195,7 +196,7 @@ class BrowserAutomationService:
             self._reset_browser_state()
             return {
                 "success": False,
-                "error": f"Navigation failed: {str(e)}. Please try again",
+                "error": f"Navigation failed: {e!s}. Please try again",
                 "url": url,
                 "profile": profile,
             }
@@ -229,7 +230,7 @@ class BrowserAutomationService:
             logger.error(f"Refresh error: {e}")
             return {
                 "success": False,
-                "error": f"Refresh error: {str(e)}",
+                "error": f"Refresh error: {e!s}",
             }
 
     def click_element(self, element_uuid: str) -> dict[str, Any]:
@@ -312,7 +313,7 @@ class BrowserAutomationService:
             logger.error(f"Click error: {e}")
             return {
                 "success": False,
-                "error": f"Click error: {str(e)}",
+                "error": f"Click error: {e!s}",
                 "uuid": element_uuid,
                 "xpath": xpath,
             }
@@ -356,7 +357,7 @@ class BrowserAutomationService:
             logger.error(f"Scroll to element error: {e}")
             return {
                 "success": False,
-                "error": f"Scroll to element error: {str(e)}",
+                "error": f"Scroll to element error: {e!s}",
                 "uuid": element_uuid,
             }
 
@@ -474,7 +475,7 @@ class BrowserAutomationService:
 
         except Exception as e:
             logger.error(f"Content extraction error: {e}")
-            return {"success": False, "error": f"Content extraction error: {str(e)}"}
+            return {"success": False, "error": f"Content extraction error: {e!s}"}
 
     def execute_script(self, script: str, await_promise: bool = True) -> dict[str, Any]:
         try:
@@ -546,7 +547,7 @@ class BrowserAutomationService:
 
         except Exception as e:
             logger.error(f"Script execution error: {e}")
-            return {"success": False, "error": f"Script execution error: {str(e)}"}
+            return {"success": False, "error": f"Script execution error: {e!s}"}
 
     def get_console_logs(
         self,
@@ -629,7 +630,7 @@ class BrowserAutomationService:
             logger.error(f"Keyboard input simulation error: {e}")
             return {
                 "success": False,
-                "error": f"Keyboard input simulation error: {str(e)}",
+                "error": f"Keyboard input simulation error: {e!s}",
                 "uuid": element_uuid,
                 "xpath": xpath,
                 "input_value": value,
@@ -661,7 +662,7 @@ class BrowserAutomationService:
             logger.error(f"Key dispatch error: {e}")
             return {
                 "success": False,
-                "error": f"Key dispatch error: {str(e)}",
+                "error": f"Key dispatch error: {e!s}",
                 "key": key,
                 "modifiers": modifiers,
             }
@@ -687,7 +688,7 @@ class BrowserAutomationService:
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Get elements by text error: {str(e)}",
+                "error": f"Get elements by text error: {e!s}",
                 "text": text,
             }
 
@@ -819,7 +820,7 @@ class BrowserAutomationService:
 
         except Exception as e:
             logger.error(f"Screenshot capture error: {e}")
-            return {"success": False, "error": f"Screenshot capture error: {str(e)}"}
+            return {"success": False, "error": f"Screenshot capture error: {e!s}"}
 
     def __del__(self):
         """Cleanup when service is destroyed."""

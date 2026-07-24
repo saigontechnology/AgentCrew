@@ -1,14 +1,16 @@
-import traceback
-from AgentCrew.modules.chat.message_handler import MessageHandler
-from AgentCrew.modules.events import AppEvents
 import asyncio
 import threading
+import traceback
+
+from loguru import logger
 from PySide6.QtCore import (
-    Slot,
     QObject,
     Signal,
+    Slot,
 )
-from loguru import logger
+
+from AgentCrew.modules.chat.message_handler import MessageHandler
+from AgentCrew.modules.events import AppEvents
 
 
 class LLMWorker(QObject):
@@ -91,7 +93,7 @@ class LLMWorker(QObject):
 
         except Exception as e:
             traceback_str = traceback.format_exc()
-            error_msg = f"{str(e)}\n{traceback_str}"
+            error_msg = f"{e!s}\n{traceback_str}"
             logger.error(f"Error in LLMWorker: {error_msg}")
             self.error.emit(str(e))
 
@@ -107,7 +109,7 @@ class LLMWorker(QObject):
             )
         except Exception as e:
             traceback_str = traceback.format_exc()
-            error_msg = f"{str(e)}\n{traceback_str}"
+            error_msg = f"{e!s}\n{traceback_str}"
             logger.error(f"Error in LLMWorker evolution action: {error_msg}")
             self.error.emit(str(e))
 
@@ -124,6 +126,6 @@ class LLMWorker(QObject):
             self.message_handler.resolve_evolution_questions(questions_id, answers)
         except Exception as e:
             traceback_str = traceback.format_exc()
-            error_msg = f"{str(e)}\n{traceback_str}"
+            error_msg = f"{e!s}\n{traceback_str}"
             logger.error(f"Error resolving evolution questions: {error_msg}")
             self.error.emit(str(e))

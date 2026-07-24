@@ -1,4 +1,4 @@
-from typing import Callable
+from collections.abc import Callable
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from AgentCrew.modules.memory.context_persistent import ContextPersistenceService
 from AgentCrew.modules.gui.themes import StyleProvider
+from AgentCrew.modules.memory.context_persistent import ContextPersistenceService
 
 
 class BehaviorEditor(QWidget):
@@ -147,7 +147,7 @@ class BehaviorEditor(QWidget):
             QMessageBox.warning(
                 self,
                 "Behavior Load Error",
-                f"Failed to load behaviors for {agent_name}: {str(e)}",
+                f"Failed to load behaviors for {agent_name}: {e!s}",
             )
             self.behaviors_list.clear()
             self.current_agent_behaviors = {}
@@ -220,9 +220,7 @@ class BehaviorEditor(QWidget):
                     "Failed to save behavior. Please check the format.",
                 )
         except Exception as e:
-            QMessageBox.critical(
-                self, "Save Error", f"Failed to save behavior: {str(e)}"
-            )
+            QMessageBox.critical(self, "Save Error", f"Failed to save behavior: {e!s}")
 
     def _remove_behavior(self):
         """Remove the selected adaptive behavior."""
@@ -264,7 +262,7 @@ class BehaviorEditor(QWidget):
                     )
             except Exception as e:
                 QMessageBox.critical(
-                    self, "Remove Error", f"Failed to remove behavior: {str(e)}"
+                    self, "Remove Error", f"Failed to remove behavior: {e!s}"
                 )
 
     def _cancel_behavior_edit(self):

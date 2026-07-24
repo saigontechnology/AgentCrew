@@ -5,7 +5,7 @@ import binascii
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -13,7 +13,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from loguru import logger
 
 from AgentCrew.modules.llm.model_registry import ModelRegistry
-
 
 VISION_CACHE_PATH_ENV = "AGENTCREW_VISION_CACHE_PATH"
 DEFAULT_VISION_CACHE_PATH = "~/.AgentCrew/cache/visions"
@@ -32,7 +31,7 @@ Return only the description. Do not mention that you are an AI model."""
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def sha256_hex(value: bytes | str) -> str:

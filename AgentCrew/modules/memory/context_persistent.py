@@ -1,9 +1,10 @@
+import datetime
 import json
 import os
-import uuid
-import datetime
 import threading
+import uuid
 from typing import Any
+
 from loguru import logger
 
 
@@ -104,7 +105,7 @@ class ContextPersistenceService:
                     )
                     return default_value
                 return json.loads(content)
-        except (json.JSONDecodeError, IOError, UnicodeDecodeError) as e:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
             # Removed: self.logger.warning(...)
             logger.warning(
                 f"WARNING: Could not read or parse {file_path}: {e}. Returning default."
@@ -136,7 +137,7 @@ class ContextPersistenceService:
             self._ensure_dir(os.path.dirname(file_path))
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-        except (IOError, TypeError, OSError) as e:
+        except (TypeError, OSError) as e:
             logger.error(f"ERROR: Could not write to {file_path}: {e}")
             raise  # Re-raise the caught exception
         except Exception as e:

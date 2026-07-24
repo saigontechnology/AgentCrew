@@ -4,10 +4,11 @@ Command Execution Tools
 Tool definitions and handlers for secure shell command execution.
 """
 
-from typing import Any, Callable
-from .service import CommandExecutionService
 import os
+from collections.abc import Callable
+from typing import Any
 
+from .service import CommandExecutionService
 
 RUNNING_STDOUT_TAIL_LINES = 40
 RUNNING_STDERR_TAIL_LINES = 20

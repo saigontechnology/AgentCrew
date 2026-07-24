@@ -4,12 +4,12 @@ Manages conversation loading, listing, and display functionality.
 """
 
 from __future__ import annotations
-from typing import Any
+
+from typing import TYPE_CHECKING, Any
+
 from rich.text import Text
 
-from .constants import RICH_STYLE_YELLOW, RICH_STYLE_RED
-
-from typing import TYPE_CHECKING
+from .constants import RICH_STYLE_RED, RICH_STYLE_YELLOW
 
 if TYPE_CHECKING:
     from .console_ui import ConsoleUI
@@ -88,7 +88,7 @@ class ConversationHandler:
             )
         except Exception as e:
             self.console.print(
-                Text(f"Error loading conversation: {str(e)}", style=RICH_STYLE_RED)
+                Text(f"Error loading conversation: {e!s}", style=RICH_STYLE_RED)
             )
 
     def update_cached_conversations(self, conversations: list[dict[str, Any]]):

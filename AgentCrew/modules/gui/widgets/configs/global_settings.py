@@ -1,19 +1,19 @@
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QVBoxLayout,
-    QWidget,
-    QPushButton,
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QGroupBox,
     QLabel,
     QLineEdit,
-    QGroupBox,
-    QStyle,
-    QFormLayout,
     QMessageBox,
-    QScrollArea,
-    QComboBox,
     QProxyStyle,
-    QCheckBox,
+    QPushButton,
+    QScrollArea,
+    QStyle,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Signal
 
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
@@ -295,5 +295,5 @@ class SettingsTab(QWidget):
 
         except Exception as e:
             QMessageBox.critical(
-                self, "Error Saving Settings", f"Could not save settings: {str(e)}"
+                self, "Error Saving Settings", f"Could not save settings: {e!s}"
             )

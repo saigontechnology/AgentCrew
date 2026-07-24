@@ -1,10 +1,12 @@
 from __future__ import annotations
-import os
+
 import json
-import warnings
+import os
 import tomllib as toml
+import warnings
+from typing import TYPE_CHECKING, Any
+
 from tomli_w import dump as toml_dump
-from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .agents_config import AgentsFileConfig
@@ -75,7 +77,7 @@ class ConfigManagement:
 
             return self.config_data
         except Exception as e:
-            raise ValueError(f"Error loading configuration: {str(e)}")
+            raise ValueError(f"Error loading configuration: {e!s}")
 
     def save_config(self) -> None:
         """
@@ -107,7 +109,7 @@ class ConfigManagement:
             else:
                 raise ValueError(f"Unsupported file format: {self.file_format}")
         except Exception as e:
-            raise ValueError(f"Error saving configuration: {str(e)}")
+            raise ValueError(f"Error saving configuration: {e!s}")
 
     def get_config(self) -> dict[str, Any]:
         """

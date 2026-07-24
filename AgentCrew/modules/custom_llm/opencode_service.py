@@ -1,4 +1,4 @@
-from typing import Any, Tuple
+from typing import Any
 
 from AgentCrew.modules.custom_llm.service import CustomLLMService
 from AgentCrew.modules.llm.model_registry import ModelRegistry
@@ -30,7 +30,7 @@ class OpenCodeService(CustomLLMService):
 
     def process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         if "stream" in ModelRegistry.get_model_capabilities(
             f"{self._provider_name}/{self.model}"
         ):
@@ -39,7 +39,7 @@ class OpenCodeService(CustomLLMService):
 
     def _process_non_stream_chunk(
         self, chunk, assistant_response, tool_uses
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         input_tokens = self.current_input_tokens
         self.current_input_tokens = 0
         output_tokens = self.current_output_tokens
@@ -84,7 +84,7 @@ class OpenCodeService(CustomLLMService):
 
     def _process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         chunk_text = ""
         input_tokens = 0
         output_tokens = 0

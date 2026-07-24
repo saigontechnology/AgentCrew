@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.agents.prompt_evolution_service import PromptEvolutionService
 from AgentCrew.modules.events import AppEvents, EventBus
-from .prompt_evolution_session import PromptEvolutionSession
 
+from .prompt_evolution_session import PromptEvolutionSession
 
 USER_QUESTIONS = [
     {
@@ -69,7 +70,7 @@ class PromptEvolutionCoordinator:
         except Exception as e:
             await self._bus.emit(AppEvents.EVOLUTION_FINISHED)
             await self._bus.emit(
-                AppEvents.ERROR, message=f"Prompt evolution failed: {str(e)}"
+                AppEvents.ERROR, message=f"Prompt evolution failed: {e!s}"
             )
             return True
 
@@ -191,7 +192,7 @@ class PromptEvolutionCoordinator:
             )
         except Exception as e:
             await self._bus.emit(
-                AppEvents.ERROR, message=f"Prompt evolution failed: {str(e)}"
+                AppEvents.ERROR, message=f"Prompt evolution failed: {e!s}"
             )
             return True
         finally:

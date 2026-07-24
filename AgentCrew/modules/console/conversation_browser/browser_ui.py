@@ -2,30 +2,30 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Tuple
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
+
+from loguru import logger
+from rich.box import ROUNDED
+from rich.console import Console, Group
+from rich.layout import Layout
+from rich.live import Live
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.table import Table
+from rich.text import Text
 
 from AgentCrew.modules.chat.fork_utils import format_fork_title
 
-from rich.console import Console, Group
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
-from rich.layout import Layout
-from rich.rule import Rule
-from rich.box import ROUNDED
-from rich.live import Live
-
-from loguru import logger
-
 from ..constants import (
+    RICH_STYLE_BLUE,
+    RICH_STYLE_GRAY,
+    RICH_STYLE_GREEN,
+    RICH_STYLE_GREEN_BOLD,
+    RICH_STYLE_WHITE,
     RICH_STYLE_YELLOW,
     RICH_STYLE_YELLOW_BOLD,
-    RICH_STYLE_BLUE,
-    RICH_STYLE_GREEN_BOLD,
-    RICH_STYLE_GREEN,
-    RICH_STYLE_GRAY,
-    RICH_STYLE_WHITE,
 )
 
 
@@ -43,7 +43,7 @@ class ConversationBrowserUI:
         self.selected_index = 0
         self.scroll_offset = 0
         self._get_conversation_history = get_conversation_history
-        self._preview_cache: dict[str, Tuple[list[dict[str, Any]], int]] = {}
+        self._preview_cache: dict[str, tuple[list[dict[str, Any]], int]] = {}
         self.selected_items: set[int] = set()
         self._live: Live | None = None
         self._layout: Layout | None = None

@@ -1,8 +1,10 @@
-import tomllib as toml
 import json
+import tomllib as toml
 from enum import Enum
 from typing import Any
+
 from loguru import logger
+
 from .base import BaseAgent
 from .local_agent import LocalAgent
 
@@ -21,7 +23,7 @@ class AgentManager:
     def __new__(cls):
         """Ensure only one instance is created (singleton pattern)."""
         if cls._instance is None:
-            cls._instance = super(AgentManager, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
@@ -45,8 +47,9 @@ class AgentManager:
             config_uri = hub_host.rstrip("/") + "/" + config_uri[5:]
 
         if config_uri.startswith(("http://", "https://")):
-            import requests
             import tempfile
+
+            import requests
 
             response = requests.get(config_uri, timeout=30)
             response.raise_for_status()
@@ -581,3 +584,14 @@ When system access is requested:
 </Transfer_Tool_Instruction>"""
 
         return transfer_prompt
+
+    async def close_all_remote_agents(self):
+        """Close all RemoteAgent client resources (SDK client + httpx)."""
+        from .remote_agent import RemoteAgent
+
+        for agent in list(self.agents.values()):
+            if isinstance(agent, RemoteAgent):
+                try:
+                    await agent.close()
+                except Exception:
+                    logger.exception(f"Error closing remote agent {agent.name}")

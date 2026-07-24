@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-
 # ──────────────────────────────────────────────
 #  Event string constants (grouped by domain)
 # ──────────────────────────────────────────────
@@ -128,8 +127,6 @@ class AppEvents(
     _UxEvents,
 ):
     """All application events in one namespace."""
-
-    pass
 
 
 # ──────────────────────────────────────────────

@@ -5,13 +5,13 @@ Adapted from the PoC implementation to manage Chrome browser instances
 with DevTools Protocol support.
 """
 
-import os
-import signal
 import atexit
+import os
+import platform
+import signal
 import subprocess
 import threading
 import time
-import platform
 from pathlib import Path
 
 from loguru import logger

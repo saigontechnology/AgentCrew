@@ -1,15 +1,17 @@
+import json
 import os
 import re
-import json
-from typing import Any, Tuple
+import traceback
+from typing import Any
+
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
+from loguru import logger
+
+from AgentCrew.modules.llm.base import BaseLLMService, base64_to_bytes
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.token_usage import TokenUsage
-from google.genai import types
-from AgentCrew.modules.llm.base import BaseLLMService, base64_to_bytes
-from loguru import logger
-import traceback
 
 
 class GoogleStreamAdapter:
@@ -33,7 +35,6 @@ class GoogleStreamAdapter:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the async context manager, handling cleanup if needed."""
         # No specific cleanup needed for Google GenAI stream
-        pass
 
     def __aiter__(self):
         """Return an async iterator for the stream."""
@@ -49,7 +50,7 @@ class GoogleStreamAdapter:
             raise StopAsyncIteration
         except Exception as e:
             # Handle any Google GenAI specific exceptions
-            logger.error(f"Error in Google GenAI stream: {str(e)}")
+            logger.error(f"Error in Google GenAI stream: {e!s}")
             traceback.print_exc()
             raise StopAsyncIteration
 
@@ -485,7 +486,7 @@ class GoogleAINativeService(BaseLLMService):
 
     def process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from the streaming response.
 
@@ -573,7 +574,7 @@ class GoogleAINativeService(BaseLLMService):
         # Process tool usage information from text if present
         if assistant_response.rfind("Using tool") > -1:
             tool_pattern = r"Using tool: (\w+)\s*(?:\n)?Arguments: (\{[\s\S]*\})"
-            tool_matches = re.findall(tool_pattern, assistant_response, re.M)
+            tool_matches = re.findall(tool_pattern, assistant_response, re.MULTILINE)
 
             if assistant_response.count("{") == assistant_response.count("}"):
                 ## ignore if curly brackets not close

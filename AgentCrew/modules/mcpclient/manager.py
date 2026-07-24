@@ -1,6 +1,7 @@
+from loguru import logger
+
 from .config import MCPConfigManager
 from .service import MCPService
-from loguru import logger
 
 
 class MCPSessionManager:

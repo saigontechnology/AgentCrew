@@ -10,17 +10,17 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
-from rich.text import Text
+from loguru import logger
 from rich.table import Table
+from rich.text import Text
+
+from AgentCrew.modules.config.agents_config import AgentsConfig
 
 from .constants import (
     RICH_STYLE_YELLOW,
 )
-from AgentCrew.modules.config.agents_config import AgentsConfig
-from loguru import logger
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .console_ui import ConsoleUI
@@ -81,11 +81,11 @@ class CommandHandlers:
         except Exception as e:
             self.console.print(
                 Text(
-                    f"❌ Error opening file: {str(e)}\nPlease open the file manually: {file_path}",
+                    f"❌ Error opening file: {e!s}\nPlease open the file manually: {file_path}",
                     style="bold red",
                 )
             )
-            logger.error(f"Error opening file: {str(e)}", exc_info=True)
+            logger.error(f"Error opening file: {e!s}", exc_info=True)
             return False
 
     def handle_edit_agent_command(self) -> None:
@@ -208,11 +208,11 @@ class CommandHandlers:
         except Exception as e:
             self.console.print(
                 Text(
-                    f"❌ Failed to export agents: {str(e)}",
+                    f"❌ Failed to export agents: {e!s}",
                     style="bold red",
                 )
             )
-            logger.error(f"Export agent error: {str(e)}", exc_info=True)
+            logger.error(f"Export agent error: {e!s}", exc_info=True)
 
     def handle_import_agent_command(self, file_or_url: str) -> None:
         """
@@ -272,11 +272,11 @@ class CommandHandlers:
         except Exception as e:
             self.console.print(
                 Text(
-                    f"❌ Failed to import agent configuration: {str(e)}",
+                    f"❌ Failed to import agent configuration: {e!s}",
                     style="bold red",
                 )
             )
-            logger.error(f"Import agent error: {str(e)}", exc_info=True)
+            logger.error(f"Import agent error: {e!s}", exc_info=True)
 
     def handle_list_behaviors_command(self) -> None:
         try:
@@ -305,9 +305,9 @@ class CommandHandlers:
 
         except Exception as e:
             self.console.print(
-                Text(f"❌ Error listing behaviors: {str(e)}", style="bold red")
+                Text(f"❌ Error listing behaviors: {e!s}", style="bold red")
             )
-            logger.error(f"list behaviors error: {str(e)}", exc_info=True)
+            logger.error(f"list behaviors error: {e!s}", exc_info=True)
 
     def _display_behaviors_table(
         self,
@@ -396,13 +396,13 @@ class CommandHandlers:
 
         except ValueError as e:
             self.console.print(
-                Text(f"❌ Invalid behavior format: {str(e)}", style="bold red")
+                Text(f"❌ Invalid behavior format: {e!s}", style="bold red")
             )
         except Exception as e:
             self.console.print(
-                Text(f"❌ Error updating behavior: {str(e)}", style="bold red")
+                Text(f"❌ Error updating behavior: {e!s}", style="bold red")
             )
-            logger.error(f"Update behavior error: {str(e)}", exc_info=True)
+            logger.error(f"Update behavior error: {e!s}", exc_info=True)
 
     def handle_delete_behavior_command(
         self, behavior_id: str, scope: str = "global"
@@ -438,9 +438,9 @@ class CommandHandlers:
 
         except Exception as e:
             self.console.print(
-                Text(f"❌ Error deleting behavior: {str(e)}", style="bold red")
+                Text(f"❌ Error deleting behavior: {e!s}", style="bold red")
             )
-            logger.error(f"Delete behavior error: {str(e)}", exc_info=True)
+            logger.error(f"Delete behavior error: {e!s}", exc_info=True)
 
     def get_all_behavior_ids(self) -> list[str]:
         try:

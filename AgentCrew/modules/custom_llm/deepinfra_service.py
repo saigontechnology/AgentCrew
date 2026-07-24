@@ -1,10 +1,12 @@
-from .service import CustomLLMService
 import os
+from typing import Any
+
 from dotenv import load_dotenv
 from loguru import logger
-from typing import Tuple, Any
 
 from AgentCrew.modules.llm.token_usage import TokenUsage
+
+from .service import CustomLLMService
 
 
 class DeepInfraService(CustomLLMService):
@@ -24,14 +26,14 @@ class DeepInfraService(CustomLLMService):
         self._is_thinking = False
         logger.info("Initialized DeepInfra Service")
 
-    def _build_stream_params(self) -> Tuple[dict[str, Any], bool]:
+    def _build_stream_params(self) -> tuple[dict[str, Any], bool]:
         stream_params, is_streamable = super()._build_stream_params()
         stream_params["max_tokens"] = 81920
         return stream_params, is_streamable
 
     def _process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from the streaming response.
 

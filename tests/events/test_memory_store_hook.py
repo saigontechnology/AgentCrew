@@ -29,7 +29,6 @@ from AgentCrew.modules.events.hooks import (
 )
 from AgentCrew.modules.memory.memory_worker import MemoryWorker
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

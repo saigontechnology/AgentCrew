@@ -1,45 +1,46 @@
 from __future__ import annotations
+
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from PySide6.QtWidgets import (
-    QApplication,
-    QWidget,
-    QVBoxLayout,
-    QMessageBox,
-    QMainWindow,
-    QStatusBar,
-    QMenu,
-    QSplitter,
-)
+from loguru import logger
 from PySide6.QtCore import (
     Qt,
-    Slot,
     QThread,
     Signal,
+    Slot,
 )
 from PySide6.QtGui import QIcon
-from AgentCrew.modules.events import AppEvents, EventBus
-from loguru import logger
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QSplitter,
+    QStatusBar,
+    QVBoxLayout,
+    QWidget,
+)
 
+from AgentCrew.modules.events import AppEvents, EventBus
 from AgentCrew.modules.gui.widgets.system_message import SystemMessageWidget
 from AgentCrew.modules.llm.token_usage import TokenUsage
 
 from .worker import LLMWorker
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .widgets import MessageBubble
-    from AgentCrew.modules.chat.message_handler import MessageHandler
     from PySide6.QtWidgets import (
-        QPushButton,
-        QLabel,
         QCompleter,
+        QLabel,
+        QPushButton,
         QScrollArea,
         QTextEdit,
     )
-    from .widgets import TokenUsageWidget
+
+    from AgentCrew.modules.chat.message_handler import MessageHandler
+
+    from .widgets import MessageBubble, TokenUsageWidget
 
 
 @dataclass
@@ -238,17 +239,16 @@ class ChatWindow(QMainWindow):
         """Initialize all component handlers."""
 
         from .components import (
-            MenuBuilder,
+            ChatComponents,
+            CommandHandler,
+            ConversationComponents,
+            InputComponents,
             KeyboardHandler,
+            MenuBuilder,
             MessageEventHandler,
             ToolEventHandler,
-            ChatComponents,
             UIStateManager,
-            InputComponents,
-            ConversationComponents,
-            CommandHandler,
         )
-
         from .themes import StyleProvider
 
         self.style_provider = StyleProvider()

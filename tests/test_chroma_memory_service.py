@@ -14,9 +14,8 @@ import argparse
 import os
 from datetime import datetime, timedelta
 
-from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
 from AgentCrew.modules.llm.service_manager import ServiceManager
-
+from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
 
 LLM_PROVIDER_MAP = {
     "openai": "openai",

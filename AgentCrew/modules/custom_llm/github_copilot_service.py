@@ -1,13 +1,16 @@
-from AgentCrew.modules.llm.model_registry import ModelRegistry
-from .service import CustomLLMService
 import os
+from datetime import datetime
+from typing import Any
+from uuid import uuid4
+
 import httpx
 from dotenv import load_dotenv
 from loguru import logger
-from typing import Any, Tuple
-from datetime import datetime
-from uuid import uuid4
+
+from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.token_usage import TokenUsage
+
+from .service import CustomLLMService
 
 
 class GithubCopilotService(CustomLLMService):
@@ -346,7 +349,7 @@ class GithubCopilotService(CustomLLMService):
 
     def _process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         chunk_text = ""
         input_tokens = 0
         output_tokens = 0

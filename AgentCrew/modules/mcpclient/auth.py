@@ -2,15 +2,15 @@ import asyncio
 import json
 import os
 import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from threading import Thread, Lock
+from threading import Lock, Thread
 from urllib.parse import parse_qs, urlparse
-from pydantic import AnyUrl
-from mcp.client.auth import OAuthClientProvider, TokenStorage
-from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 
 from loguru import logger
+from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from pydantic import AnyUrl
 
 
 class FileTokenStorage(TokenStorage):
@@ -94,13 +94,13 @@ class FileTokenStorage(TokenStorage):
                 data = json.load(f)
 
             # Load tokens if present
-            if "tokens" in data and data["tokens"]:
+            if data.get("tokens"):
                 self._tokens = OAuthToken.model_validate(data["tokens"])
             else:
                 self._tokens = None
 
             # Load client info if present
-            if "client_info" in data and data["client_info"]:
+            if data.get("client_info"):
                 self._client_info = OAuthClientInformationFull.model_validate(
                     data["client_info"]
                 )
@@ -240,7 +240,6 @@ class OAuthCallbackServer:
 
             def log_message(self, format, *args):
                 """Suppress HTTP server logs."""
-                pass
 
             def do_GET(self):
                 """Handle GET request from OAuth callback."""

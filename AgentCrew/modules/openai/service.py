@@ -1,14 +1,16 @@
-import os
 import json
-from typing import Any, Tuple
-from openai import AsyncOpenAI
+import os
+from typing import Any
+
 from dotenv import load_dotenv
+from loguru import logger
+from openai import AsyncOpenAI
+
 from AgentCrew.modules.llm.base import (
     BaseLLMService,
 )
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.token_usage import TokenUsage
-from loguru import logger
 
 
 class OpenAIService(BaseLLMService):
@@ -199,7 +201,7 @@ class OpenAIService(BaseLLMService):
 
     def handle_file_command(self, file_path):
         """Handle the /file command and return message content."""
-        return None
+        return
 
     def register_tool(self, tool_definition, handler_function):
         """
@@ -283,7 +285,7 @@ class OpenAIService(BaseLLMService):
 
     def process_stream_chunk(
         self, chunk, assistant_response: str, tool_uses: list[dict]
-    ) -> Tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from the streaming response.
 

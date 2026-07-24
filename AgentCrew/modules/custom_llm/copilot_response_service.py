@@ -1,11 +1,12 @@
-from AgentCrew.modules.llm.model_registry import ModelRegistry
 import os
-import httpx
-from dotenv import load_dotenv
-from loguru import logger
 from datetime import datetime
 from uuid import uuid4
 
+import httpx
+from dotenv import load_dotenv
+from loguru import logger
+
+from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.openai import OpenAIResponseService
 
 

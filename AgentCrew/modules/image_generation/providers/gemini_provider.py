@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import os
 import mimetypes
+import os
+
 from loguru import logger
 
 from .base import BaseImageProvider, ImageGenerationResult

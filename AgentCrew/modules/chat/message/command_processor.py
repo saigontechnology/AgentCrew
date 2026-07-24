@@ -1,6 +1,7 @@
 from __future__ import annotations
-from AgentCrew.modules.events import AppEvents
+
 from typing import TYPE_CHECKING
+
 from AgentCrew.modules.chat.message.commands import (
     AgentCommands,
     CommandResult,
@@ -11,6 +12,7 @@ from AgentCrew.modules.chat.message.commands import (
     UtilityCommands,
     VoiceCommands,
 )
+from AgentCrew.modules.events import AppEvents
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message import MessageHandler

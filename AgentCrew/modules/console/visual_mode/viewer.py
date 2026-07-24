@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from rich.console import Console
 from rich.text import Text
 
-from .viewer_ui import VisualModeUI
-from .viewer_input_handler import VisualModeInputHandler
 from ..constants import RICH_STYLE_YELLOW
-
-if TYPE_CHECKING:
-    pass
+from .viewer_input_handler import VisualModeInputHandler
+from .viewer_ui import VisualModeUI
 
 
 class VisualModeViewer:

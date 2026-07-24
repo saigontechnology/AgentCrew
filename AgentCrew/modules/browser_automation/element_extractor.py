@@ -6,12 +6,13 @@ for browser automation operations.
 """
 
 import re
+from collections.abc import Callable
 from html.parser import HTMLParser
-from typing import Any, Callable, Set, Tuple
-
-from .js_loader import js_loader
+from typing import Any
 
 from loguru import logger
+
+from .js_loader import js_loader
 
 
 def remove_duplicate_lines(content: str) -> str:
@@ -206,7 +207,7 @@ def _evaluate_elements(chrome_interface, js_code: str) -> list[dict[str, Any]]:
 
 def extract_clickable_elements(
     chrome_interface, resolve_uuid: Callable[[str], str]
-) -> Tuple[str, Set[str]]:
+) -> tuple[str, set[str]]:
     """
     Extract all clickable elements from the current webpage in a concise format.
 
@@ -228,7 +229,7 @@ def extract_clickable_elements(
             )
 
         markdown_output = []
-        active_xpaths: Set[str] = set()
+        active_xpaths: set[str] = set()
         markdown_output.append(
             "\n\n## Clickable Elements\nUse browser_click with UUID to click elements.\n"
         )
@@ -252,14 +253,14 @@ def extract_clickable_elements(
     except Exception as e:
         logger.error(f"Error extracting clickable elements: {e}")
         return (
-            f"\n\n## Clickable Elements\n\nError extracting clickable elements: {str(e)}\n",
+            f"\n\n## Clickable Elements\n\nError extracting clickable elements: {e!s}\n",
             set(),
         )
 
 
 def extract_elements_by_text(
     chrome_interface, resolve_uuid: Callable[[str], str], text: str
-) -> Tuple[str, int]:
+) -> tuple[str, int]:
     """Extract elements containing specified text using XPath."""
     try:
         js_code = js_loader.get_extract_elements_by_text_js(text)
@@ -305,12 +306,12 @@ def extract_elements_by_text(
 
     except Exception as e:
         logger.error(f"Error extracting elements by text: {e}")
-        return f"\n\n## Elements Containing Text: '{text}'\n\nError: {str(e)}\n", 0
+        return f"\n\n## Elements Containing Text: '{text}'\n\nError: {e!s}\n", 0
 
 
 def extract_input_elements(
     chrome_interface, resolve_uuid: Callable[[str], str]
-) -> Tuple[str, Set[str]]:
+) -> tuple[str, set[str]]:
     """
     Extract all input elements from the current webpage in a concise format.
 
@@ -332,7 +333,7 @@ def extract_input_elements(
             )
 
         markdown_output = []
-        active_xpaths: Set[str] = set()
+        active_xpaths: set[str] = set()
         markdown_output.append(
             "\n\n## Input Elements\nUse browser_input with UUID and value to fill inputs.\n"
         )
@@ -378,14 +379,14 @@ def extract_input_elements(
     except Exception as e:
         logger.error(f"Error extracting input elements: {e}")
         return (
-            f"\n\n## Input Elements\n\nError extracting input elements: {str(e)}\n",
+            f"\n\n## Input Elements\n\nError extracting input elements: {e!s}\n",
             set(),
         )
 
 
 def extract_scrollable_elements(
     chrome_interface, resolve_uuid: Callable[[str], str]
-) -> Tuple[str, Set[str]]:
+) -> tuple[str, set[str]]:
     """
     Extract all scrollable elements from the current webpage.
 
@@ -407,7 +408,7 @@ def extract_scrollable_elements(
             )
 
         markdown_output = []
-        active_xpaths: Set[str] = set()
+        active_xpaths: set[str] = set()
         markdown_output.append(
             "\n\n## Scrollable Elements\nUse browser_scroll with UUID and direction to scroll specific elements.\n"
         )
@@ -442,6 +443,6 @@ def extract_scrollable_elements(
     except Exception as e:
         logger.error(f"Error extracting scrollable elements: {e}")
         return (
-            f"\n\n## Scrollable Elements\n\nError extracting scrollable elements: {str(e)}\n",
+            f"\n\n## Scrollable Elements\n\nError extracting scrollable elements: {e!s}\n",
             set(),
         )

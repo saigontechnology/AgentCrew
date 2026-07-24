@@ -1,7 +1,8 @@
-from PySide6.QtWidgets import QCompleter
 from PySide6.QtCore import Qt
-from AgentCrew.modules.llm.model_registry import ModelRegistry
+from PySide6.QtWidgets import QCompleter
+
 from AgentCrew.modules.chat.message.commands.copy_utils import get_copyable_assistants
+from AgentCrew.modules.llm.model_registry import ModelRegistry
 
 
 class GuiModelCompleter:

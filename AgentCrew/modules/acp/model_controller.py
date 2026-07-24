@@ -262,6 +262,7 @@ class ModelController:
         current_thought_level: str | None = None,
     ) -> list[Any]:
         from acp.schema import SessionConfigOptionSelect, SessionConfigSelectOption
+
         from AgentCrew.modules.llm.model_registry import ModelRegistry
 
         config_options = []
@@ -336,8 +337,9 @@ class ModelController:
         return config_options
 
     def build_models(self, current_model_id: str):
+        from acp.schema import ModelInfo, SessionModelState
+
         from AgentCrew.modules.llm.model_registry import ModelRegistry
-        from acp.schema import SessionModelState, ModelInfo
 
         registry = ModelRegistry.get_instance()
         return SessionModelState(

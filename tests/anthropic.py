@@ -1,8 +1,10 @@
 import os
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 from anthropic.types import Message, TextBlock, ToolUseBlock
-from AgentCrew.modules.anthropic import AnthropicClient, SUMMARIZE_PROMPT
+
+from AgentCrew.modules.anthropic import SUMMARIZE_PROMPT, AnthropicClient
 
 
 @pytest.fixture
@@ -18,11 +20,13 @@ def mock_env_vars():
 
 
 def test_anthropic_client_init_missing_api_key():
-    with patch.dict(os.environ, clear=True):
-        with pytest.raises(
+    with (
+        patch.dict(os.environ, clear=True),
+        pytest.raises(
             ValueError, match="ANTHROPIC_API_KEY not found in environment variables"
-        ):
-            AnthropicClient()
+        ),
+    ):
+        AnthropicClient()
 
 
 def test_anthropic_client_init_success(mock_env_vars):
