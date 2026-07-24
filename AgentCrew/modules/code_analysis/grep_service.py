@@ -1,8 +1,9 @@
 import os
 import re
-import sys
 import shutil
+import sys
 from typing import Any, Literal
+
 from loguru import logger
 
 from AgentCrew.modules.command_execution.service import CommandExecutionService
@@ -12,8 +13,6 @@ class GrepTextError(Exception):
     """
     Custom exception for grep text search errors.
     """
-
-    pass
 
 
 class GrepTextService:

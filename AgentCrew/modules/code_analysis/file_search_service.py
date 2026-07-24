@@ -1,6 +1,7 @@
 import os
 import sys
 from typing import Any, Literal
+
 from loguru import logger
 
 from AgentCrew.modules.command_execution.service import CommandExecutionService
@@ -10,8 +11,6 @@ class FileSearchError(Exception):
     """
     Custom exception for file search errors.
     """
-
-    pass
 
 
 class FileSearchService:

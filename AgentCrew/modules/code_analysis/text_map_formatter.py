@@ -125,7 +125,7 @@ class TextMapFormatter:
             else:
                 params = []
                 modfilers = ""
-                if "parameters" in node and node["parameters"]:
+                if node.get("parameters"):
                     params = node["parameters"]
                 elif "children" in node:
                     for child in node["children"]:

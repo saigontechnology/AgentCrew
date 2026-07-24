@@ -65,9 +65,10 @@ class KotlinParser(BaseLanguageParser):
                 for subchild in child.children:
                     if subchild.type == "simple_identifier" and prop_name is None:
                         prop_name = self.extract_node_text(subchild, source_code)
-                    elif subchild.type == "user_type":
-                        prop_type = self.extract_node_text(subchild, source_code)
-                    elif subchild.type in ["nullable_type", "type_identifier"]:
+                    elif subchild.type == "user_type" or subchild.type in [
+                        "nullable_type",
+                        "type_identifier",
+                    ]:
                         prop_type = self.extract_node_text(subchild, source_code)
             elif child.type == "simple_identifier" and prop_name is None:
                 prop_name = self.extract_node_text(child, source_code)

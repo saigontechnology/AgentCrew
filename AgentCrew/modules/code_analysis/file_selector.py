@@ -92,12 +92,9 @@ Example response format:
             response = await self._llm_service.process_message(prompt, temperature=0.5)
 
             response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.startswith("```"):
-                response = response[3:]
-            if response.endswith("```"):
-                response = response[:-3]
+            response = response.removeprefix("```json")
+            response = response.removeprefix("```")
+            response = response.removesuffix("```")
             response = response.strip()
 
             exclude_patterns = json.loads(response)

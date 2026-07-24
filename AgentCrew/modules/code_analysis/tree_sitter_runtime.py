@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Set
+from typing import TYPE_CHECKING
+
 from loguru import logger
 from tree_sitter_language_pack import (
     available_languages,
@@ -80,15 +81,15 @@ class TreeSitterRuntime:
         return cls._instance
 
     def __init__(self) -> None:
-        self._parser_cache: dict[str, "Parser"] = {}
-        self._language_cache: dict[str, "Language"] = {}
-        self._manifest: Set[str] | None = None
+        self._parser_cache: dict[str, Parser] = {}
+        self._language_cache: dict[str, Language] = {}
+        self._manifest: set[str] | None = None
 
     def _resolve_name(self, name: str) -> str:
         lower = name.lower().strip()
         return ALIAS_TO_PACK.get(lower, lower)
 
-    def _get_manifest(self) -> Set[str]:
+    def _get_manifest(self) -> set[str]:
         if self._manifest is None:
             self._manifest = set(manifest_languages())
         return self._manifest
@@ -108,14 +109,14 @@ class TreeSitterRuntime:
     def is_supported(self, name: str) -> bool:
         return self.is_in_manifest(name)
 
-    def get_parser(self, name: str) -> "Parser":
+    def get_parser(self, name: str) -> Parser:
         resolved = self._resolve_name(name)
         if resolved not in self._parser_cache:
             parser = get_parser(resolved)  # type: ignore
             self._parser_cache[resolved] = parser
         return self._parser_cache[resolved]
 
-    def get_language(self, name: str) -> "Language":
+    def get_language(self, name: str) -> Language:
         resolved = self._resolve_name(name)
         if resolved not in self._language_cache:
             lang = get_language(resolved)  # type: ignore

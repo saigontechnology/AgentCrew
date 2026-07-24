@@ -2,28 +2,54 @@
 
 Stores cached analysis results under ``<git_root>/.agentcrew/analyze_repo_cache/``.
 Uses SHA-256 cache keys based on normalized arguments, LRU eviction (max 5
-entries per project), and Git-based invalidation via HEAD + dirty-worktree
-content fingerprint.
+entries per project), and per-file content-hash manifest for change detection.
+
+The cache uses a unified ``files`` map that serves simultaneously as:
+* The content manifest (every supported path has a ``hash``).
+* The analyzed set (records with ``analysis`` or ``error``).
+* The skipped set (hash-only records for unselected files in
+  repositories over the analysis limit).
+
+No raw Tree-sitter output (``analysis_results``, AST structures) or complete
+formatted ``analysis_text`` is persisted.  The repository response is
+reconstructed from per-file compact analysis/error records and derived metadata.
+
+All file paths stored in cache entries are relative to the *requested analysis
+path* (not the Git root).
 """
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
-
 
 CACHE_DIR_NAME = "analyze_repo_cache"
 """Subdirectory inside ``.agentcrew/`` that holds cache entries."""
 
 MAX_CACHE_ENTRIES = 5
 """Maximum number of cache entries kept per project."""
+
+SCHEMA_VERSION = 2
+"""Schema/format version for cache entries.
+
+Entries without the current version trigger a one-time full rebuild.
+Increment this when the structured output format changes in
+backwards-incompatible ways.
+
+Version history:
+    1 - Original schema with ``analysis_results``, ``manifest``,
+        ``analyzed_relative_paths``, etc.
+    2 - Unified ``files`` map.  Each supported path stores a content
+        hash and optionally compact formatted ``analysis`` or an ``error``.
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +58,7 @@ MAX_CACHE_ENTRIES = 5
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _sha256_hex(value: bytes | str) -> str:
@@ -103,103 +129,170 @@ def _git_capture(git_root: str, *args: str) -> tuple[int, str]:
 
 
 # ---------------------------------------------------------------------------
-# Git-based invalidation
+# Per-file manifest for change detection
 # ---------------------------------------------------------------------------
 
 
-def compute_git_fingerprint(git_root: str) -> tuple[str, str] | None:
-    """Return ``(HEAD_sha, fingerprint)`` or *None* if git commands fail.
+def discover_supported_files(
+    path: str,
+    exclude_patterns: list[str] | None = None,
+    language_map: dict[str, str] | None = None,
+) -> list[str] | None:
+    """Discover all supported source files (tracked + untracked) under *path*.
 
-    The fingerprint captures every repository state change relevant to cache
-    invalidation using Git plumbing:
+    Returns sorted file paths relative to *path* (the requested analysis
+    root), or *None* if git file listing fails.  This is the single shared
+    discovery function used by both manifest computation and full analysis
+    to ensure baseline consistency.
 
-    * ``git rev-parse HEAD`` — current commit.
-    * ``git diff-index --binary --full-index --patch HEAD`` — staged changes
-      (index vs HEAD), including binary content.
-    * ``git diff-files --binary --full-index --patch`` — unstaged changes
-      (worktree vs index), including binary content.
-    * ``git ls-files --others --exclude-standard`` + ``git hash-object``
-      per file — untracked file existence and content.
-
-    **Fail-closed**: any required Git command returning nonzero causes
-    ``None`` to be returned so that cache reads miss and cache writes do
-    not produce reusable entries during degraded repository states.
-    The sole exception is ``rev-parse HEAD`` returning nonzero, which is
-    treated as an orphan branch (no commits yet).
+    Filters:
+    * Files within the requested analysis *path*.
+    * Not matching any *exclude_patterns*.
+    * Having a supported language extension (from *language_map*).
     """
+    if exclude_patterns is None:
+        exclude_patterns = []
+    if language_map is None:
+        language_map = {}
+
+    git_root = _find_git_root(normalize_path(path))
+    if git_root is None:
+        return None
+
     try:
-        # --- HEAD ---
-        rc, head_out = _git_capture(git_root, "rev-parse", "HEAD")
+        rc, out = _git_capture(git_root, "ls-files")
         if rc != 0:
-            head = ""  # orphan branch or no commits yet
-        else:
-            head = head_out.strip()
-
-        parts: list[str] = [f"HEAD:{head or '(empty)'}"]
-
-        # --- Staged changes (index vs HEAD) ---
-        if head:
-            rc, staged_out = _git_capture(
-                git_root, "diff-index", "--binary", "--full-index", "--patch", "HEAD"
-            )
-            if rc != 0:
-                logger.debug(
-                    f"git diff-index --binary --full-index --patch HEAD "
-                    f"failed (rc={rc}) for {git_root}"
-                )
-                return None
-            parts.append(f"staged:{_sha256_hex(staged_out)}")
-        else:
-            # No HEAD yet — capture the entire index as a proxy for staged
-            rc, index_out = _git_capture(git_root, "ls-files", "-s")
-            if rc != 0:
-                logger.debug(f"git ls-files -s failed (rc={rc}) for {git_root}")
-                return None
-            parts.append(f"staged:{_sha256_hex(index_out)}")
-
-        # --- Unstaged changes (worktree vs index) ---
-        rc, unstaged_out = _git_capture(
-            git_root, "diff-files", "--binary", "--full-index", "--patch"
-        )
-        if rc != 0:
-            logger.debug(
-                f"git diff-files --binary --full-index --patch "
-                f"failed (rc={rc}) for {git_root}"
-            )
             return None
-        parts.append(f"unstaged:{_sha256_hex(unstaged_out)}")
+        files = [f for f in out.splitlines() if f.strip()]
 
-        # --- Untracked files ---
-        rc, ut_out = _git_capture(
+        rc2, ut_out = _git_capture(
             git_root, "ls-files", "--others", "--exclude-standard"
         )
-        if rc != 0:
-            logger.debug(
-                f"git ls-files --others --exclude-standard "
-                f"failed (rc={rc}) for {git_root}"
-            )
+        if rc2 != 0:
             return None
-        if ut_out.strip():
-            ut_list = sorted(f for f in ut_out.splitlines() if f.strip())
-            ut_parts: list[str] = []
-            for f in ut_list:
-                rc2, f_hash = _git_capture(git_root, "hash-object", f)
-                if rc2 == 0:
-                    ut_parts.append(f"{f}:{f_hash.strip()}")
-                else:
-                    # Per-file hash-object failure is non-fatal (file may
-                    # have been deleted between ls-files and hash-object)
-                    ut_parts.append(f"{f}:?")
-            parts.append(f"untracked:{_sha256_hex('\n'.join(ut_parts))}")
-        else:
-            parts.append("untracked:none")
+        files.extend(f for f in ut_out.splitlines() if f.strip())
 
-        fingerprint = _sha256_hex("\n".join(parts))
-        return head or "(empty)", fingerprint
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique_files: list[str] = []
+        for f in files:
+            if f not in seen:
+                seen.add(f)
+                unique_files.append(f)
+
+        norm_path = normalize_path(path)
+        path_prefix = Path(norm_path).resolve()
+        git_root_path = Path(git_root).resolve()
+
+        result: list[str] = []
+        for rel_from_root in unique_files:
+            full_path = git_root_path / rel_from_root
+
+            # Must be within the requested analysis path
+            try:
+                full_path.relative_to(path_prefix)
+            except ValueError:
+                continue
+
+            # Compute path relative to the analysis root (not git root)
+            rel_from_analysis = os.path.relpath(full_path, path_prefix)
+
+            # Normalize to forward slashes for cross-platform consistency
+            # On Windows, os.path.relpath may return backslash separators;
+            # always normalize so manifest keys match across platforms.
+            rel_from_analysis = rel_from_analysis.replace("\\", "/")
+
+            # Must not match exclude patterns
+            excluded = False
+            for pattern in exclude_patterns:
+                if fnmatch.fnmatch(rel_from_analysis, pattern):
+                    excluded = True
+                    break
+            if excluded:
+                continue
+
+            # Must have a supported language extension
+            ext = os.path.splitext(rel_from_analysis)[1].lower()
+            if ext not in language_map:
+                continue
+
+            result.append(rel_from_analysis)
+
+        return sorted(result)
 
     except Exception as exc:
-        logger.warning(f"Failed to compute git fingerprint: {exc}")
+        logger.warning(f"Failed to list relevant files: {exc}")
         return None
+
+
+def _compute_content_hash(base_path: str, rel_path: str) -> str | None:
+    """Return SHA-256 hex digest of a file's content, or *None* on error."""
+    full_path = Path(base_path) / rel_path
+    try:
+        content = full_path.read_bytes()
+        return _sha256_hex(content)
+    except (OSError, PermissionError) as exc:
+        logger.debug(f"Cannot hash {rel_path}: {exc}")
+        return None
+
+
+def _compute_file_manifest(
+    path: str,
+    exclude_patterns: list[str] | None = None,
+    language_map: dict[str, str] | None = None,
+) -> dict[str, str] | None:
+    """Build a ``{relative_path: sha256_hex}`` manifest for relevant files.
+
+    Paths are relative to *path* (the requested analysis root), matching
+    the namespace used by ``analysis_results`` and ``analyzed_relative_paths``.
+
+    Returns *None* if git file listing fails or no supported files exist.
+    """
+    try:
+        supported = discover_supported_files(path, exclude_patterns, language_map)
+        if supported is None:
+            return None
+        norm_path = normalize_path(path)
+        manifest: dict[str, str] = {}
+        for rel_path in supported:
+            h = _compute_content_hash(norm_path, rel_path)
+            if h is None:
+                logger.warning(f"Cannot hash {rel_path}; aborting manifest computation")
+                return None
+            manifest[rel_path] = h
+        return manifest
+    except Exception as exc:
+        logger.warning(f"Failed to compute file manifest: {exc}")
+        return None
+
+
+def _detect_manifest_changes(
+    stored: dict[str, str] | None,
+    current: dict[str, str] | None,
+) -> dict[str, list[str]]:
+    """Compare two manifests and return added / modified / deleted files.
+
+    Returns a dict with keys ``"added"``, ``"modified"``, ``"deleted"``
+    each containing a list of relative paths.
+
+    If either manifest is *None*, all current files are considered added and
+    all stored files deleted (full rebuild signal).
+    """
+    if stored is None and current is None:
+        return {"added": [], "modified": [], "deleted": []}
+    if stored is None:
+        return {"added": sorted(current or {}), "modified": [], "deleted": []}
+    if current is None:
+        return {"added": [], "modified": [], "deleted": sorted(stored)}
+
+    stored_set = set(stored)
+    current_set = set(current)
+
+    added = sorted(current_set - stored_set)
+    deleted = sorted(stored_set - current_set)
+    modified = sorted(p for p in stored_set & current_set if stored[p] != current[p])
+
+    return {"added": added, "modified": modified, "deleted": deleted}
 
 
 # ---------------------------------------------------------------------------
@@ -229,11 +322,63 @@ def _build_cache_key(
 # ---------------------------------------------------------------------------
 
 
+# -- Incremental merge thresholds ------------------------------------------
+
+INCREMENTAL_MAX_CHANGED = 20
+"""Hard cap on changed files for incremental merge."""
+
+INCREMENTAL_MIN_CHANGED = 5
+"""Minimum threshold floor — always allow at least this many changes."""
+
+INCREMENTAL_CHANGE_RATIO = 0.15
+"""Fraction of baseline analyzed file count used as adaptive threshold."""
+
+
+def _should_use_incremental(changed_count: int, baseline_analyzed_count: int) -> bool:
+    """Return ``True`` when incremental merge is safe given change volume.
+
+    The threshold is the smaller of:
+    * ``INCREMENTAL_MAX_CHANGED`` (hard cap)
+    * ``max(INCREMENTAL_MIN_CHANGED, ceil(INCREMENTAL_CHANGE_RATIO * max(1, baseline_analyzed_count)))``
+
+    Args:
+        changed_count: Total added + modified + deleted files detected.
+        baseline_analyzed_count: Number of files in the baseline analyzed set.
+
+    Returns:
+        True if the change count is within the threshold.
+    """
+    from math import ceil
+
+    threshold = min(
+        INCREMENTAL_MAX_CHANGED,
+        max(
+            INCREMENTAL_MIN_CHANGED,
+            ceil(INCREMENTAL_CHANGE_RATIO * max(1, baseline_analyzed_count)),
+        ),
+    )
+    return changed_count <= threshold
+
+
 class AnalyzeRepoCache:
     """Project-local, file-backed cache for ``analyze_repo`` results.
 
     Cache entries are individual JSON files stored under
     ``<git_root>/.agentcrew/analyze_repo_cache/``.
+
+    The cache uses a unified ``files`` map as both the content manifest
+    and the stored analysis/error records:
+
+    * ``files[path] = {"hash": "...", "analysis": "..."}`` — analyzed file
+      with compact per-file formatted result.
+    * ``files[path] = {"hash": "...", "error": "..."}`` — file that produced
+      a parse error.
+    * ``files[path] = {"hash": "..."}`` — supported but not analyzed file
+      (hash-only; over the selection limit).
+
+    Change detection compares the current content hashes against the
+    stored ``files`` hashes.  All paths are relative to the *requested
+    analysis path* (not the Git root).
 
     **Thread safety:** individual read/write operations use atomic temp-file
     replaces; concurrent writers to different keys are safe, but concurrent
@@ -248,12 +393,13 @@ class AnalyzeRepoCache:
         exclude_patterns: list[str] | None = None,
         feature_scope: str | None = None,
         deep_analysis: bool = True,
+        language_map: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
-        """Look up a cached result.
+        """Look up a cached result with per-file manifest change detection.
 
-        Returns the full entry dict (with ``"result"`` sub-dict containing
-        ``analysis_text`` and optionally ``project_notes``) on hit, or *None*
-        on miss / invalidation / corruption.
+        Returns the full entry dict on hit (no changes), or with
+        ``_cache_info`` metadata for incremental merge.  Returns *None* on
+        miss / too many changes / legacy schema / corruption.
         """
         cache_dir = self._resolve_cache_dir(path)
         if cache_dir is None:
@@ -267,15 +413,74 @@ class AnalyzeRepoCache:
         if entry is None:
             return None
 
-        # Git-based invalidation
-        if not self._is_entry_valid(entry, norm_path):
+        # Schema version check
+        stored_version = entry.get("schema_version")
+        if stored_version != SCHEMA_VERSION:
+            logger.info(
+                f"Cache entry {key} schema_version={stored_version} "
+                f"!= current {SCHEMA_VERSION}; triggering full rebuild"
+            )
             self._delete_entry(cache_dir, key)
             return None
 
-        # Touch last_accessed_at for LRU
-        entry["last_accessed_at"] = _utc_now_iso()
-        self._write_entry(cache_dir, key, entry)
-        return entry
+        # Must have a files map (schema v2+)
+        stored_files = entry.get("files")
+        if stored_files is None or not isinstance(stored_files, dict):
+            logger.info(f"Cache entry {key} has no files map; triggering full rebuild")
+            self._delete_entry(cache_dir, key)
+            return None
+
+        # Compute current manifest and detect changes
+        git_root = _find_git_root(norm_path)
+        if git_root is None or language_map is None:
+            return None
+
+        current_manifest = _compute_file_manifest(path, norm_exclusions, language_map)
+        if current_manifest is None:
+            return None
+
+        # Use stored files as the previous manifest (extract hash values)
+        stored_manifest = {
+            p: v["hash"] if isinstance(v, dict) and "hash" in v else str(v)
+            for p, v in stored_files.items()
+        }
+        changes = _detect_manifest_changes(stored_manifest, current_manifest)
+        changed_count = (
+            len(changes["added"]) + len(changes["modified"]) + len(changes["deleted"])
+        )
+
+        # Derive baseline analyzed count from files records
+        baseline_count = sum(
+            1 for v in stored_files.values() if "analysis" in v or "error" in v
+        )
+
+        if changed_count == 0:
+            # Direct hit — no changes, touch LRU
+            entry["last_accessed_at"] = _utc_now_iso()
+            self._write_entry(cache_dir, key, entry)
+            return entry
+
+        if _should_use_incremental(changed_count, baseline_count):
+            # Small change set — return entry with merge info
+            entry["last_accessed_at"] = _utc_now_iso()
+            result_copy = dict(entry)
+            result_copy["_cache_info"] = {
+                "action": "incremental_merge",
+                "changes": changes,
+                "changed_count": changed_count,
+                "baseline_analyzed_count": baseline_count,
+                "current_manifest": current_manifest,
+            }
+            self._write_entry(cache_dir, key, entry)
+            return result_copy
+
+        # Too many changes — invalidate and trigger full rebuild
+        logger.info(
+            f"Cache entry {key}: {changed_count} changes exceeds threshold "
+            f"for baseline {baseline_count}, triggering full rebuild"
+        )
+        self._delete_entry(cache_dir, key)
+        return None
 
     def set(
         self,
@@ -283,10 +488,27 @@ class AnalyzeRepoCache:
         exclude_patterns: list[str] | None = None,
         feature_scope: str | None = None,
         deep_analysis: bool = True,
-        analysis_text: str = "",
+        files: dict[str, dict] | None = None,
         project_notes: str | None = None,
+        language_map: dict[str, str] | None = None,
     ) -> None:
-        """Persist a new cache entry and enforce LRU eviction."""
+        """Persist a new cache entry with a unified ``files`` map.
+
+        The ``files`` dict maps relative paths to records:
+
+        * ``{"hash": "...", "analysis": "..."}`` — analyzed file.
+        * ``{"hash": "...", "error": "..."}`` — parse error.
+        * ``{"hash": "..."}`` — hash-only (supported but not analyzed).
+
+        Args:
+            path: Normalized analysis path.
+            exclude_patterns: Normalized exclusion patterns.
+            feature_scope: Optional feature scope string.
+            deep_analysis: Whether deep analysis was performed.
+            files: Unified per-file map.  Each entry must have a ``hash``.
+            project_notes: Optional extracted project notes.
+            language_map: Extension-to-language map for manifest computation.
+        """
         cache_dir = self._resolve_cache_dir(path)
         if cache_dir is None:
             return
@@ -295,85 +517,82 @@ class AnalyzeRepoCache:
         norm_exclusions = normalize_exclude_patterns(exclude_patterns)
         key = _build_cache_key(norm_path, norm_exclusions, feature_scope, deep_analysis)
 
-        git_root = _find_git_root(norm_path)
-        git_head = ""
-        git_fingerprint = ""
-        if git_root:
-            info = compute_git_fingerprint(git_root)
-            if info:
-                git_head, git_fingerprint = info
-
         now = _utc_now_iso()
         entry: dict[str, Any] = {
             "cache_key": key,
             "created_at": now,
             "last_accessed_at": now,
-            "git_head": git_head,
-            "git_fingerprint": git_fingerprint,
+            "schema_version": SCHEMA_VERSION,
             "args": {
                 "path": norm_path,
                 "exclude_patterns": norm_exclusions,
                 "feature_scope": feature_scope,
                 "deep_analysis": deep_analysis,
             },
-            "result": {
-                "analysis_text": analysis_text,
-                "project_notes": project_notes,
-            },
+            "files": files or {},
+            "project_notes": project_notes,
         }
 
         self._write_entry(cache_dir, key, entry)
         self._evict_lru(cache_dir)
 
     def list_valid_entries(self, cwd: str) -> list[dict[str, Any]]:
-        """Return metadata for currently valid cache entries in the project at *cwd*.
+        """Return metadata for all readable cache entries in the project at *cwd*.
 
-        Returns at most :data:`MAX_CACHE_ENTRIES` entries, each containing the
-        exact arguments (``path``, ``exclude_patterns``, ``feature_scope``,
-        ``deep_analysis``) and the opaque ``cache_key``.
+        Returns at most :data:`MAX_CACHE_ENTRIES` entries, sorted by
+        ``last_accessed_at`` descending (newest/LRU-first).  Each entry
+        contains the exact arguments (``path``, ``exclude_patterns``,
+        ``feature_scope``, ``deep_analysis``) and the opaque ``cache_key``.
 
-        Performs no LLM or analysis work.  Invalid/stale entries are silently
-        skipped.
+        Corrupt or schema-invalid entries (missing args, missing files map,
+        non-dict structure) are silently skipped.
+
+        Performs no LLM or analysis work.
         """
         cache_dir = self._resolve_cache_dir(cwd)
         if cache_dir is None or not cache_dir.exists():
             return []
 
-        git_root = _find_git_root(normalize_path(cwd))
-        if git_root is None:
-            return []
-        git_info = compute_git_fingerprint(git_root)
-        if git_info is None:
-            return []
-        head, fingerprint = git_info
-
-        results: list[dict[str, Any]] = []
+        candidates: list[tuple[str, dict[str, Any]]] = []
         for entry_path in sorted(cache_dir.rglob("*.json")):
-            if len(results) >= MAX_CACHE_ENTRIES:
-                break
             try:
                 with entry_path.open("r", encoding="utf-8") as f:
                     entry = json.load(f)
                 if not isinstance(entry, dict):
                     continue
-                if (
-                    entry.get("git_head") != head
-                    or entry.get("git_fingerprint") != fingerprint
-                ):
+                args = entry.get("args")
+                if not isinstance(args, dict):
                     continue
-                args = entry.get("args", {})
-                results.append(
-                    {
-                        "path": args.get("path", "?"),
-                        "exclude_patterns": args.get("exclude_patterns", []),
-                        "feature_scope": args.get("feature_scope"),
-                        "deep_analysis": args.get("deep_analysis", True),
-                        "cache_key": entry.get("cache_key", ""),
-                    }
-                )
-            except Exception as exc:
-                logger.debug(f"Skipping invalid cache entry {entry_path}: {exc}")
+                # Schema v2+: must have a validated files map
+                if not AnalyzeRepoCache._validate_entry_files(entry.get("files")):
+                    continue
+                last_at = entry.get("last_accessed_at", "")
+                candidates.append((last_at, entry))
+            except Exception:
                 continue
+
+        def _sort_key(item: tuple[str, dict[str, Any]]) -> tuple[float, str]:
+            ts_str, e = item
+            try:
+                dt = datetime.fromisoformat(ts_str)
+                return (-dt.timestamp(), e.get("cache_key", ""))
+            except (ValueError, TypeError):
+                return (0.0, e.get("cache_key", ""))
+
+        candidates.sort(key=_sort_key)
+
+        results: list[dict[str, Any]] = []
+        for _, entry in candidates[:MAX_CACHE_ENTRIES]:
+            args = entry.get("args", {})
+            results.append(
+                {
+                    "path": args.get("path", "?"),
+                    "exclude_patterns": args.get("exclude_patterns", []),
+                    "feature_scope": args.get("feature_scope"),
+                    "deep_analysis": args.get("deep_analysis", True),
+                    "cache_key": entry.get("cache_key", ""),
+                }
+            )
 
         return results
 
@@ -386,6 +605,34 @@ class AnalyzeRepoCache:
         if git_root is None:
             return None
         return Path(git_root) / ".agentcrew" / CACHE_DIR_NAME
+
+    @staticmethod
+    def _validate_entry_files(files: Any) -> bool:
+        """Validate all per-file records in the ``files`` map.
+
+        Each record must be a dict with a non-empty string ``hash``.
+        Optional ``analysis`` or ``error`` fields, if present, must be
+        strings.  Corrupt records cause the entire entry to be treated as
+        a cache miss rather than raising at lookup time.
+        """
+        if not isinstance(files, dict):
+            return False
+        for path_key, record in files.items():
+            if not isinstance(path_key, str):
+                return False
+            if not isinstance(record, dict):
+                return False
+            h = record.get("hash")
+            if not isinstance(h, str) or not h:
+                return False
+            analysis = record.get("analysis")
+            if analysis is not None and not isinstance(analysis, str):
+                return False
+            error = record.get("error")
+            if error is not None and not isinstance(error, str):
+                return False
+            # Must have at least hash; analysis and error are optional
+        return True
 
     @staticmethod
     def _entry_path(cache_dir: Path, key: str) -> Path:
@@ -402,38 +649,22 @@ class AnalyzeRepoCache:
             if not isinstance(entry, dict) or entry.get("cache_key") != key:
                 logger.warning(f"Corrupt cache entry at {path}, ignoring")
                 return None
-            # Schema validation: must have args dict and result with analysis_text str
             if not isinstance(entry.get("args"), dict):
                 logger.warning(
                     f"Cache entry {path} has missing or invalid args, ignoring"
                 )
                 return None
-            result = entry.get("result")
-            if not isinstance(result, dict) or not isinstance(
-                result.get("analysis_text"), str
-            ):
+            # Schema v2+: must have a validated files map
+            files = entry.get("files")
+            if not self._validate_entry_files(files):
                 logger.warning(
-                    f"Cache entry {path} has missing or invalid result, ignoring"
+                    f"Cache entry {path} has corrupt per-file records, ignoring"
                 )
                 return None
             return entry
         except Exception as exc:
             logger.warning(f"Failed to read cache entry {path}: {exc}")
             return None
-
-    def _is_entry_valid(self, entry: dict[str, Any], norm_path: str) -> bool:
-        """Check Git HEAD and worktree fingerprint match the entry."""
-        git_root = _find_git_root(norm_path)
-        if git_root is None:
-            return False
-        info = compute_git_fingerprint(git_root)
-        if info is None:
-            return False
-        head, fingerprint = info
-        return (
-            entry.get("git_head") == head
-            and entry.get("git_fingerprint") == fingerprint
-        )
 
     @staticmethod
     def _write_entry(cache_dir: Path, key: str, entry: dict[str, Any]) -> None:
@@ -472,18 +703,14 @@ class AnalyzeRepoCache:
                 dt = (
                     datetime.fromisoformat(last_at)
                     if last_at
-                    else datetime.min.replace(tzinfo=timezone.utc)
+                    else datetime.min.replace(tzinfo=UTC)
                 )
-                ts = (
-                    dt.timestamp()
-                    if dt.tzinfo
-                    else dt.replace(tzinfo=timezone.utc).timestamp()
-                )
+                ts = dt.timestamp() if dt.tzinfo else dt.replace(tzinfo=UTC).timestamp()
                 entries.append((ts, p))
             except Exception:
                 entries.append((0.0, p))
 
-        entries.sort(key=lambda x: x[0], reverse=True)  # newest first
+        entries.sort(key=lambda x: x[0], reverse=True)
 
         for _, path in entries[MAX_CACHE_ENTRIES:]:
             try:

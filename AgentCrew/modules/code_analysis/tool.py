@@ -1,13 +1,14 @@
 import os
 import sys
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
+
 from loguru import logger
 
-from .service import CodeAnalysisService
 from .file_search_service import FileSearchService
 from .grep_service import GrepTextService
+from .service import CodeAnalysisService
 from .symbol_lookup_service import SymbolLookupService
-
 
 # ============================================================================
 # Code Analysis Tool
@@ -39,7 +40,7 @@ def get_code_analysis_tool_definition() -> dict[str, Any]:
         },
         "feature_scope": {
             "type": "string",
-            "description": "Optional focused feature scope used to prioritize the most relevant files during repository analysis. Example: 'authentication flow', 'delegate parallel execution', or 'browser automation console logs'.",
+            "description": "Optional focused noun phrase feature scope used to prioritize the most relevant files during repository analysis. Example: 'authentication', 'user management', 'product creation'.",
         },
         "deep_analysis": {
             "type": "boolean",
@@ -169,7 +170,7 @@ def get_file_content_tool_handler(
         end_line = params.get("end_line")
 
         if not file_path:
-            raise Exception("File path is required")
+            raise Exception("file_path is not provided.")
 
         file_path = os.path.expanduser(file_path)
 
@@ -544,7 +545,7 @@ def get_grep_text_tool_handler(service_instance: GrepTextService) -> Callable:
                 path_type="relative",
             )
         except Exception as e:
-            error_msg = f"Text search failed: {str(e)}"
+            error_msg = f"Text search failed: {e!s}"
             logger.error(error_msg)
             raise Exception(error_msg) from e
 

@@ -13,7 +13,6 @@ class BaseLanguageParser(ABC):
     @abstractmethod
     def language_name(self) -> str:
         """Return the language name for this parser."""
-        pass
 
     @staticmethod
     def extract_node_text(node, source_code: bytes) -> str:
@@ -35,7 +34,6 @@ class BaseLanguageParser(ABC):
         Returns:
             Dictionary with node information or None if not relevant
         """
-        pass
 
     def _create_base_result(self, node) -> dict[str, Any]:
         """Create the base result dictionary with common fields."""
