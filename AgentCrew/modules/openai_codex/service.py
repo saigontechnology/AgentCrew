@@ -204,10 +204,10 @@ class OpenAICodexService(OpenAIResponseService):
         if self._extra_headers:
             request_params["extra_headers"] = self._extra_headers
 
-        if self.reasoning_effort and "thinking" in ModelRegistry.get_model_capabilities(
+        if "thinking" in ModelRegistry.get_model_capabilities(
             f"{self._provider_name}/{self.model}"
         ):
-            request_params["reasoning"] = {"effort": self.reasoning_effort}
+            request_params["reasoning"] = {"effort": "none"}
 
         result_text = ""
         input_tokens = 0

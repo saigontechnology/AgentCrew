@@ -169,6 +169,7 @@ class GoogleAINativeService(BaseLLMService):
                 max_output_tokens=3000,
                 temperature=temperature,
                 system_instruction=self.system_prompt,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
         async for chunk in stream_generator:

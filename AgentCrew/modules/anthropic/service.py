@@ -67,6 +67,7 @@ class AnthropicService(BaseLLMService):
 
         async with self.client.messages.stream(
             model=model_id or self.model,
+            thinking={"type": "disabled"},
             temperature=temperature,
             max_tokens=3000,
             system=self.system_prompt,

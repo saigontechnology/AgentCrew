@@ -187,20 +187,26 @@ class TogetherAIService(BaseLLMService):
         output_tokens = 0
         cached_tokens = 0
 
-        stream = await self.client.chat.completions.create(
-            model=model_id or self.model,
-            max_tokens=3000,
-            temperature=temperature,
-            stream=True,
-            messages=(
-                [{"role": "system", "content": self.system_prompt}, *prompt]
+        request_params = {
+            "model": model_id or self.model,
+            "max_tokens": 3000,
+            "temperature": temperature,
+            "stream": True,
+            "messages": (
+                [
+                    {"role": "system", "content": self.system_prompt},
+                    *prompt,
+                ]
                 if isinstance(prompt, list)
                 else [
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": prompt},
                 ]
             ),
-        )
+            "reasoning_effort": None,
+        }
+
+        stream = await self.client.chat.completions.create(**request_params)
 
         async for chunk in stream:
             if (

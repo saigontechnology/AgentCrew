@@ -128,12 +128,12 @@ class OpenAIService(BaseLLMService):
         output_tokens = 0
         cached_tokens = 0
 
-        stream = await self.client.chat.completions.create(
-            model=model_id or self.model,
-            max_tokens=3000,
-            temperature=temperature,
-            stream=True,
-            messages=(
+        request_params = {
+            "model": model_id or self.model,
+            "max_tokens": 3000,
+            "temperature": temperature,
+            "stream": True,
+            "messages": (
                 [
                     {"role": "system", "content": self.system_prompt},
                     *prompt,
@@ -144,8 +144,15 @@ class OpenAIService(BaseLLMService):
                     {"role": "user", "content": prompt},
                 ]
             ),
-            stream_options={"include_usage": True},
-        )
+            "stream_options": {"include_usage": True},
+        }
+
+        if "thinking" in ModelRegistry.get_model_capabilities(
+            f"{self._provider_name}/{self.model}"
+        ):
+            request_params["reasoning_effort"] = "none"
+
+        stream = await self.client.chat.completions.create(**request_params)
 
         async for chunk in stream:
             if (
