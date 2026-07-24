@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Sequence, Union
+from collections.abc import Sequence
+from typing import Any
 
 from a2a.types import (
     Task,
@@ -102,7 +103,7 @@ class RedisTaskStore(TaskStore):
 
     async def get_task_events(
         self, task_id: str
-    ) -> list[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]]:
+    ) -> list[TaskStatusUpdateEvent | TaskArtifactUpdateEvent]:
         r = await self._get_redis()
         raw_events = [
             json.loads(item)
@@ -113,9 +114,7 @@ class RedisTaskStore(TaskStore):
     async def append_task_events(
         self,
         task_id: str,
-        events_to_append: Sequence[
-            Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]
-        ],
+        events_to_append: Sequence[TaskStatusUpdateEvent | TaskArtifactUpdateEvent],
     ) -> None:
         if not events_to_append:
             return
@@ -132,7 +131,7 @@ class RedisTaskStore(TaskStore):
     async def append_task_event(
         self,
         task_id: str,
-        event: Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent],
+        event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent,
     ) -> None:
         await self.append_task_events(task_id, [event])
 

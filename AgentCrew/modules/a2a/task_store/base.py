@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Sequence, Union
+from collections.abc import Sequence
+from typing import Any
 
 from a2a.types import (
     Task,
@@ -50,14 +51,14 @@ class TaskStore(ABC):
     @abstractmethod
     async def get_task_events(
         self, task_id: str
-    ) -> list[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]]:
+    ) -> list[TaskStatusUpdateEvent | TaskArtifactUpdateEvent]:
         pass
 
     @abstractmethod
     async def append_task_event(
         self,
         task_id: str,
-        event: Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent],
+        event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent,
     ) -> None:
         pass
 
@@ -65,7 +66,7 @@ class TaskStore(ABC):
     async def append_task_events(
         self,
         task_id: str,
-        events: Sequence[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]],
+        events: Sequence[TaskStatusUpdateEvent | TaskArtifactUpdateEvent],
     ) -> None:
         pass
 
@@ -95,13 +96,12 @@ class TaskStore(ABC):
         """Release any resources held by the store (e.g. connection pools).
         Default is a no-op; override in stores that manage connections.
         """
-        pass
 
     @staticmethod
     def deserialize_events(
         raw_events: list[dict[str, Any]],
-    ) -> list[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]]:
-        events: list[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]] = []
+    ) -> list[TaskStatusUpdateEvent | TaskArtifactUpdateEvent]:
+        events: list[TaskStatusUpdateEvent | TaskArtifactUpdateEvent] = []
         for raw in raw_events:
             if "artifact" in raw:
                 events.append(TaskArtifactUpdateEvent.model_validate(raw))

@@ -1,34 +1,25 @@
 """
-Functions for generating A2A agent cards from SwissKnife agents.
+Functions for generating A2A v1 agent cards from AgentCrew agents.
 """
 
-from AgentCrew.modules.agents import LocalAgent
-from a2a.types import (
-    AgentCard,
+from __future__ import annotations
+
+from typing import Any
+
+from a2a.types.a2a_pb2 import (
     AgentCapabilities,
-    AgentSkill,
-    SecurityScheme,
-    APIKeySecurityScheme,
-    AgentProvider,
+    AgentCard,
     AgentInterface,
-    TransportProtocol,
+    AgentProvider,
+    AgentSkill,
 )
+
 from AgentCrew import __version__
 
 
-def map_tool_to_skill(tool_name: str, tool_def) -> AgentSkill:
-    """
-    Map a SwissKnife tool to an A2A skill.
-
-    Args:
-        tool_name: Name of the tool
-        tool_def: Tool definition
-
-    Returns:
-        An A2A skill definition
-    """
-    # Extract description from tool definition if available
-    description = "A tool capability"  # Default description
+def map_tool_to_skill(tool_name: str, tool_def: Any) -> AgentSkill:
+    """Map an AgentCrew tool to an A2A skill."""
+    description = "A tool capability"
     if isinstance(tool_def, dict):
         if "description" in tool_def:
             description = tool_def["description"]
@@ -38,37 +29,30 @@ def map_tool_to_skill(tool_name: str, tool_def) -> AgentSkill:
     return AgentSkill(
         id=tool_name,
         name=tool_name.replace("_", " ").title(),
-        description=description,
-        # Could add examples based on tool definition
-        examples=None,
-        # Most tools work with text input/output
+        description=description[:200] if description else "",
         input_modes=["text/plain"],
         output_modes=["text/plain"],
         tags=[tool_name, "tool"],
     )
 
 
-def create_agent_card(agent: LocalAgent, base_url: str) -> AgentCard:
-    """
-    Create an A2A agent card from a SwissKnife agent.
+def create_agent_card(agent: Any, base_url: str) -> AgentCard:
+    """Create an A2A v1 AgentCard from an AgentCrew agent.
 
     Args:
-        agent: The SwissKnife agent
-        base_url: Base URL for the agent's endpoints
+        agent: The AgentCrew agent (LocalAgent).
+        base_url: Base URL for the agent's JSON-RPC endpoint.
 
     Returns:
-        An A2A agent card
+        An A2A v1 AgentCard.
     """
-    # Map tools to skills
     skills: list[AgentSkill] = []
     try:
         for tool_name, (tool_def, _, _) in agent.tool_definitions.items():
             if callable(tool_def):
-                # If it's a function, call it to get the definition
                 try:
                     definition = tool_def()
                 except Exception:
-                    # If calling without provider fails, try with a default provider
                     definition = None
             else:
                 definition = tool_def
@@ -77,7 +61,6 @@ def create_agent_card(agent: LocalAgent, base_url: str) -> AgentCard:
                 skill = map_tool_to_skill(tool_name, definition)
                 skills.append(skill)
     except Exception:
-        # If no tools available, add a basic skill
         skills = [
             AgentSkill(
                 id="general",
@@ -89,40 +72,38 @@ def create_agent_card(agent: LocalAgent, base_url: str) -> AgentCard:
             )
         ]
 
-    # Create capabilities based on agent features
     capabilities = AgentCapabilities(
-        streaming=True,  # SwissKnife supports streaming
-        push_notifications=False,  # Not implemented yet
-        state_transition_history=True,  # SwissKnife tracks message history
+        streaming=True,
+        push_notifications=False,
     )
 
-    # Create provider info
     provider = AgentProvider(
         organization="AgentCrew",
         url="https://github.com/saigontechnology/AgentCrew",
     )
-    security_schemes = SecurityScheme(
-        root=APIKeySecurityScheme.model_validate(
-            {"name": "Authorization", "in": "header"}
-        )
-    )
+
+    agent_name = agent.name if hasattr(agent, "name") else "AgentCrew Assistant"
+    agent_desc = agent.description if hasattr(agent, "description") else ""
 
     return AgentCard(
-        protocol_version="0.3.0",
-        name=agent.name if hasattr(agent, "name") else "AgentCrew Assistant",
-        description=agent.description
-        if hasattr(agent, "description")
-        else "An AI assistant powered by AgentCrew",
-        url=base_url,
-        preferred_transport=TransportProtocol.jsonrpc,
-        additional_interfaces=[
-            AgentInterface(url=base_url, transport=TransportProtocol.jsonrpc)
-        ],
-        provider=provider,
+        name=agent_name,
+        description=agent_desc,
         version=__version__,
-        capabilities=capabilities,
-        skills=skills,
         default_input_modes=["text/plain", "application/octet-stream"],
         default_output_modes=["text/plain", "application/octet-stream"],
-        security_schemes={"apiKey": security_schemes},
+        capabilities=capabilities,
+        skills=skills,
+        provider=provider,
+        supported_interfaces=[
+            AgentInterface(
+                protocol_binding="JSONRPC",
+                protocol_version="1.0",
+                url=base_url,
+            ),
+            AgentInterface(
+                protocol_binding="JSONRPC",
+                protocol_version="0.3",
+                url=base_url,
+            ),
+        ],
     )

@@ -1,31 +1,28 @@
 from __future__ import annotations
 
 import json
-
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import httpx
-
-from httpx_sse import aconnect_sse
-
 from a2a.types import (
     A2ARequest,
     CancelTaskResponse,
     GetTaskPushNotificationConfigResponse,
     GetTaskResponse,
     SendMessageResponse,
-    TaskPushNotificationConfig,
     SendStreamingMessageResponse,
     SetTaskPushNotificationConfigResponse,
-    TaskResubscriptionRequest,
     TaskIdParams,
+    TaskPushNotificationConfig,
+    TaskResubscriptionRequest,
 )
+from httpx_sse import aconnect_sse
 
 if TYPE_CHECKING:
     from typing import Any
-    from httpx._types import TimeoutTypes
+
     from a2a.types import (
         AgentCard,
         CancelTaskRequest,
@@ -37,6 +34,7 @@ if TYPE_CHECKING:
         SetTaskPushNotificationConfigRequest,
         TaskQueryParams,
     )
+    from httpx._types import TimeoutTypes
 
 
 class A2AClient:
@@ -71,21 +69,23 @@ class A2AClient:
         # Merge custom headers with default headers
         request_headers = {"Content-Type": "application/json", **self.headers}
 
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with aconnect_sse(
+        async with (
+            httpx.AsyncClient(timeout=None) as client,
+            aconnect_sse(
                 client,
                 "POST",
                 self.url,
                 json=request.model_dump(mode="json"),
                 headers=request_headers,
-            ) as event_source:
-                try:
-                    async for sse in event_source.aiter_sse():
-                        yield SendStreamingMessageResponse.model_validate(
-                            json.loads(sse.data)
-                        )
-                except json.JSONDecodeError as e:
-                    raise httpx.DecodingError(str(e)) from e
+            ) as event_source,
+        ):
+            try:
+                async for sse in event_source.aiter_sse():
+                    yield SendStreamingMessageResponse.model_validate(
+                        json.loads(sse.data)
+                    )
+            except json.JSONDecodeError as e:
+                raise httpx.DecodingError(str(e)) from e
 
     async def _send_request(self, request: A2ARequest) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
@@ -141,18 +141,20 @@ class A2AClient:
         )
         request_headers = {"Content-Type": "application/json", **self.headers}
 
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with aconnect_sse(
+        async with (
+            httpx.AsyncClient(timeout=None) as client,
+            aconnect_sse(
                 client,
                 "POST",
                 self.url,
                 json=request.model_dump(mode="json"),
                 headers=request_headers,
-            ) as event_source:
-                try:
-                    async for sse in event_source.aiter_sse():
-                        yield SendStreamingMessageResponse.model_validate(
-                            json.loads(sse.data)
-                        )
-                except json.JSONDecodeError as e:
-                    raise httpx.DecodingError(str(e)) from e
+            ) as event_source,
+        ):
+            try:
+                async for sse in event_source.aiter_sse():
+                    yield SendStreamingMessageResponse.model_validate(
+                        json.loads(sse.data)
+                    )
+            except json.JSONDecodeError as e:
+                raise httpx.DecodingError(str(e)) from e

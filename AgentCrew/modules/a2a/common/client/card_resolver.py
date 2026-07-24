@@ -1,7 +1,6 @@
 import json
 
 import httpx
-
 from a2a.types import AgentCard
 
 DEFAULT_AGENT_CARD_PATHS = [

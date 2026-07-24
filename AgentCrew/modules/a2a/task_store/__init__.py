@@ -1,13 +1,13 @@
 from .base import TaskStore
-from .memory import InMemoryTaskStore
-from .file import FileTaskStore
-from .redis import RedisTaskStore
 from .factory import create_task_store
+from .file import FileTaskStore
+from .memory import InMemoryTaskStore
+from .redis import RedisTaskStore
 
 __all__ = [
-    "TaskStore",
-    "InMemoryTaskStore",
     "FileTaskStore",
+    "InMemoryTaskStore",
     "RedisTaskStore",
+    "TaskStore",
     "create_task_store",
 ]

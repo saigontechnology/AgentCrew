@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence, Union
+from typing import Any
 
 from a2a.types import (
     Task,
@@ -92,7 +93,7 @@ class FileTaskStore(TaskStore):
 
     async def get_task_events(
         self, task_id: str
-    ) -> list[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]]:
+    ) -> list[TaskStatusUpdateEvent | TaskArtifactUpdateEvent]:
         async with self.lock:
             path = self._events_path(self._safe_filename(task_id))
             if not path.exists():
@@ -107,9 +108,7 @@ class FileTaskStore(TaskStore):
     async def append_task_events(
         self,
         task_id: str,
-        events_to_append: Sequence[
-            Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]
-        ],
+        events_to_append: Sequence[TaskStatusUpdateEvent | TaskArtifactUpdateEvent],
     ) -> None:
         if not events_to_append:
             return
@@ -124,7 +123,7 @@ class FileTaskStore(TaskStore):
     async def append_task_event(
         self,
         task_id: str,
-        event: Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent],
+        event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent,
     ) -> None:
         await self.append_task_events(task_id, [event])
 

@@ -3,18 +3,17 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from typing import TYPE_CHECKING
-from loguru import logger
 
 from a2a.types import (
     Task,
+    TaskArtifactUpdateEvent,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
-    TaskArtifactUpdateEvent,
 )
+from loguru import logger
 
 if TYPE_CHECKING:
-    from typing import Union
     from .task_store import TaskStore
 
 
@@ -24,7 +23,7 @@ class TaskStreamingManager:
         self.streaming_tasks: dict[str, asyncio.Queue] = {}
         self.streaming_enabled_tasks: set[str] = set()
         self.pending_events: dict[
-            str, list[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]]
+            str, list[TaskStatusUpdateEvent | TaskArtifactUpdateEvent]
         ] = defaultdict(list)
         self.flush_tasks: dict[str, asyncio.Task] = {}
         self.flush_locks: dict[str, asyncio.Lock] = {}
@@ -90,7 +89,7 @@ class TaskStreamingManager:
     async def record_and_emit_event(
         self,
         task_id: str,
-        event: Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent],
+        event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent,
     ) -> None:
         self.pending_events[task_id].append(event)
         for key, queue in list(self.streaming_tasks.items()):

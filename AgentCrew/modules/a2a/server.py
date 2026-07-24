@@ -1,42 +1,43 @@
 """
-A2A protocol server implementation for SwissKnife.
+A2A v1 protocol server using SDK route factories.
+
+Key design:
+- Per-agent mounts with SDK route factories (agent card + JSON-RPC).
+- Proper ASGI lifespan: stores close, handlers drain via aclose().
+- Durable TaskStore (memory/file/redis) wired via --store-type.
+- v0.3 card routes at well-known paths for JS client compatibility.
 """
 
-import os
-import json
-from contextlib import asynccontextmanager
-from typing import Callable
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse
-from starlette.routing import Route, Mount, BaseRoute
-from starlette.requests import Request
-from starlette.middleware import Middleware
-from sse_starlette.sse import EventSourceResponse
-from pydantic import ValidationError
-from .common.server.auth_middleware import AuthMiddleware
+from __future__ import annotations
 
-from loguru import logger
-from AgentCrew.modules.agents import AgentManager
-from .registry import AgentRegistry
-from .task_manager import MultiAgentTaskManager
-from a2a.types import (
-    A2ARequest,
-    JSONRPCResponse,
-    JSONRPCErrorResponse,
-    InvalidRequestError,
-    JSONParseError,
-    InternalError,
-    SendMessageRequest,
-    SendStreamingMessageRequest,
-    GetTaskRequest,
-    CancelTaskRequest,
-    TaskResubscriptionRequest,
-    MethodNotFoundError,
+import os
+from contextlib import asynccontextmanager
+
+from a2a.server.request_handlers.default_request_handler_v2 import (
+    DefaultRequestHandlerV2,
 )
+from a2a.server.routes import (
+    create_agent_card_routes,
+    create_jsonrpc_routes,
+)
+from google.protobuf.json_format import MessageToDict
+from loguru import logger
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import BaseRoute, Mount, Route
+
+from AgentCrew.modules.agents import AgentManager, LocalAgent
+
+from .agent_executor import AgentCrewA2AExecutor
+from .common.server.auth_middleware import AuthMiddleware
+from .registry import AgentRegistry
+from .session_store import create_session_store, create_task_store
 
 
 class A2AServer:
-    """A2A server that exposes multiple agents"""
+    """A2A v1 server that exposes multiple agents using SDK route factories."""
 
     def __init__(
         self,
@@ -48,312 +49,157 @@ class A2AServer:
         store_type: str = "memory",
         store_options: dict | None = None,
     ):
-        logger.info(f"Initializing A2A server with host={host}, port={port}")
+        logger.info(f"Initializing A2A v1 server with host={host}, port={port}")
         self.agent_manager = agent_manager
         self.host = host
         self.port = port
         self.base_url = base_url or f"http://{host}:{port}"
-        self.api_key = api_key or os.getenv("A2A_SERVER_API_KEY", "Bearer ")
+        self.api_key = api_key or os.getenv("A2A_SERVER_API_KEY", "")
         logger.debug(f"Using base URL: {self.base_url}")
 
         self.exposed_url = os.getenv("A2A_SERVER_EXPOSED_URL", self.base_url)
-
         self.agent_registry = AgentRegistry(agent_manager, self.exposed_url)
-
-        self.task_manager = MultiAgentTaskManager(
-            agent_manager,
-            store_type=store_type,
-            store_options=store_options,
-        )
+        self.store_type = store_type
+        self.store_options = store_options or {}
+        # Track created resources for lifecycle shutdown
+        self._handlers: list[DefaultRequestHandlerV2] = []
+        self._session_stores: list = []
+        self._task_stores: list = []
 
         self.app = self._create_app()
 
     def _create_app(self) -> Starlette:
-        """
-        Create the Starlette application with routes.
-
-        Returns:
-            The configured Starlette application
-        """
-        logger.debug("Creating Starlette application")
-
-        @asynccontextmanager
-        async def lifespan(app):
-            await self.task_manager.initialize()
-            try:
-                yield
-            finally:
-                await self.task_manager.close()
-                logger.info("A2A server stopped — task stores closed.")
+        """Create the Starlette application with per-agent SDK routes."""
+        logger.debug("Creating A2A v1 Starlette application")
 
         routes: list[BaseRoute] = [
             Route("/agents", self._list_agents, methods=["GET"]),
         ]
 
-        # Add routes for each agent
         for agent_name in self.agent_manager.agents:
-            logger.debug(f"Creating routes for agent: {agent_name}")
-            agent_routes = Mount(
-                f"/{agent_name}",
-                routes=[
-                    Route(
-                        "/.well-known/agent-card.json",
-                        self._get_agent_card_factory(agent_name),
-                        methods=["GET"],
-                    ),
-                    Route(
-                        "/.well-known/agent.json",
-                        self._get_agent_card_factory(agent_name),
-                        methods=["GET"],
-                    ),
-                    # Single JSON-RPC endpoint with authentication middleware
-                    Route(
-                        "/",
-                        self._process_jsonrpc_request_factory(agent_name),
-                        methods=["POST"],
-                        middleware=[Middleware(AuthMiddleware, api_key=self.api_key)],
-                    ),
-                ],
+            logger.debug(f"Creating v1 routes for agent: {agent_name}")
+            agent_routes = self._build_agent_routes(agent_name)
+            routes.append(
+                Mount(
+                    f"/{agent_name}",
+                    routes=agent_routes,
+                    middleware=[Middleware(AuthMiddleware, api_key=self.api_key)]
+                    if self.api_key
+                    else [],
+                )
             )
-            routes.append(agent_routes)
+
+        @asynccontextmanager
+        async def lifespan(app):
+            try:
+                yield
+            finally:
+                logger.info("A2A v1 server shutting down — draining handlers.")
+                for h in self._handlers:
+                    try:
+                        await h.aclose()
+                    except Exception:
+                        logger.exception("Handler aclose failed")
+                for s in self._session_stores:
+                    try:
+                        await s.close()
+                    except Exception:
+                        pass
+                for ts in self._task_stores:
+                    try:
+                        await ts.close()
+                    except Exception:
+                        pass
+                logger.info("A2A v1 server stopped.")
 
         return Starlette(routes=routes, lifespan=lifespan)
 
-    def _get_agent_card_factory(self, agent_name: str) -> Callable:
-        """
-        Factory function to create agent card handler for a specific agent.
+    def _build_agent_routes(self, agent_name: str) -> list[BaseRoute]:
+        """Build SDK route factories for a single agent."""
+        agent = self.agent_manager.get_agent(agent_name)
+        if not agent or not isinstance(agent, LocalAgent):
+            logger.warning(f"Agent {agent_name} not found or not a LocalAgent")
+            return []
 
-        Args:
-            agent_name: Name of the agent
+        agent_url = f"{self.exposed_url}/{agent_name}/"
+        card = self.agent_registry.get_agent_card(agent_name)
+        if not card:
+            logger.warning(f"No agent card for {agent_name}")
+            return []
 
-        Returns:
-            Handler function for agent card requests
-        """
+        # Create stores: both protocol TaskStore and AgentCrew session store
+        # Pass agent_namespace for per-agent isolation
+        store_opts = dict(self.store_options)
+        store_opts["agent_namespace"] = agent_name
+        session_store = create_session_store(self.store_type, **store_opts)
+        task_store = create_task_store(self.store_type, **store_opts)
 
-        async def get_agent_card(request: Request):
-            agent_card = self.agent_registry.get_agent_card(agent_name)
-            if not agent_card:
-                return JSONResponse(
-                    {"error": f"Agent {agent_name} not found"}, status_code=404
-                )
-            return JSONResponse(
-                agent_card.model_dump(exclude_none=True, by_alias=True, mode="json")
+        self._session_stores.append(session_store)
+        self._task_stores.append(task_store)
+
+        executor = AgentCrewA2AExecutor(agent, session_store)
+        handler = DefaultRequestHandlerV2(
+            agent_executor=executor,
+            task_store=task_store,
+            agent_card=card,
+        )
+        self._handlers.append(handler)
+
+        from starlette.routing import Route as StarRoute
+
+        # Standard v1 card route (SDK factory)
+        agent_routes: list[BaseRoute] = []
+        agent_routes.extend(create_agent_card_routes(card))
+
+        # v0.3 compatible card at well-known paths
+        async def v03_card(request: Request):
+            """Return a v0.3-compatible card with top-level url/preferredTransport.
+            Required by @a2a-js/sdk 0.3.x which cannot parse supportedInterfaces.
+            """
+            d = MessageToDict(card)
+            v03 = {
+                "protocolVersion": "0.3.0",
+                "name": d.get("name", ""),
+                "description": d.get("description", ""),
+                "url": agent_url,
+                "preferredTransport": "jsonrpc",
+                "capabilities": d.get("capabilities", {}),
+                "skills": d.get("skills", []),
+                "defaultInputModes": d.get("defaultInputModes", ["text/plain"]),
+                "defaultOutputModes": d.get("defaultOutputModes", ["text/plain"]),
+            }
+            if "provider" in d:
+                v03["provider"] = d["provider"]
+            if "version" in d:
+                v03["version"] = d["version"]
+            return JSONResponse(v03)
+
+        # v0.3 compatible card ONLY at /.well-known/agent.json (not agent-card.json)
+        # The v1 SDK route handles /.well-known/agent-card.json above.
+        agent_routes.append(
+            StarRoute("/.well-known/agent.json", v03_card, methods=["GET"])
+        )
+
+        # JSON-RPC route with v0.3 compat
+        agent_routes.extend(
+            create_jsonrpc_routes(
+                handler,
+                rpc_url="/",
+                enable_v0_3_compat=True,
             )
+        )
 
-        return get_agent_card
-
-    def _process_jsonrpc_request_factory(self, agent_name: str) -> Callable:
-        """
-        Factory function to create JSON-RPC request handler for a specific agent.
-
-        Args:
-            agent_name: Name of the agent
-
-        Returns:
-            Handler function for JSON-RPC requests
-        """
-
-        async def process_jsonrpc_request(request: Request):
-            logger.debug(f"Received JSON-RPC request for agent {agent_name}")
-            body = None
-            try:
-                # Get task manager for this agent
-                task_manager = self.task_manager.get_task_manager(agent_name)
-                if not task_manager:
-                    logger.warning(f"Agent {agent_name} not found")
-                    return JSONResponse(
-                        {"error": f"Agent {agent_name} not found"}, status_code=404
-                    )
-
-                # Parse request body
-                body = await request.json()
-                logger.debug(f"Request body: {body}")
-
-                # Validate as A2A request
-                try:
-                    json_rpc_request = A2ARequest.model_validate(body)
-                except ValidationError as e:
-                    logger.debug(f"cannot validate_python {e} ")
-                    error = JSONRPCErrorResponse(
-                        id=body.get("id"),
-                        error=InvalidRequestError(data=e.errors()),
-                    )
-                    return JSONResponse(
-                        error.model_dump(exclude_none=True, mode="json"),
-                        status_code=400,
-                    )
-
-                # Process based on method
-                method = json_rpc_request.root.method
-                logger.debug(f"Processing method: {method}")
-
-                if method == "message/send" and isinstance(
-                    json_rpc_request.root, SendMessageRequest
-                ):
-                    logger.debug("Handling message/send request")
-                    result = await task_manager.on_send_message(json_rpc_request.root)
-                    logger.debug(f"message/send result: {result}")
-                    return JSONResponse(
-                        result.model_dump(exclude_none=True, mode="json")
-                    )
-
-                elif method == "message/stream" and isinstance(
-                    json_rpc_request.root, SendStreamingMessageRequest
-                ):
-                    result_stream = task_manager.on_send_message_streaming(
-                        json_rpc_request.root
-                    )
-
-                    if isinstance(result_stream, JSONRPCResponse):
-                        return JSONResponse(
-                            result_stream.model_dump(exclude_none=True, mode="json")
-                        )
-
-                    async def event_generator():
-                        async for item in result_stream:  # type: ignore
-                            yield {
-                                "data": json.dumps(
-                                    item.model_dump(exclude_none=True, mode="json")
-                                )
-                            }
-
-                    return EventSourceResponse(event_generator())
-
-                elif method == "tasks/send" and isinstance(
-                    json_rpc_request.root, SendMessageRequest
-                ):
-                    logger.debug("Handling legacy tasks/send request")
-                    result = await task_manager.on_send_task(json_rpc_request.root)
-                    logger.debug(f"tasks/send result: {result}")
-                    return JSONResponse(
-                        result.model_dump(exclude_none=True, mode="json")
-                    )
-
-                elif method == "tasks/sendSubscribe" and isinstance(
-                    json_rpc_request.root, SendStreamingMessageRequest
-                ):
-                    result_stream = task_manager.on_send_task_subscribe(
-                        json_rpc_request.root
-                    )
-
-                    if isinstance(result_stream, JSONRPCResponse):
-                        return JSONResponse(
-                            result_stream.model_dump(exclude_none=True, mode="json")
-                        )
-
-                    async def event_generator():
-                        async for item in result_stream:  # type: ignore
-                            yield {
-                                "data": json.dumps(
-                                    item.model_dump(exclude_none=True, mode="json")
-                                )
-                            }
-
-                    return EventSourceResponse(event_generator())
-
-                elif method == "tasks/get" and isinstance(
-                    json_rpc_request.root, GetTaskRequest
-                ):
-                    result = await task_manager.on_get_task(json_rpc_request.root)
-                    return JSONResponse(
-                        result.model_dump(exclude_none=True, mode="json")
-                    )
-
-                elif method == "tasks/cancel" and isinstance(
-                    json_rpc_request.root, CancelTaskRequest
-                ):
-                    result = await task_manager.on_cancel_task(json_rpc_request.root)
-                    return JSONResponse(
-                        result.model_dump(exclude_none=True, mode="json")
-                    )
-
-                elif method == "tasks/resubscribe" and isinstance(
-                    json_rpc_request.root, TaskResubscriptionRequest
-                ):
-                    result_stream = task_manager.on_resubscribe_to_task(
-                        json_rpc_request.root
-                    )
-
-                    if isinstance(result_stream, JSONRPCResponse):
-                        return JSONResponse(
-                            result_stream.model_dump(exclude_none=True, mode="json")
-                        )
-
-                    async def event_generator():
-                        async for item in result_stream:  # type: ignore
-                            yield {
-                                "data": json.dumps(
-                                    item.model_dump(exclude_none=True, mode="json")
-                                )
-                            }
-
-                    return EventSourceResponse(event_generator())
-
-                else:
-                    logger.error(f"Invalid method requested: {method}")
-                    logger.error(f"Request ID: {json_rpc_request.root.id}")
-                    logger.error(f"Request params: {json_rpc_request.root.params}")  # type: ignore
-                    error = JSONRPCErrorResponse(
-                        id=json_rpc_request.root.id,
-                        error=MethodNotFoundError(),
-                    )
-                    return JSONResponse(
-                        error.model_dump(exclude_none=True, mode="json"),
-                        status_code=400,
-                    )
-
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON decode error: {str(e)}")
-                logger.error(f"Error position: line {e.lineno}, column {e.colno}")
-                logger.error(f"Error document: {e.doc}")
-                error = JSONRPCErrorResponse(id=None, error=JSONParseError())
-                return JSONResponse(
-                    error.model_dump(exclude_none=True, mode="json"), status_code=400
-                )
-
-            except ValidationError as e:
-                logger.error(f"Validation error: {str(e)}")
-                for error in e.errors():
-                    logger.error(f"Error type: {error['type']}")
-                    logger.error(f"Error message: {error['msg']}")
-                error = JSONRPCErrorResponse(
-                    id=None, error=InvalidRequestError(data=e.errors())
-                )
-                return JSONResponse(
-                    error.model_dump(exclude_none=True, mode="json"), status_code=400
-                )
-
-            except Exception as e:
-                logger.exception(f"Error processing request: {e}")
-                error = JSONRPCErrorResponse(
-                    id=body.get("id") if body else None,
-                    error=InternalError(),
-                )
-                return JSONResponse(
-                    error.model_dump(exclude_none=True, mode="json"), status_code=500
-                )
-
-        return process_jsonrpc_request
+        return agent_routes
 
     async def _list_agents(self, request: Request):
-        """
-        list all available agents.
-
-        Args:
-            request: The HTTP request
-
-        Returns:
-            JSON response with list of agents
-        """
-        logger.debug("Handling list_agents request")
+        """List all available agents."""
         agents = self.agent_registry.list_agents()
-        logger.debug(f"Found {len(agents)} agents")
         return JSONResponse([agent.model_dump(mode="json") for agent in agents])
 
     def start(self):
-        """Start the A2A server"""
+        """Start the A2A server."""
         import uvicorn
 
-        logger.info(f"Starting A2A server on {self.host}:{self.port}")
+        logger.info(f"Starting A2A v1 server on {self.host}:{self.port}")
         logger.info(f"Available agents: {list(self.agent_manager.agents.keys())}")
         uvicorn.run(self.app, host=self.host, port=self.port)

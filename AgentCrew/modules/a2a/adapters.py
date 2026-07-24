@@ -1,131 +1,117 @@
 """
-Adapters for converting between SwissKnife and A2A message formats.
+Adapters for converting between AgentCrew and A2A v1 protobuf message formats.
 """
 
-import base64
+from __future__ import annotations
+
+import mimetypes
+import os
 from typing import Any
-from a2a.types import (
-    GetTaskResponse,
-    Message,
-    Task,
-    TextPart,
-    FilePart,
-    FileWithBytes,
-    FileWithUri,
+from uuid import uuid4
+
+from a2a.types.a2a_pb2 import (
     Artifact,
+    Message,
     Part,
-    SendMessageResponse,
-    JSONRPCErrorResponse,
-    DataPart,
     Role,
 )
+from google.protobuf.json_format import ParseDict
+from google.protobuf.struct_pb2 import Value
 
 
 def convert_a2a_message_to_agent(message: Message) -> dict[str, Any]:
     """
-    Convert an A2A message to SwissKnife format.
-
-    Args:
-        message: The A2A message to convert
-
-    Returns:
-        The message in SwissKnife format
+    Convert an A2A v1 Message to AgentCrew internal format.
     """
-    role = "user" if message.role == Role.user else "assistant"
+    role = "user" if message.role == Role.ROLE_USER else "assistant"
     content = []
 
     for part in message.parts:
-        part_data = part.root
-
-        if part_data.kind == "text":
-            content.append({"type": "text", "text": part_data.text})
-        elif part_data.kind == "file":
-            # Handle file content
-            file_data = part_data.file
-            if isinstance(file_data, FileWithBytes) and file_data.bytes:
-                # Base64 encoded file
+        if part.HasField("text"):
+            content.append({"type": "text", "text": part.text})
+        elif part.HasField("raw"):
+            # Raw bytes — decode to string or keep as bytes
+            try:
+                text = part.raw.decode("utf-8", errors="replace")
+                content.append({"type": "text", "text": text})
+            except (UnicodeDecodeError, AttributeError):
                 content.append(
                     {
                         "type": "file",
-                        "file_data": base64.b64decode(file_data.bytes),
-                        "file_name": file_data.name or "file",
-                        "mime_type": file_data.mime_type or "application/octet-stream",
+                        "file_data": part.raw,
+                        "file_name": part.filename or "file",
+                        "mime_type": part.media_type or "application/octet-stream",
                     }
                 )
-            elif isinstance(file_data, FileWithUri) and file_data.uri:
-                # File URI
-                content.append(
-                    {
-                        "type": "file_uri",
-                        "uri": file_data.uri,
-                        "file_name": file_data.name or "file",
-                        "mime_type": file_data.mime_type or "application/octet-stream",
-                    }
-                )
-        elif part_data.kind == "data":
-            # Convert structured data
-            content.append({"type": "data", "data": part_data.data})
+        elif part.HasField("url"):
+            content.append(
+                {
+                    "type": "file_uri",
+                    "uri": part.url,
+                    "file_name": part.filename or "file",
+                    "mime_type": part.media_type or "application/octet-stream",
+                }
+            )
+        elif part.HasField("data"):
+            # Convert protobuf Value to dict
+            from google.protobuf.json_format import MessageToDict
+
+            data_dict = MessageToDict(part.data)
+            content.append({"type": "data", "data": data_dict})
 
     return {"role": role, "content": content}
 
 
-# TODO: cover all of cases for images
 def convert_agent_message_to_a2a(
     message: dict[str, Any], message_id: str | None = None
 ) -> Message:
     """
-    Convert a SwissKnife message to A2A format.
-
-    Args:
-        message: The SwissKnife message to convert
-        message_id: Optional message ID
-
-    Returns:
-        The message in A2A format
+    Convert an AgentCrew message to A2A v1 format.
     """
-    role = Role.user if message.get("role") == "user" else Role.agent
+    role = Role.ROLE_USER if message.get("role") == "user" else Role.ROLE_AGENT
     parts = []
 
     content = message.get("content", [])
     if isinstance(content, str):
-        # Handle string content (common in some providers)
-        parts.append(TextPart(text=content))
+        parts.append(Part(text=content))
     else:
-        # Handle list of content parts
         for part in content:
             if isinstance(part, str):
-                parts.append(TextPart(text=part))
+                parts.append(Part(text=part))
             elif isinstance(part, dict):
-                if part.get("type") == "text":
-                    parts.append(TextPart(text=part.get("text", "")))
-                elif part.get("type") == "file":
-                    # Handle file content
+                ptype = part.get("type", "")
+                if ptype == "text":
+                    parts.append(Part(text=part.get("text", "")))
+                elif ptype == "file":
+                    file_data = part.get("file_data", b"")
+                    if isinstance(file_data, str):
+                        file_data = file_data.encode("utf-8")
                     parts.append(
-                        FilePart(
-                            file=FileWithBytes(
-                                name=part.get("file_name"),
-                                mime_type=part.get("mime_type"),
-                                bytes=part.get("file_data", ""),
-                            )
+                        Part(
+                            raw=file_data,
+                            filename=part.get("file_name", "file"),
+                            media_type=part.get(
+                                "mime_type", "application/octet-stream"
+                            ),
                         )
                     )
-                elif part.get("type") == "file_uri":
-                    # Handle file URI
+                elif ptype == "file_uri":
                     parts.append(
-                        FilePart(
-                            file=FileWithUri(
-                                name=part.get("file_name"),
-                                mime_type=part.get("mime_type"),
-                                uri=part.get("uri", ""),
-                            )
+                        Part(
+                            url=part.get("uri", ""),
+                            filename=part.get("file_name", "file"),
+                            media_type=part.get(
+                                "mime_type", "application/octet-stream"
+                            ),
                         )
                     )
-                elif part.get("type") == "data":
-                    # Handle structured data
-                    parts.append(DataPart(data=part.get("data", {})))
+                elif ptype == "data":
+                    data_val = Value()
+                    ParseDict(part.get("data", {}), data_val)
+                    parts.append(Part(data=data_val))
 
     return Message(
-        message_id=message_id or f"msg_{hash(str(parts))}",
+        message_id=message_id or f"msg_{uuid4().hex}",
         role=role,
         parts=parts,
         metadata=message.get("metadata"),
@@ -137,26 +123,19 @@ def convert_agent_response_to_a2a_artifact(
     tool_uses: list[dict[str, Any]] | None = None,
     artifact_id: str | None = None,
 ) -> Artifact:
-    """
-    Convert a SwissKnife response to an A2A artifact.
+    """Convert an AgentCrew response to an A2A Artifact."""
+    parts = [Part(text=response)]
 
-    Args:
-        response: The response text from SwissKnife
-        tool_uses: Optional list of tool uses
-        artifact_id: Optional artifact ID
-
-    Returns:
-        The response as an A2A artifact
-    """
-    parts = [Part(root=TextPart(text=response))]
-
-    # If there were tool uses, we could add them as metadata
     metadata = None
     if tool_uses:
-        metadata = {"tool_uses": tool_uses}
+        from google.protobuf.struct_pb2 import Struct
+
+        metadata_struct = Struct()
+        ParseDict({"tool_uses": tool_uses}, metadata_struct)
+        metadata = metadata_struct
 
     return Artifact(
-        artifact_id=artifact_id or f"artifact_{hash(response)}",
+        artifact_id=artifact_id or f"artifact_{uuid4().hex}",
         parts=parts,
         metadata=metadata,
     )
@@ -166,28 +145,19 @@ def convert_agent_response_to_a2a_message(
     response: str,
     tool_uses: list[dict[str, Any]] | None = None,
     message_id: str | None = None,
-    role: Role = Role.agent,
+    role: Role = Role.ROLE_AGENT,
 ) -> Message:
-    """
-    Convert a SwissKnife response to an A2A artifact.
+    """Convert an AgentCrew response to an A2A Message."""
+    parts = [Part(text=response)]
 
-    Args:
-        response: The response text from SwissKnife
-        tool_uses: Optional list of tool uses
-        artifact_id: Optional artifact ID
-
-    Returns:
-        The response as an A2A artifact
-    """
-    parts = [Part(root=TextPart(text=response))]
-
-    # If there were tool uses, we could add them as metadata
     metadata = None
     if tool_uses:
-        metadata = {"tool_uses": tool_uses}
+        metadata_val = Value()
+        ParseDict({"tool_uses": tool_uses}, metadata_val)
+        metadata = metadata_val
 
     return Message(
-        message_id=message_id or f"message_{hash(response)}",
+        message_id=message_id or f"message_{uuid4().hex}",
         parts=parts,
         metadata=metadata,
         role=role,
@@ -197,20 +167,7 @@ def convert_agent_response_to_a2a_message(
 def convert_file_to_a2a_part(
     file_path: str, file_content: bytes, mime_type: str | None = None
 ) -> Part:
-    """
-    Convert a file to an A2A part.
-
-    Args:
-        file_path: The path to the file
-        file_content: The content of the file
-        mime_type: Optional MIME type
-
-    Returns:
-        The file as an A2A part
-    """
-    import os
-    import mimetypes
-
+    """Convert a file to an A2A v1 Part (raw bytes)."""
     if not mime_type:
         mime_type, _ = mimetypes.guess_type(file_path)
         if not mime_type:
@@ -218,47 +175,71 @@ def convert_file_to_a2a_part(
 
     file_name = os.path.basename(file_path)
 
-    # Encode file content as base64
-    base64_content = base64.b64encode(file_content).decode("utf-8")
-
     return Part(
-        root=FilePart(
-            file=FileWithBytes(
-                name=file_name, mime_type=mime_type, bytes=base64_content
-            )
-        )
+        raw=file_content,
+        filename=file_name,
+        media_type=mime_type,
     )
 
 
 def convert_a2a_send_task_response_to_agent_message(
-    response: SendMessageResponse | GetTaskResponse, agent_name: str
+    response: Any, agent_name: str
 ) -> str | None:
-    """Convert A2A response to agent message format"""
-    if not response or not hasattr(response, "root"):
+    """Convert A2A response to agent message text."""
+    if not response:
         return None
-
-    if isinstance(response.root, JSONRPCErrorResponse):
-        return None
-
-    result = response.root.result if hasattr(response.root, "result") else None
 
     # Handle both Task and Message results
-    if isinstance(result, Task) and result.artifacts:
-        # Task result with artifacts
-        latest_artifact = result.artifacts[-1]
-        content_parts = []
-        for part in latest_artifact.parts:
-            part_data = part.root
-            if part_data.kind == "text":
-                content_parts.append(part_data.text)
-        return "\n".join(content_parts)
-    elif isinstance(result, Message) and result.parts:
-        # Direct message result
-        content_parts = []
-        for part in result.parts:
-            part_data = part.root
-            if part_data.kind == "text":
-                content_parts.append(part_data.text)
-        return "\n".join(content_parts)
+    if hasattr(response, "artifacts") and response.artifacts:
+        # Task with artifacts
+        latest = response.artifacts[-1]
+        texts = []
+        for part in latest.parts:
+            if part.HasField("text"):
+                texts.append(part.text)
+        return "\n".join(texts)
+    elif hasattr(response, "parts") and response.parts:
+        # Direct message
+        texts = []
+        for part in response.parts:
+            if part.HasField("text"):
+                texts.append(part.text)
+        return "\n".join(texts)
 
     return None
+
+
+def create_ask_message(
+    questions: list[dict[str, Any]],
+) -> Message | None:
+    """Create an A2A Message for the ask tool (input-required)."""
+    if not questions:
+        return None
+
+    ask_data = {
+        "type": "ask",
+        "questions": [
+            {
+                "question": q["question"],
+                "guided_answers": q.get("guided_answers", []),
+            }
+            for q in questions
+        ],
+        "instruction": (
+            "Please answer the following questions. "
+            "Respond with one of the guided answers or provide a custom response for each.\n"
+            "Format: q0: <answer to question 1>\nq1: <answer to question 2>\n..."
+        ),
+    }
+    data_val = Value()
+    ParseDict(ask_data, data_val)
+
+    total = len(questions)
+    return Message(
+        message_id=f"ask_{uuid4().hex}_{total}",
+        role=Role.ROLE_AGENT,
+        parts=[
+            Part(text=f"❓ Agent has {total} question{'s' if total > 1 else ''}"),
+            Part(data=data_val),
+        ],
+    )

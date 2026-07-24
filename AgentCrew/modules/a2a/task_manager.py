@@ -1,55 +1,59 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone, timedelta
-from typing import TYPE_CHECKING
-import tempfile
 import os
+import tempfile
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from a2a.types import (
     CancelTaskResponse,
-    JSONRPCError,
+    CancelTaskSuccessResponse,
+    GetTaskPushNotificationConfigResponse,
     GetTaskResponse,
     GetTaskSuccessResponse,
+    JSONRPCError,
     JSONRPCErrorResponse,
     SendMessageResponse,
+    SendMessageSuccessResponse,
     SendStreamingMessageResponse,
     SendStreamingMessageSuccessResponse,
-    CancelTaskSuccessResponse,
     SetTaskPushNotificationConfigResponse,
-    GetTaskPushNotificationConfigResponse,
-    SendMessageSuccessResponse,
     Task,
-    TaskStatus,
     TaskState,
+    TaskStatus,
     TaskStatusUpdateEvent,
 )
 
 from AgentCrew.modules.agents import LocalAgent
 from AgentCrew.modules.agents.base import MessageType
+
 from .adapters import convert_a2a_message_to_agent
 from .common.server.task_manager import TaskManager
 from .errors import A2AError
-from .task_store import TaskStore
 from .task_cancellation import TaskCancellationManager
-from .task_streaming import TaskStreamingManager
-from .task_interaction import TaskInteractionHandler
 from .task_execution import TaskExecutionEngine, ToolCallResult
+from .task_interaction import TaskInteractionHandler
+from .task_store import TaskStore
+from .task_streaming import TaskStreamingManager
 
 if TYPE_CHECKING:
-    from typing import Any, AsyncIterable, Union
-    from AgentCrew.modules.agents import AgentManager
+    from collections.abc import AsyncIterable
+    from typing import Any
+
     from a2a.types import (
         CancelTaskRequest,
-        TaskNotCancelableError,
         GetTaskPushNotificationConfigRequest,
         GetTaskRequest,
+        JSONRPCResponse,
         SendMessageRequest,
         SendStreamingMessageRequest,
         SetTaskPushNotificationConfigRequest,
+        TaskNotCancelableError,
         TaskResubscriptionRequest,
-        JSONRPCResponse,
     )
+
+    from AgentCrew.modules.agents import AgentManager
 
 
 TERMINAL_STATES = {TaskState.completed, TaskState.canceled, TaskState.failed}
@@ -235,7 +239,7 @@ class AgentTaskManager(TaskManager):
 
     async def on_send_message_streaming(
         self, request: SendStreamingMessageRequest
-    ) -> Union[AsyncIterable[SendStreamingMessageResponse], JSONRPCResponse]:
+    ) -> AsyncIterable[SendStreamingMessageResponse] | JSONRPCResponse:
         task_id = (
             request.params.message.task_id
             or f"task_{request.params.message.message_id}"
@@ -321,7 +325,7 @@ class AgentTaskManager(TaskManager):
 
     async def on_resubscribe_to_task(
         self, request: TaskResubscriptionRequest
-    ) -> Union[AsyncIterable[SendStreamingMessageResponse], JSONRPCResponse]:
+    ) -> AsyncIterable[SendStreamingMessageResponse] | JSONRPCResponse:
         task_id = request.params.id
 
         task = await self.store.get_task(task_id)
@@ -385,8 +389,8 @@ class AgentTaskManager(TaskManager):
         try:
             ts = datetime.fromisoformat(timestamp)
             if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            return datetime.now(timezone.utc) - ts > retention
+                ts = ts.replace(tzinfo=UTC)
+            return datetime.now(UTC) - ts > retention
         except (ValueError, TypeError):
             return True
 
@@ -403,7 +407,7 @@ class AgentTaskManager(TaskManager):
 
     async def on_send_task_subscribe(
         self, request: SendStreamingMessageRequest
-    ) -> Union[AsyncIterable[SendStreamingMessageResponse], JSONRPCResponse]:
+    ) -> AsyncIterable[SendStreamingMessageResponse] | JSONRPCResponse:
         return await self.on_send_message_streaming(request)
 
 

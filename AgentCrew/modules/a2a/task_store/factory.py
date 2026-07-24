@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from .base import TaskStore
-from .memory import InMemoryTaskStore
 from .file import FileTaskStore
+from .memory import InMemoryTaskStore
 from .redis import RedisTaskStore
 
 

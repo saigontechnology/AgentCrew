@@ -5,23 +5,24 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from loguru import logger
-
 from a2a.types import (
     Task,
+    TaskArtifactUpdateEvent,
     TaskState,
     TaskStatusUpdateEvent,
-    TaskArtifactUpdateEvent,
 )
+from loguru import logger
+
 from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.events.hooks import CancelOperation
+from AgentCrew.modules.llm.token_usage import TokenUsage
 from AgentCrew.modules.tools.parallel_executor import (
     execute_tools_in_parallel,
     is_sequential_tool,
 )
+
 from .adapters import convert_agent_response_to_a2a_artifact
 from .exceptions import TaskCanceledException
-from AgentCrew.modules.llm.token_usage import TokenUsage
 
 
 class ToolCallResult(Enum):
@@ -30,12 +31,14 @@ class ToolCallResult(Enum):
 
 
 if TYPE_CHECKING:
-    from typing import Any, Tuple
+    from typing import Any
+
     from AgentCrew.modules.agents import LocalAgent
-    from .task_store import TaskStore
-    from .task_streaming import TaskStreamingManager
+
     from .task_cancellation import TaskCancellationManager
     from .task_interaction import TaskInteractionHandler
+    from .task_store import TaskStore
+    from .task_streaming import TaskStreamingManager
 
 
 class TaskExecutionEngine:
@@ -200,7 +203,7 @@ class TaskExecutionEngine:
                     )
                     await asyncio.sleep(0.7)
 
-                thinking_data: Tuple[str, str] | None = (
+                thinking_data: tuple[str, str] | None = (
                     (thinking_content, thinking_signature) if thinking_content else None
                 )
 

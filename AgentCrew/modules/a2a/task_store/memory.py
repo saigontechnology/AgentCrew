@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from typing import Any, Sequence, Union
+from collections.abc import Sequence
+from typing import Any
 
 from a2a.types import (
     Task,
@@ -18,7 +19,7 @@ class InMemoryTaskStore(TaskStore):
         self.tasks: dict[str, Task] = {}
         self.task_history: dict[str, list[dict[str, Any]]] = {}
         self.task_events: dict[
-            str, list[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]]
+            str, list[TaskStatusUpdateEvent | TaskArtifactUpdateEvent]
         ] = defaultdict(list)
         self.pending_tools: dict[str, dict] = {}
         self.lock = asyncio.Lock()
@@ -63,14 +64,14 @@ class InMemoryTaskStore(TaskStore):
 
     async def get_task_events(
         self, task_id: str
-    ) -> list[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]]:
+    ) -> list[TaskStatusUpdateEvent | TaskArtifactUpdateEvent]:
         async with self.lock:
             return list(self.task_events.get(task_id, []))
 
     async def append_task_events(
         self,
         task_id: str,
-        events: Sequence[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent]],
+        events: Sequence[TaskStatusUpdateEvent | TaskArtifactUpdateEvent],
     ) -> None:
         if not events:
             return
@@ -80,7 +81,7 @@ class InMemoryTaskStore(TaskStore):
     async def append_task_event(
         self,
         task_id: str,
-        event: Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent],
+        event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent,
     ) -> None:
         await self.append_task_events(task_id, [event])
 
