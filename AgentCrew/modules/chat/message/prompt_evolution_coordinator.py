@@ -181,7 +181,7 @@ class PromptEvolutionCoordinator:
             revised_prompt = await self._service.build_revised_prompt(
                 agent, approved_summary
             )
-            result = self._service.apply_prompt_revision(
+            result = await self._service.apply_prompt_revision_async(
                 agent,
                 revised_prompt,
                 approved_summary,

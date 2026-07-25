@@ -208,3 +208,46 @@ class TestA2AServerOrphanedTasks:
         # The task persists as-is (WORKING state preserved). The server must
         # handle resubscribe gracefully for such orphaned tasks.
         assert loaded.status.state == TaskState.TASK_STATE_WORKING
+
+
+class TestA2AServerStartup:
+    """Tests for A2AServer.start() — focused on the asyncio.Runner fix.
+
+    The ``start()`` method uses ``asyncio.Runner`` with uvicorn's loop
+    factory to bypass the ``nest_asyncio``-patched ``asyncio.run()``,
+    which does not accept the ``loop_factory`` kwarg added in Python 3.12.
+
+    All tests mock ``uvicorn.Server.serve`` to avoid actual socket binding.
+    """
+
+    def test_uvicorn_run_completes_without_error(self, server, monkeypatch):
+        """A2AServer.start() completes without TypeError or SystemExit.
+
+        ``uvicorn.run()`` calls the native ``asyncio.run()`` (no longer
+        patched by ``nest_asyncio``), which supports the ``loop_factory``
+        kwarg that uvicorn passes internally.
+        """
+        import uvicorn
+
+        run_called = False
+
+        def fake_uvicorn_main(app, **kwargs):
+            nonlocal run_called
+            run_called = True
+
+        monkeypatch.setattr(uvicorn, "run", fake_uvicorn_main)
+
+        server.start()
+
+        assert run_called, "A2AServer.start() did not invoke uvicorn.run()"
+
+    def test_start_logs_agents(self, server, monkeypatch):
+        """A2AServer.start() logs available agents."""
+        import uvicorn
+
+        def fake_uvicorn_main(app, **kwargs):
+            pass
+
+        monkeypatch.setattr(uvicorn, "run", fake_uvicorn_main)
+
+        server.start()

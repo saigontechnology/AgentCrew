@@ -93,7 +93,7 @@ def get_transfer_tool_handler(agent_manager: AgentManager) -> Callable:
         ):
             raise ValueError("Error: Cannot transfer to same agent")
 
-        result = agent_manager.perform_transfer(target_agent, task)
+        result = await agent_manager.perform_transfer_async(target_agent, task)
         if target_agent == "None":
             raise ValueError("Error: Task is completed. This transfer is invalid")
 

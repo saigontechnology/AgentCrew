@@ -16,7 +16,7 @@ class AgentCommands:
     def __init__(self, message_handler: MessageHandler):
         self.message_handler = message_handler
 
-    def handle_agent(self, command: str) -> tuple[bool, str]:
+    async def handle_agent(self, command: str) -> tuple[bool, str]:
         """
         Handle the /agent command to switch agents or list available agents.
 
@@ -46,7 +46,7 @@ class AgentCommands:
         old_agent_name = self.message_handler.agent_manager.get_current_agent().name
         if old_agent_name == agent_name:
             return (False, f"Already using {agent_name} agent")
-        if self.message_handler.agent_manager.select_agent(agent_name):
+        if await self.message_handler.agent_manager.select_agent_async(agent_name):
             self.message_handler.agent = (
                 self.message_handler.agent_manager.get_current_agent()
             )
@@ -77,7 +77,7 @@ class AgentCommands:
                 f"Unknown agent: {agent_name}. Available agents: {available_agents}",
             )
 
-    def handle_toggle_transfer(self, user_input: str) -> CommandResult:
+    async def handle_toggle_transfer(self, user_input: str) -> CommandResult:
         """Handle /toggle_transfer command — backward-compat alias toggling between transfer and none."""
         try:
             from AgentCrew.modules.agents.manager import AgentMode
@@ -90,8 +90,8 @@ class AgentCommands:
             )
             self.message_handler.agent_manager.agent_mode = new_mode
 
-            self.message_handler.agent.deactivate()
-            self.message_handler.agent.activate()
+            await self.message_handler.agent.deactivate_async()
+            await self.message_handler.agent.activate_async()
 
             status = "enabled" if new_mode == AgentMode.TRANSFER else "disabled"
             self.message_handler.bus.emit_sync(
@@ -111,7 +111,7 @@ class AgentCommands:
             )
             return CommandResult(handled=True, clear_flag=True)
 
-    def handle_agent_mode(self, user_input: str) -> CommandResult:
+    async def handle_agent_mode(self, user_input: str) -> CommandResult:
         """Handle /agent_mode command to view or switch agent interaction mode."""
         try:
             from AgentCrew.modules.agents.manager import AgentMode
@@ -139,8 +139,8 @@ class AgentCommands:
 
             self.message_handler.agent_manager.agent_mode = new_mode
 
-            self.message_handler.agent.deactivate()
-            self.message_handler.agent.activate()
+            await self.message_handler.agent.deactivate_async()
+            await self.message_handler.agent.activate_async()
 
             self.message_handler.bus.emit_sync(
                 AppEvents.SYSTEM_MESSAGE,

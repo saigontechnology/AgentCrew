@@ -87,8 +87,14 @@ class ConversationManager:
             )
             return []
 
-    def load_conversation(self, conversation_id: str) -> list[dict[str, Any]] | None:
-        """Loads a specific conversation history and sets it as active."""
+    def _load_conversation_prepare(
+        self, conversation_id: str
+    ) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+        """Fetch history/metadata and convert tool messages. Shared helper.
+
+        Returns ``(history, metadata)``. Does not mutate agent selection
+        or conversation state — that is handled by the caller.
+        """
         try:
             self.message_handler.agent_manager.clean_agents_messages()
             if self.message_handler.persistent_service:
@@ -106,108 +112,148 @@ class ConversationManager:
                 history = []
                 metadata = {}
             if history:
-                # Backward compatibility: Convert tool messages
                 for msg in history:
                     if msg.get("role", "user") == "tool":
                         tool_result = msg.pop("tool_result", None)
                         if tool_result:
                             msg["content"] = tool_result.get("content", "")
                             msg["tool_call_id"] = tool_result.get("tool_use_id", "")
-
-                self.message_handler.current_conversation_id = conversation_id
-                last_agent_name = history[-1].get("agent", "")
-                if last_agent_name and self.message_handler.agent_manager.select_agent(
-                    last_agent_name
-                ):
-                    self.message_handler.agent = (
-                        self.message_handler.agent_manager.get_current_agent()
-                    )
-                    self.message_handler.bus.emit_sync(
-                        AppEvents.AGENT_CHANGED, agent_name=last_agent_name
-                    )
-
-                if self.message_handler.memory_service:
-                    self.message_handler.memory_service.session_id = (
-                        self.message_handler.current_conversation_id
-                    )
-                    self.message_handler.memory_service.loaded_conversation = True
-                    self.message_handler.memory_service.load_conversation_context(
-                        self.message_handler.current_conversation_id, last_agent_name
-                    )
-
-                self.message_handler.streamline_messages = history
-                self.message_handler.agent_manager.rebuild_agents_messages(
-                    self.message_handler.streamline_messages
-                )
-
-                self.message_handler.last_assisstant_response_idx = len(
-                    self.message_handler.streamline_messages
-                )
-
-                self.message_handler.conversation_turns = []
-
-                for i, message in enumerate(self.message_handler.streamline_messages):
-                    role = message.get("role")
-                    if role == "user":
-                        content = message.get("content", "")
-                        message_content = ""
-
-                        # Handle different content structures (standardized format)
-                        if isinstance(content, str):
-                            message_content = content
-                        elif isinstance(content, list) and content:
-                            # Assuming the first item in the list contains the primary text
-                            first_item = content[0]
-                            if (
-                                isinstance(first_item, dict)
-                                and first_item.get("type") == "text"
-                            ):
-                                message_content = first_item.get("text", "")
-                        if (
-                            message_content
-                            and not message_content.startswith(
-                                "Memories related to the user request:"
-                            )
-                            and not message_content.startswith("Content of ")
-                            and not message_content.startswith("<Transfer_Request>")
-                        ):
-                            self.store_conversation_turn(message_content, i)
-
-                from AgentCrew.modules.agents import LocalAgent
-
-                logger.info(f"Loaded conversation {conversation_id}")
-                token_usage = None
-                if isinstance(self.message_handler.agent, LocalAgent) and metadata:
-                    from AgentCrew.modules.llm.token_usage import TokenUsage
-
-                    token_usage = TokenUsage(
-                        input_tokens=metadata.get("input_tokens", 0),
-                        output_tokens=metadata.get("output_tokens", 0),
-                        cached_tokens=metadata.get("cached_tokens", 0),
-                        total_input_tokens=metadata.get("total_input_tokens", 0),
-                        cache_creation_tokens=metadata.get("cache_creation_tokens", 0),
-                    )
-                    self.message_handler.agent.token_usage = token_usage
-
-                self.message_handler.bus.emit_sync(
-                    AppEvents.CONVERSATION_LOADED,
-                    id=conversation_id,
-                    history=history,
-                    token_usage=token_usage,
-                )
-                return history
-            else:
-                self.message_handler.bus.emit_sync(
-                    AppEvents.ERROR,
-                    message=f"Conversation {conversation_id} not found or empty.",
-                )
-                return []
+            return history, metadata
         except Exception as e:
             logger.error(f"Error loading conversation {conversation_id}: {e}")
             self.message_handler.bus.emit_sync(
                 AppEvents.ERROR,
                 message=f"Failed to load conversation {conversation_id}: {e}",
             )
+            return None, {}
+
+    def _load_conversation_after_agent(
+        self,
+        history: list[dict[str, Any]],
+        metadata: dict[str, Any],
+        conversation_id: str,
+        last_agent_name: str,
+    ) -> None:
+        """Post-agent-selection logic: memory, turns, token usage, events."""
+        self.message_handler.current_conversation_id = conversation_id
+
+        if self.message_handler.memory_service:
+            self.message_handler.memory_service.session_id = (
+                self.message_handler.current_conversation_id
+            )
+            self.message_handler.memory_service.loaded_conversation = True
+            self.message_handler.memory_service.load_conversation_context(
+                self.message_handler.current_conversation_id, last_agent_name
+            )
+
+        self.message_handler.streamline_messages = history
+        self.message_handler.agent_manager.rebuild_agents_messages(
+            self.message_handler.streamline_messages
+        )
+
+        self.message_handler.last_assisstant_response_idx = len(
+            self.message_handler.streamline_messages
+        )
+
+        self.message_handler.conversation_turns = []
+
+        for i, message in enumerate(self.message_handler.streamline_messages):
+            role = message.get("role")
+            if role == "user":
+                content = message.get("content", "")
+                message_content = ""
+                if isinstance(content, str):
+                    message_content = content
+                elif isinstance(content, list) and content:
+                    first_item = content[0]
+                    if (
+                        isinstance(first_item, dict)
+                        and first_item.get("type") == "text"
+                    ):
+                        message_content = first_item.get("text", "")
+                if (
+                    message_content
+                    and not message_content.startswith(
+                        "Memories related to the user request:"
+                    )
+                    and not message_content.startswith("Content of ")
+                    and not message_content.startswith("<Transfer_Request>")
+                ):
+                    self.store_conversation_turn(message_content, i)
+
+        from AgentCrew.modules.agents import LocalAgent
+
+        logger.info(f"Loaded conversation {conversation_id}")
+        token_usage = None
+        if isinstance(self.message_handler.agent, LocalAgent) and metadata:
+            from AgentCrew.modules.llm.token_usage import TokenUsage
+
+            token_usage = TokenUsage(
+                input_tokens=metadata.get("input_tokens", 0),
+                output_tokens=metadata.get("output_tokens", 0),
+                cached_tokens=metadata.get("cached_tokens", 0),
+                total_input_tokens=metadata.get("total_input_tokens", 0),
+                cache_creation_tokens=metadata.get("cache_creation_tokens", 0),
+            )
+            self.message_handler.agent.token_usage = token_usage
+
+        self.message_handler.bus.emit_sync(
+            AppEvents.CONVERSATION_LOADED,
+            id=conversation_id,
+            history=history,
+            token_usage=token_usage,
+        )
+
+    def load_conversation(self, conversation_id: str) -> list[dict[str, Any]] | None:
+        """Loads a specific conversation history and sets it as active."""
+        history, metadata = self._load_conversation_prepare(conversation_id)
+        if history:
+            last_agent_name = history[-1].get("agent", "")
+            if last_agent_name and self.message_handler.agent_manager.select_agent(
+                last_agent_name
+            ):
+                self.message_handler.agent = (
+                    self.message_handler.agent_manager.get_current_agent()
+                )
+                self.message_handler.bus.emit_sync(
+                    AppEvents.AGENT_CHANGED, agent_name=last_agent_name
+                )
+
+            self._load_conversation_after_agent(
+                history, metadata, conversation_id, last_agent_name
+            )
+
+        return history
+
+    async def load_conversation_async(
+        self, conversation_id: str
+    ) -> list[dict[str, Any]] | None:
+        """Async variant of :meth:`load_conversation`.
+
+        Uses :meth:`AgentManager.select_agent_async` so the agent
+        selection lifecycle is awaited natively.
+        """
+        history, metadata = self._load_conversation_prepare(conversation_id)
+        if history:
+            last_agent_name = history[-1].get("agent", "")
+            if (
+                last_agent_name
+                and await self.message_handler.agent_manager.select_agent_async(
+                    last_agent_name
+                )
+            ):
+                self.message_handler.agent = (
+                    self.message_handler.agent_manager.get_current_agent()
+                )
+                self.message_handler.bus.emit_sync(
+                    AppEvents.AGENT_CHANGED, agent_name=last_agent_name
+                )
+
+            self._load_conversation_after_agent(
+                history, metadata, conversation_id, last_agent_name
+            )
+
+        return history
 
     def delete_conversation_by_id(self, conversation_id: str) -> bool:
         """
@@ -369,6 +415,19 @@ class ConversationManager:
         if new_conversation_id:
             # Switch to the new forked conversation
             self.load_conversation(new_conversation_id)
+            return True
+        return False
+
+    async def fork_and_switch_async(self, turn_number: int) -> bool:
+        """
+        Async variant of :meth:`fork_and_switch`.
+
+        Uses :meth:`load_conversation_async` so the agent selection
+        lifecycle is awaited natively.
+        """
+        new_conversation_id = self.fork_conversation(turn_number)
+        if new_conversation_id:
+            await self.load_conversation_async(new_conversation_id)
             return True
         return False
 

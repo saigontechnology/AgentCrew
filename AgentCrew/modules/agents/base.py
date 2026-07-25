@@ -46,6 +46,22 @@ class BaseAgent(ABC):
             True if deactivation was successful, False otherwise
         """
 
+    async def activate_async(self) -> bool:
+        """Async variant of :meth:`activate`.
+
+        Default implementation delegates to :meth:`activate`.
+        Subclasses with async lifecycle should override this.
+        """
+        return self.activate()
+
+    async def deactivate_async(self) -> bool:
+        """Async variant of :meth:`deactivate`.
+
+        Default implementation delegates to :meth:`deactivate`.
+        Subclasses with async lifecycle should override this.
+        """
+        return self.deactivate()
+
     @abstractmethod
     def append_message(self, messages: dict | list[dict]):
         """Append a message or list of messages to the agent's history."""

@@ -197,7 +197,12 @@ class A2AServer:
         return JSONResponse([agent.model_dump(mode="json") for agent in agents])
 
     def start(self):
-        """Start the A2A server."""
+        """Start the A2A server.
+
+        ``nest_asyncio`` is no longer applied. ``uvicorn.run()`` is safe
+        because Python 3.12+'s native ``asyncio.run()`` supports the
+        ``loop_factory`` kwarg that uvicorn passes internally.
+        """
         import uvicorn
 
         logger.info(f"Starting A2A v1 server on {self.host}:{self.port}")

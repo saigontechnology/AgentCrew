@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from AgentCrew.modules.agents.local_agent import LocalAgent
@@ -18,7 +18,7 @@ class ConversationCommands:
     def __init__(
         self,
         message_handler: MessageHandler,
-        agent_command_handler: Callable[[str], tuple[bool, str]],
+        agent_command_handler: Callable[[str], Awaitable[tuple[bool, str]]],
     ):
         self.message_handler = message_handler
         self._agent_command_handler = agent_command_handler
@@ -158,7 +158,7 @@ class ConversationCommands:
             )
             return CommandResult(handled=True, clear_flag=True)
 
-    def handle_jump(self, command: str) -> bool:
+    async def handle_jump(self, command: str) -> bool:
         """Handle the /jump command to rewind conversation to a previous turn.
 
         Usage:
@@ -228,9 +228,9 @@ class ConversationCommands:
                 None,
             )
             if last_message and last_message.get("agent", ""):
-                self._agent_command_handler(f"/agent {last_message['agent']}")
+                await self._agent_command_handler(f"/agent {last_message['agent']}")
             elif selected_message_agent:
-                self._agent_command_handler(f"/agent {selected_message_agent}")
+                await self._agent_command_handler(f"/agent {selected_message_agent}")
 
             self.message_handler.agent_manager.rebuild_agents_messages(
                 self.message_handler.streamline_messages
@@ -269,7 +269,7 @@ class ConversationCommands:
             )
             return False
 
-    def handle_fork(self, command: str) -> CommandResult:
+    async def handle_fork(self, command: str) -> CommandResult:
         """Handle the /fork command to create a conversation fork at a specific turn.
 
         Usage:
@@ -317,8 +317,10 @@ class ConversationCommands:
             selected_turn = self.message_handler.conversation_turns[turn_number - 1]
             preview = selected_turn.get_preview(100)
 
-            success = self.message_handler.conversation_manager.fork_and_switch(
-                turn_number
+            success = (
+                await self.message_handler.conversation_manager.fork_and_switch_async(
+                    turn_number
+                )
             )
             if success:
                 self.message_handler.bus.emit_sync(

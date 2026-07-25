@@ -88,16 +88,6 @@ class MCPSessionManager:
             "MCPSessionManager: Finished discovering MCPs for all enabled servers."
         )
 
-    def discover_mcps_for_agent_sync(self, agent_name: str | None = None) -> None:
-        """Sync wrapper for :meth:`discover_mcps_for_agent`.
-
-        Uses ``asyncio.run()`` — safe with ``nest_asyncio`` if called from
-        within a running event loop.
-        """
-        import asyncio
-
-        asyncio.run(self.discover_mcps_for_agent(agent_name))
-
     def discover_mcps_for_agent_background(self, agent_name: str) -> None:
         """Start MCP discovery in a background thread (non-blocking).
 
@@ -146,12 +136,6 @@ class MCPSessionManager:
                     )
                 except Exception as e:
                     logger.error(f"MCPSessionManager: Error deregistering tools: {e}")
-
-    def deregister_tools_for_agent_sync(self, agent_name: str | None = None) -> None:
-        """Sync wrapper for :meth:`deregister_tools_for_agent`."""
-        import asyncio
-
-        asyncio.run(self.deregister_tools_for_agent(agent_name))
 
     def cleanup(self):
         """Clean up all resources (no thread/loop to stop)."""

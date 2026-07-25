@@ -146,7 +146,12 @@ class AgentManager:
 
     def select_agent(self, agent_name: str) -> bool:
         """
-        Select an agent by name.
+        Select an agent by name (sync-boundary adapter).
+
+        Calls :meth:`deactivate` and :meth:`activate` synchronously.
+        Only invoke from genuine sync boundaries (startup, console UI,
+        GUI worker) where no event loop is running.
+        Async callers should use :meth:`select_agent_async` instead.
 
         Args:
             agent_name: The name of the agent to select
@@ -167,6 +172,74 @@ class AgentManager:
 
             return True
         return False
+
+    async def select_agent_async(self, agent_name: str) -> bool:
+        """
+        Async variant of :meth:`select_agent`.
+
+        Awaits old-agent deactivation and new-agent activation natively.
+        If old-agent deactivation fails or raises, the old agent remains
+        current and the method returns False.
+        If new-agent activation fails or raises, attempts to restore the
+        old agent by calling ``old_agent.activate_async()``. If
+        restoration also fails the old agent remains as ``current_agent``
+        but inactive (``is_active`` is not falsely set to True); the
+        method returns False.
+
+        Args:
+            agent_name: The name of the agent to select
+
+        Returns:
+            True if the agent was successfully selected and activated
+        """
+        if agent_name not in self.agents:
+            return False
+
+        new_agent = self.agents[agent_name]
+        old_agent = self.current_agent
+
+        if old_agent:
+            try:
+                if not await old_agent.deactivate_async():
+                    return False
+            except Exception:
+                return False
+
+        self.current_agent = new_agent
+
+        try:
+            if self.current_agent and not await self.current_agent.activate_async():
+                await self._rollback_selection(old_agent)
+                return False
+        except Exception:
+            await self._rollback_selection(old_agent)
+            return False
+
+        return True
+
+    async def _rollback_selection(self, old_agent: BaseAgent | None) -> None:
+        """Restore old agent after target activation fails.
+
+        ``old_agent.deactivate_async()`` has already cleared LLM tools,
+        tool definitions/prompts, MCP resources, and set ``is_active``
+        to False, so we must call ``activate_async()`` for genuine
+        restoration. If reactivation also fails, the old agent remains
+        ``current_agent`` but stays inactive; return False has already
+        been returned by the caller.
+        """
+        self.current_agent = old_agent
+        if old_agent:
+            try:
+                if not await old_agent.activate_async():
+                    logger.error(
+                        f"Rollback reactivation of agent '{old_agent.name}' "
+                        f"returned False — agent is current but inactive."
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Rollback reactivation of agent '{old_agent.name}' "
+                    f"raised: {e} — agent is current but inactive."
+                )
 
     def get_agent(self, agent_name: str) -> BaseAgent | None:
         """
@@ -250,88 +323,104 @@ class AgentManager:
             raise ValueError("Current agent is not set")
         return self.current_agent
 
-    def perform_transfer(self, target_agent_name: str, task: str) -> dict[str, Any]:
-        """
-        Perform a transfer to another agent.
+    def _prepare_transfer_context(
+        self, source_agent: BaseAgent | None, target_agent_name: str
+    ):
+        """Extract shared context and direct-inject messages for a transfer.
 
-        Args:
-            target_agent_name: The name of the agent to transfer to
-            reason: The reason for the transfer
-            context_summary: Optional summary of the conversation context
+        **Does not mutate** ``source_agent.shared_context_pool`` — the
+        caller must call :meth:`_commit_transfer_context` after agent
+        selection succeeds so that bookkeeping is only committed on
+        success.
 
         Returns:
-            A dictionary with the result of the transfer
+            A tuple ``(direct_injected_messages, included_conversations,
+            transfer_record, candidate_indices)`` where
         """
-        self._defered_transfer = ""
-        if target_agent_name not in self.agents:
-            raise ValueError(
-                f"Agent '{target_agent_name}' not found. Available_agents: {list(self.agents.keys())}"
-            )
-
-        source_agent = self.current_agent
-        source_agent_name = source_agent.name if source_agent else None
-
         direct_injected_messages = []
         included_conversations = []
+        candidate_indices: list[int] = []
         if source_agent:
-            if target_agent_name not in source_agent.shared_context_pool:
-                source_agent.shared_context_pool[target_agent_name] = []
+            already_shared = set(
+                source_agent.shared_context_pool.get(target_agent_name, [])
+            )
             for i, msg in enumerate(source_agent.history):
-                if (
-                    i not in source_agent.shared_context_pool[target_agent_name]
-                    and "content" in msg
+                if i in already_shared or "content" not in msg:
+                    continue
+                content = ""
+                processing_content = msg["content"]
+                if msg.get("role", "") == "tool":
+                    continue
+                if msg.get("role", "") == "user" and msg.get("tool_call_id", ""):
+                    continue
+                if isinstance(processing_content, str):
+                    content = msg.get("content", "")
+                elif (
+                    isinstance(processing_content, list) and len(processing_content) > 0
                 ):
-                    content = ""
-                    processing_content = msg["content"]
-                    if msg.get("role", "") == "tool":
+                    if "text" == processing_content[0].get("type", ""):
+                        content = processing_content[0]["text"]
+                    elif processing_content[0].get("type", "") == "image_url":
+                        direct_injected_messages.append(msg)
+                        candidate_indices.append(i)
                         continue
-                    if msg.get("role", "") == "user" and msg.get("tool_call_id", ""):
+                if content.strip():
+                    if content.startswith("Content of "):
+                        direct_injected_messages.append(msg)
+                        candidate_indices.append(i)
                         continue
-                    if isinstance(processing_content, str):
-                        content = msg.get("content", "")
-                    elif (
-                        isinstance(processing_content, list)
-                        and len(processing_content) > 0
-                    ):
-                        if "text" == processing_content[0].get("type", ""):
-                            content = processing_content[0]["text"]
-                        elif processing_content[0].get("type", "") == "image_url":
-                            direct_injected_messages.append(msg)
-                            source_agent.shared_context_pool[target_agent_name].append(
-                                i
-                            )
-                            continue
-                    if content.strip():
-                        if content.startswith(
-                            "Content of "
-                        ):  # file should be shared across agents
-                            direct_injected_messages.append(msg)
-                            # Set the new current agent
-                            source_agent.shared_context_pool[target_agent_name].append(
-                                i
-                            )
-                            continue
-                        if content.startswith("<Transfer_Request>"):
-                            continue
-                        role = (
-                            "User"
-                            if msg.get("role", "user") == "user"
-                            else source_agent.name
-                        )
-                        included_conversations.append(
-                            f"<{role}_message>{content}</{role}_message>"
-                        )
-                        source_agent.shared_context_pool[target_agent_name].append(i)
+                    if content.startswith("<Transfer_Request>"):
+                        continue
+                    role = (
+                        "User"
+                        if msg.get("role", "user") == "user"
+                        else source_agent.name
+                    )
+                    included_conversations.append(
+                        f"<{role}_message>{content}</{role}_message>"
+                    )
+                    candidate_indices.append(i)
 
-        # Record the transfer
+        source_name = source_agent.name if source_agent else "None"
         transfer_record = {
-            "from": source_agent.name if source_agent else "None",
+            "from": source_name,
             "to": target_agent_name,
-            "reason": task,
+            "reason": None,
             "included_conversations": included_conversations,
         }
-        # Set the new current agent
-        self.select_agent(target_agent_name)
+        return (
+            direct_injected_messages,
+            included_conversations,
+            transfer_record,
+            candidate_indices,
+        )
+
+    def _commit_transfer_context(
+        self,
+        source_agent: BaseAgent | None,
+        target_agent_name: str,
+        candidate_indices: list[int],
+    ) -> None:
+        """Commit candidate shared-context indices after a successful selection.
+
+        Called only after :meth:`select_agent` or :meth:`select_agent_async`
+        succeeds, so bookkeeping is never committed on failure.
+        """
+        if source_agent and candidate_indices:
+            if target_agent_name not in source_agent.shared_context_pool:
+                source_agent.shared_context_pool[target_agent_name] = []
+            source_agent.shared_context_pool[target_agent_name].extend(
+                candidate_indices
+            )
+
+    def _apply_transfer_messages(
+        self, source_agent_name: str | None, direct_injected_messages: list
+    ):
+        """Inject direct messages into the new current agent's history.
+
+        Shared helper between :meth:`perform_transfer` and
+        :meth:`perform_transfer_async`.
+        """
         if direct_injected_messages and self.current_agent:
             length_of_current_agent_history = len(self.current_agent.history)
             self.current_agent.history.extend(direct_injected_messages)
@@ -343,6 +432,53 @@ class AgentManager:
                         length_of_current_agent_history + i
                     )
 
+    async def perform_transfer_async(
+        self, target_agent_name: str, task: str
+    ) -> dict[str, Any]:
+        """
+        Async variant of :meth:`perform_transfer`.
+
+        Uses :meth:`select_agent_async` so that lifecycle transitions are
+        awaited natively. Context bookkeeping is committed only after
+        selection succeeds.
+
+        Args:
+            target_agent_name: The name of the agent to transfer to
+            task: The task/reason for the transfer
+
+        Returns:
+            A dictionary with the result of the transfer
+        """
+        self._defered_transfer = ""
+        if target_agent_name not in self.agents:
+            raise ValueError(
+                f"Agent '{target_agent_name}' not found. "
+                f"Available_agents: {list(self.agents.keys())}"
+            )
+
+        source_agent = self.current_agent
+        source_agent_name = source_agent.name if source_agent else None
+
+        (
+            direct_injected_messages,
+            _,
+            transfer_record,
+            candidate_indices,
+        ) = self._prepare_transfer_context(source_agent, target_agent_name)
+        transfer_record["reason"] = task
+
+        if not await self.select_agent_async(target_agent_name):
+            return {
+                "success": False,
+                "transfer": transfer_record,
+                "error": f"Failed to select agent '{target_agent_name}'.",
+            }
+
+        self._commit_transfer_context(
+            source_agent, target_agent_name, candidate_indices
+        )
+        self._apply_transfer_messages(source_agent_name, direct_injected_messages)
+
         return {"success": True, "transfer": transfer_record}
 
     def update_llm_service(self, llm_service):
@@ -353,13 +489,33 @@ class AgentManager:
             llm_service: The new LLM service to use
         """
 
-        # Update all other agents' LLM service but keep them deactivated
+        # Update non-current unpinned agents once
         for agent in self.agents.values():
+            if agent is self.current_agent:
+                continue
             if isinstance(agent, LocalAgent) and not agent.pinned_model_id:
                 agent.update_llm_service(llm_service)
-        # If current_agent than force update llm_service even with pinned_model_id
+        # Update current agent once, regardless of pinning
         if isinstance(self.current_agent, LocalAgent):
             self.current_agent.update_llm_service(llm_service)
+
+    async def update_llm_service_async(self, llm_service):
+        """
+        Async variant of :meth:`update_llm_service`.
+
+        Uses :meth:`LocalAgent.update_llm_service_async` so that
+        lifecycle transitions are awaited natively.
+
+        Args:
+            llm_service: The new LLM service to use
+        """
+        for agent in self.agents.values():
+            if agent is self.current_agent:
+                continue
+            if isinstance(agent, LocalAgent) and not agent.pinned_model_id:
+                await agent.update_llm_service_async(llm_service)
+        if isinstance(self.current_agent, LocalAgent):
+            await self.current_agent.update_llm_service_async(llm_service)
 
     @staticmethod
     def resolve_llm_service_from_config(agent_cfg):

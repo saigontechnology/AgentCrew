@@ -41,14 +41,23 @@ class ModelController:
         return agent
 
     def resolve_agent_name(self, agent_name: str | None) -> str:
+        """Resolve an agent name without performing lifecycle changes.
+
+        If a named agent is provided and known, returns it.
+        Otherwise falls back to the current agent, then the first
+        available LocalAgent. ACP sessions manage their own per-session
+        agent independently and do not mutate global selection.
+        """
         if agent_name and agent_name in self._agent_manager.agents:
             return agent_name
-        current_agent = self._agent_manager.get_current_agent()
-        if current_agent is not None:
-            return current_agent.name
+        try:
+            current_agent = self._agent_manager.get_current_agent()
+            if current_agent is not None:
+                return current_agent.name
+        except ValueError:
+            pass
         for name, agent in self._agent_manager.agents.items():
             if isinstance(agent, LocalAgent):
-                self._agent_manager.select_agent(name)
                 return name
         raise ValueError("No local agents are available for ACP")
 
@@ -123,7 +132,9 @@ class ModelController:
 
         new_llm_service = manager.get_service_for_model(model)
         manager.apply_model_defaults(new_llm_service, model)
-        self._get_agent(state.agent_name).update_llm_service(new_llm_service)
+        await self._get_agent(state.agent_name).update_llm_service_async(
+            new_llm_service
+        )
         state.model_id = model_id
         state.thought_level = self.validated_thought_level_for_model(
             model_id, state.thought_level

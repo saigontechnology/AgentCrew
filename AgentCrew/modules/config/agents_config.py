@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from dataclasses import dataclass, field
@@ -143,6 +144,38 @@ class AgentsConfig:
                 toml_dump(raw, f, multiline_strings=True)
             self.reload()
 
+    @staticmethod
+    def _write_file_fallback(path: str, raw: dict[str, Any]) -> None:
+        """Synchronous helper: create parent directories and write TOML file.
+
+        Separated from :meth:`write_async` so it can be offloaded to a
+        thread pool via ``asyncio.to_thread`` without blocking the event
+        loop.
+        """
+        dir_path = os.path.dirname(path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+        with open(path, "wb") as f:
+            toml_dump(raw, f, multiline_strings=True)
+
+    async def write_async(self, config_data: AgentsFileConfig) -> None:
+        """Async variant of :meth:`write`.
+
+        Persists config and calls :meth:`reload_async` for async-native
+        lifecycle updates.
+        """
+        from AgentCrew.modules.config.config_management import ConfigManagement
+
+        raw = config_data.to_dict()
+        try:
+            config = ConfigManagement(self._path)
+            config.update_config(raw, merge=False)
+            config.save_config()
+            await self.reload_async()
+        except FileNotFoundError:
+            await asyncio.to_thread(self._write_file_fallback, self._path, raw)
+            await self.reload_async()
+
     def reload(self) -> None:
         """Hot-reload all agents from the current agents.toml without restarting."""
         from AgentCrew.modules.agents import AgentManager, LocalAgent, RemoteAgent
@@ -234,6 +267,104 @@ class AgentsConfig:
             if was_active:
                 agent_manager.select_agent(agent.name)
 
+    async def reload_async(self) -> None:
+        """
+        Async variant of :meth:`reload`.
+
+        Uses async lifecycle methods (:meth:`update_llm_service_async`,
+        :meth:`select_agent_async`, :meth:`deactivate_async`) so that
+        MCP deregistration is awaited natively rather than through a
+        synchronous ``asyncio.run()`` bridge.
+        """
+        from AgentCrew.modules.agents import AgentManager, LocalAgent, RemoteAgent
+
+        agent_manager = AgentManager.get_instance()
+        new_agents_config = agent_manager.load_agents_from_config(self._path)
+        for agent_cfg in new_agents_config:
+            if agent_cfg.get("base_url"):
+                try:
+                    agent_manager.agents[agent_cfg["name"]] = RemoteAgent(
+                        agent_cfg["name"],
+                        agent_cfg["base_url"],
+                        headers=agent_cfg.get("headers", {}),
+                    )
+                except Exception as e:
+                    logger.error(str(e))
+                    continue
+
+            existing_agent = agent_manager.get_local_agent(agent_cfg["name"])
+            system_prompt = agent_cfg.get("system_prompt", "")
+            if existing_agent:
+                existing_agent.tools = agent_cfg.get("tools", [])
+                existing_agent.set_system_prompt(system_prompt)
+                existing_agent.temperature = agent_cfg.get("temperature", 0.4)
+                existing_agent.voice_enabled = (
+                    "enabled"
+                    if agent_cfg.get("voice_enabled", "disabled") == "enabled"
+                    else "disabled"
+                )
+                existing_agent.voice_id = agent_cfg.get("voice_id", None)
+                new_llm_svc = AgentManager.resolve_llm_service_from_config(agent_cfg)
+                if new_llm_svc:
+                    await existing_agent.update_llm_service_async(new_llm_svc)
+                    existing_agent.pinned_model_id = agent_cfg.get("model_id")
+                else:
+                    existing_agent.pinned_model_id = None
+            else:
+                clone_agent = agent_manager.get_current_agent()
+                if not isinstance(clone_agent, LocalAgent):
+                    clone_agent = next(
+                        agent
+                        for agent in agent_manager.agents.values()
+                        if isinstance(agent, LocalAgent)
+                    )
+
+                voice_enabled = (
+                    "enabled"
+                    if agent_cfg.get("voice_enabled", "disabled") == "enabled"
+                    else "disabled"
+                )
+                voice_id = agent_cfg.get("voice_id", None)
+
+                reload_llm_service = clone_agent.llm
+
+                new_llm_svc = AgentManager.resolve_llm_service_from_config(agent_cfg)
+                if new_llm_svc:
+                    reload_llm_service = new_llm_svc
+
+                new_agent = LocalAgent(
+                    name=agent_cfg["name"],
+                    description=agent_cfg["description"],
+                    llm_service=reload_llm_service,
+                    services=clone_agent.services,
+                    tools=agent_cfg["tools"],
+                    temperature=agent_cfg.get("temperature", None),
+                    voice_enabled=voice_enabled,
+                    voice_id=voice_id,
+                )
+                new_agent.set_system_prompt(system_prompt)
+                if new_llm_svc:
+                    new_agent.pinned_model_id = agent_cfg.get("model_id")
+                agent_manager.register_agent(new_agent)
+
+        new_agent_names = [a["name"] for a in new_agents_config]
+        old_agent_names = [n for n in agent_manager.agents if n not in new_agent_names]
+        for agent_name in old_agent_names:
+            old_agent = agent_manager.get_agent(agent_name)
+            if old_agent and old_agent.is_active:
+                await agent_manager.select_agent_async(new_agent_names[0])
+            agent_manager.deregister_agent(agent_name)
+
+        for agent in agent_manager.agents.values():
+            was_active = False
+            if agent.is_active:
+                was_active = True
+                await agent.deactivate_async()
+            if isinstance(agent, LocalAgent):
+                agent.custom_system_prompt = None
+            if was_active:
+                await agent_manager.select_agent_async(agent.name)
+
     def update_agent_system_prompt(self, agent_name: str, new_prompt: str) -> bool:
         config_data = self.read()
         agents = config_data.agents
@@ -251,6 +382,28 @@ class AgentsConfig:
             return False
 
         self.write(config_data)
+        return True
+
+    async def update_agent_system_prompt_async(
+        self, agent_name: str, new_prompt: str
+    ) -> bool:
+        """Async variant of :meth:`update_agent_system_prompt`."""
+        config_data = self.read()
+        agents = config_data.agents
+        if not isinstance(agents, list):
+            return False
+
+        updated = False
+        for agent in agents:
+            if agent.name == agent_name:
+                agent.system_prompt = new_prompt
+                updated = True
+                break
+
+        if not updated:
+            return False
+
+        await self.write_async(config_data)
         return True
 
     def export(

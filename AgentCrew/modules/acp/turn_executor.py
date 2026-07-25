@@ -34,7 +34,7 @@ class TurnExecutor:
                 conn=conn,
                 session_id=session_id,
             )
-        agent = self._get_agent(state.agent_name)
+        agent = await self._get_agent(state.agent_name)
         await self._tool_manager.ensure_tools_for_session(session_id, state)
 
         retried_count = 0
@@ -358,7 +358,7 @@ class TurnExecutor:
             state.pending_ask_tool = None
             return False
         questions = pending_ask.get("questions", [])
-        agent = self._get_agent(state.agent_name)
+        agent = await self._get_agent(state.agent_name)
 
         # Parse multi-answer response. Expected format:
         # q0: <answer1>
@@ -437,7 +437,7 @@ class TurnExecutor:
             await _kill_terminal(ctx, terminal_id)
         state.tool_state.acp_active_terminals.clear()
 
-    def _get_agent(self, agent_name: str) -> Any:
+    async def _get_agent(self, agent_name: str) -> Any:
         from AgentCrew.modules.agents import AgentManager
 
         agent_manager = AgentManager.get_instance()
@@ -445,5 +445,5 @@ class TurnExecutor:
         if agent is None:
             raise ValueError(f"Agent '{agent_name}' not found")
         if not agent.is_active:
-            agent.activate()
+            await agent.activate_async()
         return agent

@@ -61,20 +61,20 @@ class CommandProcessor:
         elif user_input.lower().startswith("/unconsolidate"):
             return await self.conversation_commands.handle_unconsolidate(user_input)
         elif user_input.lower().startswith("/jump"):
-            result = self.conversation_commands.handle_jump(user_input)
+            result = await self.conversation_commands.handle_jump(user_input)
             return CommandResult(handled=result, clear_flag=True)
         elif user_input.lower().startswith("/fork"):
-            return self.conversation_commands.handle_fork(user_input)
+            return await self.conversation_commands.handle_fork(user_input)
         elif user_input.lower().startswith("/agent_mode"):
-            return self.agent_commands.handle_agent_mode(user_input)
+            return await self.agent_commands.handle_agent_mode(user_input)
         elif user_input.lower().startswith("/agent"):
-            success, message = self.agent_commands.handle_agent(user_input)
+            success, message = await self.agent_commands.handle_agent(user_input)
             await self.message_handler.bus.emit(
                 AppEvents.AGENT_COMMAND_RESULT, success=success, message=message
             )
             return CommandResult(handled=True, clear_flag=True)
         elif user_input.lower().startswith("/model"):
-            exit_flag, clear_flag = self.model_commands.handle_model(user_input)
+            exit_flag, clear_flag = await self.model_commands.handle_model(user_input)
             return CommandResult(
                 handled=True, exit_flag=exit_flag, clear_flag=clear_flag
             )
@@ -92,7 +92,7 @@ class CommandProcessor:
         elif user_input.lower() == "/end_voice":
             return await self.voice_commands.handle_end_voice(user_input)
         elif user_input.lower() == "/toggle_transfer":
-            return self.agent_commands.handle_toggle_transfer(user_input)
+            return await self.agent_commands.handle_toggle_transfer(user_input)
 
         # Catch-all: any unrecognised /command should not fall through to the LLM
         if user_input.startswith("/"):

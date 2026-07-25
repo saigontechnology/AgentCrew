@@ -206,6 +206,54 @@ Output ONLY the complete revised system prompt. No commentary, no explanation, n
         ):
             raise ValueError(f"Failed to persist system prompt for agent: {agent.name}")
 
+        return self._apply_prompt_revision_common(
+            agent,
+            revised_prompt,
+            previous_prompt,
+            approved_summary,
+            normalized_generated_summary,
+            normalized_memory_ids,
+            edited_by_user,
+        )
+
+    async def apply_prompt_revision_async(
+        self,
+        agent: LocalAgent,
+        revised_prompt: str,
+        approved_summary: str,
+        generated_summary: str | None = None,
+        memory_ids: list[str] | None = None,
+        edited_by_user: bool = False,
+    ) -> dict[str, Any]:
+        previous_prompt = agent.get_system_prompt()
+        normalized_generated_summary = generated_summary or approved_summary
+        normalized_memory_ids = memory_ids or []
+
+        if not await self.agents_config.update_agent_system_prompt_async(
+            agent.name, revised_prompt
+        ):
+            raise ValueError(f"Failed to persist system prompt for agent: {agent.name}")
+
+        return self._apply_prompt_revision_common(
+            agent,
+            revised_prompt,
+            previous_prompt,
+            approved_summary,
+            normalized_generated_summary,
+            normalized_memory_ids,
+            edited_by_user,
+        )
+
+    def _apply_prompt_revision_common(
+        self,
+        agent: LocalAgent,
+        revised_prompt: str,
+        previous_prompt: str,
+        approved_summary: str,
+        normalized_generated_summary: str,
+        normalized_memory_ids: list[str],
+        edited_by_user: bool,
+    ) -> dict[str, Any]:
         refreshed_agent = AgentManager.get_instance().get_local_agent(agent.name)
         if isinstance(refreshed_agent, LocalAgent):
             refreshed_agent.set_system_prompt(revised_prompt)

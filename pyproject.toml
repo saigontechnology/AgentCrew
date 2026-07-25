@@ -31,7 +31,6 @@ dependencies = [
   "google-genai==1.73.1",
   "markdown==3.10.2",
   "tree-sitter-language-pack==1.12.5",
-  "nest-asyncio==1.6.0",
   "voyageai==0.3.7",
   "numpy==1.26.4; python_version < '3.13' and sys_platform == 'darwin'",
   "pywin32; sys_platform == 'win32'",

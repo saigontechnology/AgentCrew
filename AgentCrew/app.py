@@ -5,15 +5,12 @@ import sys
 from typing import Any
 
 import click
-import nest_asyncio
 from loguru import logger
 
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
 from AgentCrew.modules.llm.service_manager import ServiceManager
 from AgentCrew.setup import ApplicationSetup
-
-nest_asyncio.apply()
 
 
 class AgentCrewApplication:

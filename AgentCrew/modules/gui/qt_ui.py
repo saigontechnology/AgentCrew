@@ -404,6 +404,10 @@ class ChatWindow(QMainWindow):
             except Exception as e:
                 logger.warning(f"Exception requesting stream stop: {e}")
 
+    def toggleSidebar(self):
+        """Toggle the visibility of the conversation sidebar."""
+        self.sidebar.setVisible(not self.sidebar.isVisible())
+
     def show_context_menu(self, position):
         """Show context menu with options."""
         context_menu = QMenu(self)

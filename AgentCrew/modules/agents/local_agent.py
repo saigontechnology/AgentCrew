@@ -215,6 +215,20 @@ class LocalAgent(BaseAgent):
         self.is_active = True
         return True
 
+    def _clear_local_state(self):
+        """Clear agent's local activation state without performing MCP deregistration.
+
+        Shared helper between :meth:`deactivate` and :meth:`deactivate_async`
+        so that state mutation logic is not duplicated.
+        """
+        self._clear_tools_from_llm()
+        self.tool_definitions = {}
+        self.tool_prompts = []
+        self.mcp_resources = {}
+        self.is_active = False
+        self.mcps_loading = []
+        self._defer_tool_registration = False
+
     def deactivate(self):
         """
         Deactivate this agent by clearing all tools from the LLM service.
@@ -225,21 +239,57 @@ class LocalAgent(BaseAgent):
         if not self.llm:
             return False
 
-        self._clear_tools_from_llm()
-        self.tool_definitions = {}
-        self.tool_prompts = []
-        self.mcp_resources = {}
-        self.is_active = False
-        self.mcps_loading = []
-        self._defer_tool_registration = False
-        # Deregister MCP tools (no server shutdown needed — just remove definitions)
+        self._clear_local_state()
+        # Deregister MCP tools (sync-boundary adapter using asyncio.run)
+        # Only called from genuine sync boundaries (setup, GUI, console).
+        # Async callers (transfer, delegate, ACP, chat commands) use
+        # deactivate_async() instead.
         if not self.is_remoting_mode:
             from AgentCrew.modules.mcpclient import MCPSessionManager
 
             mcp_manager = MCPSessionManager.get_instance()
             if mcp_manager.initialized:
-                mcp_manager.deregister_tools_for_agent_sync(self.name)
+                import asyncio
+
+                asyncio.run(mcp_manager.deregister_tools_for_agent(self.name))
         return True
+
+    async def deactivate_async(self):
+        """
+        Async variant of :meth:`deactivate`.
+
+        Awaits MCP deregistration natively. Async callers (transfer,
+        delegate, ACP model switch, chat commands, conversation load)
+        should use this method to avoid ``asyncio.run()``.
+
+        Returns:
+            True if deactivation was successful, False otherwise
+        """
+        if not self.llm:
+            return False
+
+        self._clear_local_state()
+        # Deregister MCP tools natively — no sync wrapper needed
+        if not self.is_remoting_mode:
+            from AgentCrew.modules.mcpclient import MCPSessionManager
+
+            mcp_manager = MCPSessionManager.get_instance()
+            if mcp_manager.initialized:
+                await mcp_manager.deregister_tools_for_agent(self.name)
+        return True
+
+    async def activate_async(self):
+        """
+        Async variant of :meth:`activate`.
+
+        Currently delegates to the sync implementation because MCP discovery
+        already runs in a background thread. Future variants may await
+        discovery on the current event loop.
+
+        Returns:
+            True if activation was successful, False otherwise
+        """
+        return self.activate()
 
     def _register_tools_with_llm(self):
         """Register all of this agent's tools with the LLM service."""
@@ -475,6 +525,32 @@ class LocalAgent(BaseAgent):
         # Reactivate with the new LLM if it was active before
         if was_active:
             self.activate()
+
+        return True
+
+    async def update_llm_service_async(self, new_llm_service: BaseLLMService) -> bool:
+        """
+        Async variant of :meth:`update_llm_service`.
+
+        Uses :meth:`deactivate_async` and :meth:`activate_async` so that
+        MCP deregistration is awaited natively rather than through a
+        synchronous ``asyncio.run()`` bridge.
+
+        Args:
+            new_llm_service: The new LLM service to use
+
+        Returns:
+            True if the update was successful, False otherwise
+        """
+        was_active = self.is_active
+
+        if was_active:
+            await self.deactivate_async()
+
+        self.llm = new_llm_service
+
+        if was_active:
+            await self.activate_async()
 
         return True
 

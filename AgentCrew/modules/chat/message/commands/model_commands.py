@@ -17,7 +17,7 @@ class ModelCommands:
     def __init__(self, message_handler: MessageHandler):
         self.message_handler = message_handler
 
-    def handle_model(self, command: str) -> tuple[bool, bool]:
+    async def handle_model(self, command: str) -> tuple[bool, bool]:
         """
         Handle the /model command to switch models or list available models.
 
@@ -61,7 +61,9 @@ class ModelCommands:
 
                 new_llm_service = llm_manager.get_service_for_model(model)
 
-                self.message_handler.agent_manager.update_llm_service(new_llm_service)
+                await self.message_handler.agent_manager.update_llm_service_async(
+                    new_llm_service
+                )
 
                 try:
                     GlobalConfig().set_last_used_model(model_id, model.provider)
