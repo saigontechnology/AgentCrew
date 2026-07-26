@@ -3,7 +3,7 @@ import sys
 
 import click
 
-from AgentCrew.app import common_options
+from AgentCrew.setup import common_options
 
 
 def _custom_unraisable_hook(unraisable):
