@@ -4,7 +4,6 @@ Command Execution Tools
 Tool definitions and handlers for secure shell command execution.
 """
 
-import os
 from collections.abc import Callable
 from typing import Any
 
@@ -53,16 +52,10 @@ def get_run_command_tool_definition() -> dict[str, Any]:
             "type": "string",
             "description": f"Command, do not use `&` as it already a sub-process. Ex: {ex}",
         },
-        "timeout": {
-            "type": "integer",
-            "description": "Seconds (default: 5, max: 60). Returns command_id if still running.",
-            "minimum": 5,
-            "maximum": 60,
-            "default": 5,
-        },
         "working_dir": {
             "type": "string",
-            "description": f"Working directory. Current working directory is {os.getcwd()}. Use ./ for current dir.",
+            "description": "directory that command run on. Default is ./ for current dir.",
+            "default": "./",
         },
         "env_vars": {
             "type": "object",
@@ -78,7 +71,7 @@ def get_run_command_tool_definition() -> dict[str, Any]:
             "parameters": {
                 "type": "object",
                 "properties": args,
-                "required": ["command", "working_dir"],
+                "required": ["command"],
             },
         },
     }
@@ -190,19 +183,14 @@ def get_run_command_tool_handler(command_service: CommandExecutionService) -> Ca
 
     async def handle_run_command(**params) -> str | dict[str, Any]:
         command = params.get("command")
-        timeout = params.get("timeout", 5)
         working_dir = params.get("working_dir", "./")
         env_vars = params.get("env_vars")
 
         if not command:
             raise ValueError("Missing required parameter: command")
-        if timeout < 5:
-            timeout = 5
-        elif timeout > 60:
-            timeout = 60
 
         result = command_service.execute_command(
-            command=command, timeout=timeout, working_dir=working_dir, env_vars=env_vars
+            command=command, timeout=30, working_dir=working_dir, env_vars=env_vars
         )
 
         if result["status"] == "completed":

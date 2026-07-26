@@ -192,12 +192,11 @@ class LocalAgent(BaseAgent):
         self.register_tools()
 
         # Start MCP discovery in background (non-blocking) to reduce activation time
-        if not self.is_remoting_mode:
-            from AgentCrew.modules.mcpclient import MCPSessionManager
+        from AgentCrew.modules.mcpclient import MCPSessionManager
 
-            mcp_manager = MCPSessionManager.get_instance()
-            if mcp_manager.initialized:
-                mcp_manager.discover_mcps_for_agent_background(self.name)
+        mcp_manager = MCPSessionManager.get_instance()
+        if mcp_manager.initialized:
+            mcp_manager.discover_mcps_for_agent_background(self.name)
 
         system_prompt = (
             f"<Name>{self.name}</Name>\n"
@@ -244,14 +243,13 @@ class LocalAgent(BaseAgent):
         # Only called from genuine sync boundaries (setup, GUI, console).
         # Async callers (transfer, delegate, ACP, chat commands) use
         # deactivate_async() instead.
-        if not self.is_remoting_mode:
-            from AgentCrew.modules.mcpclient import MCPSessionManager
+        from AgentCrew.modules.mcpclient import MCPSessionManager
 
-            mcp_manager = MCPSessionManager.get_instance()
-            if mcp_manager.initialized:
-                import asyncio
+        mcp_manager = MCPSessionManager.get_instance()
+        if mcp_manager.initialized:
+            import asyncio
 
-                asyncio.run(mcp_manager.deregister_tools_for_agent(self.name))
+            asyncio.run(mcp_manager.deregister_tools_for_agent(self.name))
         return True
 
     async def deactivate_async(self):
@@ -270,12 +268,11 @@ class LocalAgent(BaseAgent):
 
         self._clear_local_state()
         # Deregister MCP tools natively — no sync wrapper needed
-        if not self.is_remoting_mode:
-            from AgentCrew.modules.mcpclient import MCPSessionManager
+        from AgentCrew.modules.mcpclient import MCPSessionManager
 
-            mcp_manager = MCPSessionManager.get_instance()
-            if mcp_manager.initialized:
-                await mcp_manager.deregister_tools_for_agent(self.name)
+        mcp_manager = MCPSessionManager.get_instance()
+        if mcp_manager.initialized:
+            await mcp_manager.deregister_tools_for_agent(self.name)
         return True
 
     async def activate_async(self):
@@ -298,6 +295,13 @@ class LocalAgent(BaseAgent):
     def _clear_tools_from_llm(self):
         """Clear all tools from the LLM service."""
         self._tool_registrar._clear_from_llm()
+
+    def get_tool_definition(self, tool_name: str) -> dict[str, Any] | None:
+        """Resolve the full tool definition dict for *tool_name*.
+
+        Delegates to :meth:`AgentToolRegistrar.get_tool_definition`.
+        """
+        return self._tool_registrar.get_tool_definition(tool_name)
 
     def resync_tools_to_llm(self):
         self._register_tools_with_llm()

@@ -45,7 +45,7 @@ def get_code_analysis_tool_definition() -> dict[str, Any]:
         "deep_analysis": {
             "type": "boolean",
             "description": "When true, include project notes (rules, conventions, patterns, flows) extracted in the tool result. When false, skip project notes for faster analysis.",
-            "default": True,
+            "default": False,
         },
     }
     tool_required = []
@@ -136,11 +136,11 @@ def get_file_content_tool_definition():
         },
         "start_line": {
             "type": "integer",
-            "description": "Optional. The starting line number (1-indexed) to begin reading from. If provided with end_line, only reads the specified line range.",
+            "description": "Optional. The starting line number to begin reading from. If provided with end_line, only reads the specified line range.",
         },
         "end_line": {
             "type": "integer",
-            "description": "Optional. The ending line number (1-indexed) to stop reading at. If provided with start_line, only reads the specified line range.",
+            "description": "Optional. The ending line number to stop reading at. If provided with start_line, only reads the specified line range.",
         },
     }
     tool_required = ["file_path"]

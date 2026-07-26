@@ -44,9 +44,9 @@ BLOCKED_PATTERNS = [
     r"mkfs",  # Filesystem formatting
     r"dd\s+if",  # Disk operations
     r":\(\)\{\s*:\|:\&\s*\};:",  # Fork bomb
-    r"reboot",
-    r"shutdown",
-    r"poweroff",
+    r"^reboot",
+    r"^shutdown",
+    r"^poweroff",
     r"init\s+0",
 ]
 
