@@ -96,6 +96,13 @@ def _ask_schema() -> dict[str, Any]:
 
 def create_mock_agent(tool_definitions: dict[str, Any] | None = None):
     """Create a mock agent with tool definitions."""
+    from AgentCrew.modules.tools.input_validation import (
+        extract_tool_input_schema,
+        format_unknown_tool_error_text,
+        format_validation_error_text,
+        validate_tool_input,
+    )
+
     agent = MagicMock()
     agent.name = "test_agent"
 
@@ -104,7 +111,20 @@ def create_mock_agent(tool_definitions: dict[str, Any] | None = None):
             return tool_definitions[name]
         return None
 
+    def validate_tool_use(tool_use: dict[str, Any]) -> str | None:
+        tool_name = tool_use.get("name", "")
+        tool_def = get_tool_definition(tool_name)
+        if tool_def is None:
+            return format_unknown_tool_error_text(tool_name)
+        input_schema = extract_tool_input_schema(tool_def)
+        tool_input = tool_use.get("input", {})
+        result = validate_tool_input(tool_input, input_schema)
+        if result.valid:
+            return None
+        return format_validation_error_text(tool_name, result.issues)
+
     agent.get_tool_definition = get_tool_definition
+    agent.validate_tool_use = validate_tool_use
     agent.format_message = MagicMock(return_value={"role": "tool", "content": "mocked"})
     agent.execute_tool_call = AsyncMock(return_value="executed")
     return agent
@@ -435,17 +455,24 @@ class TestExecuteToolsBatch:
 class TestSchemaErrorHandling:
     async def test_invalid_registered_schema_fails_closed(self, tool_manager):
         """A malformed registered schema must produce an error, not a crash."""
-        # Override the agent to return a bad schema
-        bad_schema = {
-            "type": "function",
-            "function": {
-                "name": "bad_tool",
-                "parameters": {"type": "invalid-type-value"},
-            },
-        }
-        tool_manager.message_handler.agent.get_tool_definition = MagicMock(
-            return_value=bad_schema
+        # Override validate_tool_use to simulate a schema-validation error
+        from AgentCrew.modules.tools.input_validation import (
+            ToolInputValidationIssue,
+            format_validation_error_text,
         )
+
+        schema_issues = [
+            ToolInputValidationIssue(
+                path="$",
+                message="Registered tool schema is invalid: 'invalid-type-value' is not valid under any of the given schemas",
+                validator="schema",
+            )
+        ]
+
+        def bad_validation(tool_use):
+            return format_validation_error_text(tool_use.get("name", ""), schema_issues)
+
+        tool_manager.message_handler.agent.validate_tool_use = bad_validation
         tool_use = _make_tool_use("bad_tool", {"arg": "val"})
         with patch.object(tool_manager, "_record_tool_result") as mock_record:
             await tool_manager.execute_tool(tool_use)

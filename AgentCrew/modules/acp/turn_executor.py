@@ -221,6 +221,23 @@ class TurnExecutor:
         for tool_use in tool_uses:
             if state.cancelled:
                 return
+
+            # --- Pre-permission/pre-start input validation ----------------
+            error_text = agent.validate_tool_use(tool_use)
+            if error_text is not None:
+                # Flush any buffered valid tools first to preserve
+                # generated tool-call/result order.
+                await flush_parallel()
+                await self.append_tool_result(
+                    session_id,
+                    state,
+                    agent,
+                    tool_use,
+                    error_text,
+                    is_error=True,
+                )
+                continue
+
             if is_sequential_tool(tool_use["name"]):
                 await flush_parallel()
                 await send_tool_started_once(tool_use)

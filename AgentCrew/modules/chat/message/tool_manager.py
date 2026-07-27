@@ -130,10 +130,46 @@ class ToolManager:
             message=result_message,
         )
 
+    def _validate_tool_use(
+        self,
+        tool_use: dict[str, Any],
+    ) -> ToolResult | None:
+        """Validate a single *tool_use* against its registered schema.
+
+        Delegates to ``agent.validate_tool_use()`` for shared logic.
+        Returns ``None`` when the tool call is valid, or an error
+        ``ToolResult`` when validation fails.
+
+        Unknown (unregistered) tools are also rejected here so they
+        fail before confirmation.
+        """
+        tool_name = tool_use.get("name", "")
+        tool_input = tool_use.get("input", {})
+
+        error_text = self.message_handler.agent.validate_tool_use(tool_use)
+        if error_text is None:
+            return None
+
+        return ToolResult(
+            tool_use=tool_use,
+            result=error_text,
+            is_error=True,
+            is_rejected=False,
+            was_executed=False,
+            resolved_name=tool_name,
+            resolved_input=tool_input,
+        )
+
     async def execute_tool(self, tool_use: dict[str, Any]):
         """Execute a tool with proper confirmation flow."""
         tool_name = tool_use["name"]
         tool_id = tool_use["id"]
+
+        # --- Pre-confirmation input validation -----------------------------
+        validation_result = self._validate_tool_use(tool_use)
+        if validation_result is not None:
+            self._record_tool_result(validation_result)
+            return
 
         if tool_name == "ask":
             try:
@@ -365,6 +401,12 @@ class ToolManager:
     async def _execute_parallel_batch(self, tool_uses: list[dict[str, Any]]):
         approved = []
         for tool_use in tool_uses:
+            # --- Pre-confirmation input validation -------------------------
+            validation_result = self._validate_tool_use(tool_use)
+            if validation_result is not None:
+                self._record_tool_result(validation_result)
+                continue
+
             approval_result = await self._needs_and_gets_approval(tool_use)
             if approval_result == "denied":
                 continue

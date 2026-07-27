@@ -303,6 +303,38 @@ class LocalAgent(BaseAgent):
         """
         return self._tool_registrar.get_tool_definition(tool_name)
 
+    def validate_tool_use(self, tool_use: dict[str, Any]) -> str | None:
+        """Validate a *tool_use* against its registered schema.
+
+        Returns ``None`` when the tool call is valid, or a formatted error
+        string when validation fails.
+
+        Unknown (unregistered) tools are also rejected here.
+        """
+        from AgentCrew.modules.tools.input_validation import (
+            extract_tool_input_schema,
+            format_unknown_tool_error_text,
+            format_validation_error_text,
+            validate_tool_input,
+        )
+
+        tool_name = tool_use.get("name", "")
+
+        # --- Unknown tool --------------------------------------------------
+        tool_def = self.get_tool_definition(tool_name)
+        if tool_def is None:
+            return format_unknown_tool_error_text(tool_name)
+
+        # --- Extract schema and validate -----------------------------------
+        input_schema = extract_tool_input_schema(tool_def)
+        tool_input = tool_use.get("input", {})
+
+        result = validate_tool_input(tool_input, input_schema)
+        if result.valid:
+            return None
+
+        return format_validation_error_text(tool_name, result.issues)
+
     def resync_tools_to_llm(self):
         self._register_tools_with_llm()
 

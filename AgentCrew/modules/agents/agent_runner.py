@@ -88,6 +88,38 @@ async def run_agent_loop(
     parallel_buffer: list[dict[str, Any]] = []
 
     for tool_use in filtered:
+        # --- Validate each tool exactly once before dispatch --------------
+        error_text = agent.validate_tool_use(tool_use)
+        if error_text is not None:
+            # Flush buffered valid tools first to preserve order
+            if parallel_buffer:
+                results = await execute_tools_in_parallel(
+                    parallel_buffer, agent.execute_tool_call
+                )
+                for r in results:
+                    msg = agent.format_message(
+                        MessageType.ToolResult,
+                        {
+                            "tool_use": r.tool_use,
+                            "tool_result": r.result,
+                            "is_error": r.is_error,
+                        },
+                    )
+                    if msg:
+                        history.append(msg)
+                parallel_buffer = []
+            error_msg = agent.format_message(
+                MessageType.ToolResult,
+                {
+                    "tool_use": tool_use,
+                    "tool_result": error_text,
+                    "is_error": True,
+                },
+            )
+            if error_msg:
+                history.append(error_msg)
+            continue
+
         if is_sequential_tool(tool_use["name"]):
             if parallel_buffer:
                 results = await execute_tools_in_parallel(

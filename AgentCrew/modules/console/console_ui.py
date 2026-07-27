@@ -476,9 +476,8 @@ class ConsoleUI:
             if ans.strip():
                 answers[key] = ans.strip()
         # If user skipped all questions, pass empty dict
-        asyncio.run(
+        if questions_id:
             self.message_handler.resolve_evolution_questions(questions_id, answers)
-        )
         self.input_handler._start_input_thread()
 
     def _on_evolution_applied(self, **data):

@@ -192,6 +192,21 @@ class AgentToolRegistrar:
             service_instance,
         )
 
+    def get_tool_definition(self, tool_name: str) -> dict[str, Any] | None:
+        """Resolve and return the full tool definition dict for *tool_name*.
+
+        Calls the stored definition function (if any) and returns the resolved
+        dictionary.  Returns ``None`` when the tool is not registered.
+        """
+        entry = self._agent.tool_definitions.get(tool_name)
+        if entry is None:
+            return None
+
+        definition_func = entry[0]
+        if callable(definition_func):
+            return definition_func()
+        return definition_func
+
     def sync_to_llm(self) -> None:
         """Push all registered tool definitions to the LLM service."""
         agent = self._agent

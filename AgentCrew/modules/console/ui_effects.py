@@ -389,8 +389,7 @@ class UIEffects:
 
         self.live = Live(
             live_panel,
-            auto_refresh=True,
-            refresh_per_second=10,
+            auto_refresh=False,
             console=self.console,
             vertical_overflow="crop",
         )
@@ -504,7 +503,7 @@ class UIEffects:
                 subtitle=subtitle if not is_thinking else None,
                 height_limit=min(height_limit, len(lines)),
             )
-            self.live.update(live_renderable)
+            self.live.update(live_renderable, refresh=True)
 
     def finish_live_update(self):
         """Stop the live update display."""

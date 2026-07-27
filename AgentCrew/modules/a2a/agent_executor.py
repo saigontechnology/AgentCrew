@@ -33,6 +33,7 @@ from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.llm.token_usage import TokenUsage
 from AgentCrew.modules.tools.parallel_executor import (
+    ToolResult,
     execute_tools_in_parallel,
     is_sequential_tool,
 )
@@ -486,6 +487,23 @@ class AgentCrewA2AExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> str:
         tool_name = tool_use["name"]
+
+        # --- Validate every tool once before any dispatch -----------------
+        error_text = agent.validate_tool_use(tool_use)
+        if error_text is not None:
+            error_message = agent.format_message(
+                MessageType.ToolResult,
+                {
+                    "tool_use": tool_use,
+                    "tool_result": error_text,
+                    "is_error": True,
+                },
+            )
+            if error_message:
+                await self.session_store.append_history(context_id, error_message)
+                history.append(error_message)
+            return ToolCallResult.CONTINUE
+
         if tool_name == "ask":
             return await self._handle_ask_tool(
                 agent, task_id, context_id, tool_use, history, event_queue
@@ -535,8 +553,33 @@ class AgentCrewA2AExecutor(AgentExecutor):
         tool_uses: list[dict[str, Any]],
         history: list[dict[str, Any]],
     ) -> None:
-        results = await execute_tools_in_parallel(tool_uses, agent.execute_tool_call)
-        for r in results:
+        if not tool_uses:
+            return
+
+        # Validate each parallel tool; collect valid for execution, record errors
+        pre_results: list[ToolResult | None] = [None] * len(tool_uses)
+        valid_indices: list[int] = []
+        for i, tu in enumerate(tool_uses):
+            err = agent.validate_tool_use(tu)
+            if err is not None:
+                pre_results[i] = ToolResult(
+                    tool_use=tu, result=err, is_error=True, was_executed=False
+                )
+            else:
+                valid_indices.append(i)
+
+        valid_tools = [tool_uses[i] for i in valid_indices]
+        exec_results = await execute_tools_in_parallel(
+            valid_tools, agent.execute_tool_call
+        )
+
+        # Interleave results in original order
+        for result_idx, orig_idx in enumerate(valid_indices):
+            pre_results[orig_idx] = exec_results[result_idx]
+
+        for r in pre_results:
+            if r is None:
+                continue
             msg = agent.format_message(
                 MessageType.ToolResult,
                 {
