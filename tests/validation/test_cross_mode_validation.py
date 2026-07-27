@@ -4,8 +4,6 @@ Covers:
 - LocalAgent.validate_tool_use() (shared contract)
 - _safe_execute() (parallel executor — no ToolInputValidationError)
 - run_agent_loop() (Job mode — validates before dispatch)
-- TaskExecutionEngine._execute_single_tool() (A2A v1 — validates all tools)
-- TaskExecutionEngine._flush_parallel() (A2A v1 — validates parallel tools)
 - AgentCrewA2AExecutor._execute_single_tool() (A2A v2 — validates all tools)
 - AgentCrewA2AExecutor._flush_parallel() (A2A v2 — validates parallel tools)
 - TurnExecutor.execute_tools() (ACP — single gate before start/permission)
@@ -309,39 +307,6 @@ class TestExactlyOnceValidation:
         )
         assert validate_count == 1, "ACP validated once"
 
-    async def test_a2a_task_engine_validates_once(self):
-        """TaskExecutionEngine validates each tool once in _execute_single_tool."""
-        from AgentCrew.modules.a2a.task_execution import TaskExecutionEngine
-
-        agent = _make_agent()
-        validate_count = 0
-        original_validate = agent.validate_tool_use
-
-        def counting_validate(tu):
-            nonlocal validate_count
-            validate_count += 1
-            return original_validate(tu)
-
-        agent.validate_tool_use = counting_validate
-
-        store = MagicMock()
-        store.append_task_history_message = AsyncMock()
-        engine = TaskExecutionEngine(store, MagicMock(), MagicMock(), MagicMock())
-        engine._append_history_message = AsyncMock()
-
-        task = MagicMock()
-        task.id = "t1"
-        task.context_id = "c1"
-        task.status = MagicMock()
-
-        await engine._execute_single_tool(
-            agent,
-            task,
-            _make_tool_use("run_command", {"command": "ls", "working_dir": "."}),
-            [],
-        )
-        assert validate_count == 1, "A2A TaskExecutionEngine validated once"
-
     async def test_a2a_executor_validates_once(self):
         """AgentCrewA2AExecutor validates each tool once in _execute_single_tool."""
         from AgentCrew.modules.a2a.agent_executor import AgentCrewA2AExecutor
@@ -509,76 +474,7 @@ class TestRunAgentLoopValidation:
 
 
 # ============================================================================
-# 6. A2A TaskExecutionEngine
-# ============================================================================
-
-
-class TestA2ATaskExecutionEngine:
-    """Invokes real ``_execute_single_tool()`` — validates ALL tools once."""
-
-    @pytest.fixture
-    def engine(self):
-        from AgentCrew.modules.a2a.task_execution import TaskExecutionEngine
-
-        store = MagicMock()
-        store.append_task_history_message = AsyncMock()
-        eng = TaskExecutionEngine(store, MagicMock(), MagicMock(), MagicMock())
-        eng._append_history_message = AsyncMock()
-        return eng
-
-    @pytest.fixture
-    def mock_task(self):
-        t = MagicMock()
-        t.id = "t1"
-        t.context_id = "c1"
-        t.status = MagicMock()
-        t.status.state = "working"
-        return t
-
-    async def test_invalid_non_ask_rejected_by_validate(self, engine, mock_task):
-        """Invalid non-ask → validate_tool_use returns error, no handler."""
-        agent = _make_agent()
-        tool_use = _make_tool_use("run_command", {})
-
-        from AgentCrew.modules.a2a.task_execution import ToolCallResult
-
-        result = await engine._execute_single_tool(agent, mock_task, tool_use, [])
-        assert result == ToolCallResult.CONTINUE
-        assert engine._append_history_message.called
-        msg = engine._append_history_message.call_args[0][1]
-        assert msg["is_error"] is True
-        # Handler must not be called
-        assert not agent.execute_tool_call.called
-
-    async def test_invalid_ask_does_not_enter_input_required(self, engine, mock_task):
-        """Invalid ask → CONTINUE, no input-required."""
-        agent = _make_agent()
-        tool_use = _make_tool_use("ask", {})
-
-        from AgentCrew.modules.a2a.task_execution import ToolCallResult
-
-        with patch.object(engine, "_handle_ask_tool") as mock_handle:
-            result = await engine._execute_single_tool(agent, mock_task, tool_use, [])
-        assert result == ToolCallResult.CONTINUE
-        assert not mock_handle.called
-        assert mock_task.status.state == "working"
-
-    async def test_valid_ask_calls_handle(self, engine, mock_task):
-        """Valid ask → calls _handle_ask_tool."""
-        agent = _make_agent()
-        tool_use = _make_tool_use(
-            "ask", {"questions": [{"question": "Go?", "guided_answers": ["Y", "N"]}]}
-        )
-
-        with patch.object(engine, "_handle_ask_tool", AsyncMock()) as mock_handle:
-            mock_handle.return_value = "input_required"
-            result = await engine._execute_single_tool(agent, mock_task, tool_use, [])
-        assert result == "input_required"
-        assert mock_handle.called
-
-
-# ============================================================================
-# 7. A2A AgentCrewA2AExecutor
+# 6. A2A AgentCrewA2AExecutor
 # ============================================================================
 
 
@@ -646,7 +542,7 @@ class TestA2AExecutor:
 
 
 # ============================================================================
-# 8. ACP TurnExecutor
+# 7. ACP TurnExecutor
 # ============================================================================
 
 

@@ -100,10 +100,5 @@ def create_agent_card(agent: Any, base_url: str) -> AgentCard:
                 protocol_version="1.0",
                 url=base_url,
             ),
-            AgentInterface(
-                protocol_binding="JSONRPC",
-                protocol_version="0.3",
-                url=base_url,
-            ),
         ],
     )

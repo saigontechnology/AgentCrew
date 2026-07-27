@@ -109,22 +109,21 @@ class TestA2AServerCards:
         assert "supportedInterfaces" in data
         assert data["name"] == "stub"
 
-    def test_v03_card(self, server):
+    def test_v1_card_advertises_only_v1_interface(self, server):
+        """supportedInterfaces must contain only JSONRPC 1.0, no v0.3."""
         client = ASGITestClient(server.app)
-        resp = client.get("/stub/.well-known/agent.json")
-        assert resp.status_code == 200
+        resp = client.get("/stub/.well-known/agent-card.json")
         data = resp.json()
-        assert "url" in data
-        assert data["preferredTransport"] == "jsonrpc"
+        interfaces = data.get("supportedInterfaces", [])
+        assert len(interfaces) == 1
+        assert interfaces[0]["protocolVersion"] == "1.0"
+        assert interfaces[0]["protocolBinding"] == "JSONRPC"
 
-    def test_v03_card_has_required_fields(self, server):
-        """v0.3 JS client requires top-level url, preferredTransport, protocolVersion."""
+    def test_legacy_agent_json_returns_404(self, server):
+        """Legacy v0.3 /agent.json endpoint must be absent (404)."""
         client = ASGITestClient(server.app)
         resp = client.get("/stub/.well-known/agent.json")
-        data = resp.json()
-        assert "protocolVersion" in data or "protocol_version" in data
-        assert data.get("url", "").endswith("/stub/")
-        assert "name" in data
+        assert resp.status_code == 404
 
     def test_agents_list(self, server):
         client = ASGITestClient(server.app)

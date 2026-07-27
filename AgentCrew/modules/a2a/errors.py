@@ -2,7 +2,7 @@
 A2A-specific error code helpers for proper error handling.
 
 This module provides convenience functions for creating A2A-specific errors
-with contextual data according to the A2A protocol v0.3.0 specification.
+with contextual data according to the A2A protocol v1.0 specification.
 
 Error Codes (Section 8.2):
 - -32001: TaskNotFoundError

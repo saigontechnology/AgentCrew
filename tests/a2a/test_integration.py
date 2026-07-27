@@ -2,7 +2,7 @@
 Integration tests for the A2A v1 server with SDK route factories.
 
 Tests: server lifecycle, card endpoints, JSON-RPC, streaming, task lookup,
-cancel, input-required resume, durable stores, v0.3 card compat.
+cancel, input-required resume, durable stores.
 """
 
 from __future__ import annotations
@@ -138,11 +138,6 @@ def agent_card():
                 protocol_version="1.0",
                 url="http://127.0.0.1:0/test_agent/",
             ),
-            AgentInterface(
-                protocol_binding="JSONRPC",
-                protocol_version="0.3",
-                url="http://127.0.0.1:0/test_agent/",
-            ),
         ],
         capabilities=AgentCapabilities(streaming=True),
         default_input_modes=["text/plain"],
@@ -194,9 +189,7 @@ class TestServerBasics:
 
         routes = []
         routes.extend(create_agent_card_routes(agent_card))
-        routes.extend(
-            create_jsonrpc_routes(handler, rpc_url="/", enable_v0_3_compat=True)
-        )
+        routes.extend(create_jsonrpc_routes(handler, rpc_url="/"))
 
         app = Starlette(routes=routes)
         url, server_task = await _start_server(app)
@@ -210,11 +203,10 @@ class TestServerBasics:
                 assert "supportedInterfaces" in data
                 assert data["name"] == "test_agent"
 
-            # Fetch v0.3 compat card
+            # Legacy v0.3 endpoint must be absent
             async with httpx.AsyncClient() as c:
-                # The SDK route returns v1 card under the default path
                 r = await c.get(f"{url}/.well-known/agent.json")
-                assert r.status_code == 200
+                assert r.status_code == 404
         finally:
             server_task.cancel()
             try:
@@ -282,9 +274,7 @@ class TestServerBasics:
         )
 
         routes = create_agent_card_routes(agent_card)
-        routes.extend(
-            create_jsonrpc_routes(handler, rpc_url="/", enable_v0_3_compat=True)
-        )
+        routes.extend(create_jsonrpc_routes(handler, rpc_url="/"))
 
         app = Starlette(routes=routes)
         url, server_task = await _start_server(app)
@@ -299,11 +289,17 @@ class TestServerBasics:
                         "message": {
                             "role": "ROLE_USER",
                             "parts": [{"text": "hello"}],
+                            "messageId": "test-msg-1",
                         },
                         "configuration": {},
                     },
                 }
-                r = await c.post(url, json=req, timeout=10)
+                r = await c.post(
+                    url,
+                    json=req,
+                    timeout=10,
+                    headers={"A2A-Version": "1.0"},
+                )
                 assert r.status_code == 200
                 data = r.json()
                 # May be a streaming response — check for result.task or result.message
@@ -441,9 +437,7 @@ class TestRemoteAgentClient:
         )
 
         routes = create_agent_card_routes(agent_card)
-        routes.extend(
-            create_jsonrpc_routes(handler, rpc_url="/", enable_v0_3_compat=True)
-        )
+        routes.extend(create_jsonrpc_routes(handler, rpc_url="/"))
         app = Starlette(routes=routes)
         url, server_task = await _start_server(app)
 

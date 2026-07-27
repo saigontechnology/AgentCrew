@@ -114,15 +114,10 @@ class TestAgentCard:
                     protocol_version="1.0",
                     url="http://localhost:41241/agent/",
                 ),
-                AgentInterface(
-                    protocol_binding="JSONRPC",
-                    protocol_version="0.3",
-                    url="http://localhost:41241/agent/",
-                ),
             ],
             capabilities=AgentCapabilities(streaming=True),
         )
-        assert len(card.supported_interfaces) == 2
+        assert len(card.supported_interfaces) == 1
         assert card.supported_interfaces[0].protocol_binding == "JSONRPC"
         assert card.supported_interfaces[0].protocol_version == "1.0"
 

@@ -5,7 +5,6 @@ Key design:
 - Per-agent mounts with SDK route factories (agent card + JSON-RPC).
 - Proper ASGI lifespan: stores close, handlers drain via aclose().
 - Durable TaskStore (memory/file/redis) wired via --store-type.
-- v0.3 card routes at well-known paths for JS client compatibility.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from a2a.server.routes import (
     create_agent_card_routes,
     create_jsonrpc_routes,
 )
-from google.protobuf.json_format import MessageToDict
 from loguru import logger
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -121,7 +119,6 @@ class A2AServer:
             logger.warning(f"Agent {agent_name} not found or not a LocalAgent")
             return []
 
-        agent_url = f"{self.exposed_url}/{agent_name}/"
         card = self.agent_registry.get_agent_card(agent_name)
         if not card:
             logger.warning(f"No agent card for {agent_name}")
@@ -145,47 +142,15 @@ class A2AServer:
         )
         self._handlers.append(handler)
 
-        from starlette.routing import Route as StarRoute
-
         # Standard v1 card route (SDK factory)
         agent_routes: list[BaseRoute] = []
         agent_routes.extend(create_agent_card_routes(card))
 
-        # v0.3 compatible card at well-known paths
-        async def v03_card(request: Request):
-            """Return a v0.3-compatible card with top-level url/preferredTransport.
-            Required by @a2a-js/sdk 0.3.x which cannot parse supportedInterfaces.
-            """
-            d = MessageToDict(card)
-            v03 = {
-                "protocolVersion": "0.3.0",
-                "name": d.get("name", ""),
-                "description": d.get("description", ""),
-                "url": agent_url,
-                "preferredTransport": "jsonrpc",
-                "capabilities": d.get("capabilities", {}),
-                "skills": d.get("skills", []),
-                "defaultInputModes": d.get("defaultInputModes", ["text/plain"]),
-                "defaultOutputModes": d.get("defaultOutputModes", ["text/plain"]),
-            }
-            if "provider" in d:
-                v03["provider"] = d["provider"]
-            if "version" in d:
-                v03["version"] = d["version"]
-            return JSONResponse(v03)
-
-        # v0.3 compatible card ONLY at /.well-known/agent.json (not agent-card.json)
-        # The v1 SDK route handles /.well-known/agent-card.json above.
-        agent_routes.append(
-            StarRoute("/.well-known/agent.json", v03_card, methods=["GET"])
-        )
-
-        # JSON-RPC route with v0.3 compat
+        # JSON-RPC route — v1 only
         agent_routes.extend(
             create_jsonrpc_routes(
                 handler,
                 rpc_url="/",
-                enable_v0_3_compat=True,
             )
         )
 
