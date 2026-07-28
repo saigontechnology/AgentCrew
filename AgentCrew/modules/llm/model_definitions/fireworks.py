@@ -1,3 +1,9 @@
+"""Fireworks AI model definitions.
+
+This module only imports `Model` — no heavy service dependencies.
+Loaded independently of the custom_llm service package.
+"""
+
 from AgentCrew.modules.llm.types import Model, SampleParam
 
 FIREWORKS_MODELS = [

@@ -1,3 +1,9 @@
+"""Claude model definitions by Anthropic.
+
+This module only imports `Model` — no heavy service dependencies.
+Loaded independently of the anthropic service package.
+"""
+
 from AgentCrew.modules.llm.types import Model
 
 ANTHROPIC_MODELS = [

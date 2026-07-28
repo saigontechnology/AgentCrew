@@ -1,3 +1,8 @@
+"""OpenAI Codex model definitions (ChatGPT subscription OAuth).
+
+This module only imports `Model` — no heavy service dependencies.
+"""
+
 from AgentCrew.modules.llm.types import Model
 
 OPENAI_CODEX_MODELS = [

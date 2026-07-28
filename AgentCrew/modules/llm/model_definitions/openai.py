@@ -1,3 +1,9 @@
+"""OpenAI model definitions.
+
+This module only imports `Model` — no heavy service dependencies.
+Loaded independently of the openai service package.
+"""
+
 from AgentCrew.modules.llm.types import Model
 
 OPENAI_MODELS = [

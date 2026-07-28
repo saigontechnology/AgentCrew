@@ -1,3 +1,4 @@
+import importlib
 import os
 
 from loguru import logger
@@ -7,8 +8,6 @@ from AgentCrew.modules.config.global_config import GlobalConfig
 from .types import Model
 
 # Mapping of provider/service names to their required API key environment variables.
-# Models whose provider (or resolved service_name) maps to a key that is not set
-# in the environment will be skipped during registration.
 PROVIDER_API_KEY_MAP: dict[str, str] = {
     "claude": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -24,6 +23,41 @@ PROVIDER_API_KEY_MAP: dict[str, str] = {
     "copilot_response": "GITHUB_COPILOT_API_KEY",
     "commandcode": "COMMAND_CODE_API_KEY",
     "commandcode_anthropic": "COMMAND_CODE_API_KEY",
+}
+
+# Mapping of provider name → (module_path, variable_name) for lazy-loading
+# model definitions.  Only providers whose API key is available are loaded
+# during initialization; others are loaded on demand when first requested.
+PROVIDER_MODEL_MODULES: dict[str, tuple[str, str]] = {
+    "claude": ("AgentCrew.modules.llm.model_definitions.anthropic", "ANTHROPIC_MODELS"),
+    "openai": ("AgentCrew.modules.llm.model_definitions.openai", "OPENAI_MODELS"),
+    "openai_codex": (
+        "AgentCrew.modules.llm.model_definitions.openai_codex",
+        "OPENAI_CODEX_MODELS",
+    ),
+    "google": ("AgentCrew.modules.llm.model_definitions.google", "GOOGLE_MODELS"),
+    "deepinfra": (
+        "AgentCrew.modules.llm.model_definitions.deepinfra",
+        "DEEPINFRA_MODELS",
+    ),
+    "crofai": ("AgentCrew.modules.llm.model_definitions.crofai", "CROFAI_MODELS"),
+    "together": ("AgentCrew.modules.llm.model_definitions.together", "TOGETHER_MODELS"),
+    "opencode_go": (
+        "AgentCrew.modules.llm.model_definitions.opencode",
+        "OPENCODE_GO_MODELS",
+    ),
+    "fireworks": (
+        "AgentCrew.modules.llm.model_definitions.fireworks",
+        "FIREWORKS_MODELS",
+    ),
+    "github_copilot": (
+        "AgentCrew.modules.llm.model_definitions.github_copilot",
+        "GITHUB_COPILOT_MODELS",
+    ),
+    "commandcode": (
+        "AgentCrew.modules.llm.model_definitions.commandcode",
+        "COMMANDCODE_MODELS",
+    ),
 }
 
 
@@ -48,6 +82,7 @@ class ModelRegistry:
 
         self.models: dict[str, Model] = {}
         self.current_model: Model | None = None
+        self._loaded_providers: set[str] = set()
         self._initialize_models()
 
     @classmethod
@@ -77,6 +112,31 @@ class ModelRegistry:
             return None
         return model.force_sample_params
 
+    def _load_provider_models(self, provider: str) -> None:
+        """Lazily load models for a specific provider if not already loaded.
+
+        This allows runtime loading of models for providers whose API key
+        was not available at startup (e.g. the user set it later).
+        """
+        if provider in self._loaded_providers:
+            return
+
+        module_info = PROVIDER_MODEL_MODULES.get(provider)
+        if module_info is None:
+            return  # Unknown or custom provider
+
+        module_path, attr_name = module_info
+        try:
+            mod = importlib.import_module(module_path)
+            models = getattr(mod, attr_name, [])
+            for model in models:
+                self.register_model(model)
+            self._loaded_providers.add(provider)
+        except Exception as e:
+            logger.warning(
+                f"Failed to lazily load models for provider '{provider}': {e}"
+            )
+
     def _load_custom_models_from_config(self):
         """Loads models from custom LLM provider configurations and registers them."""
         try:
@@ -104,36 +164,30 @@ class ModelRegistry:
                 f"Error loading custom LLM providers configuration for models: {e}"
             )
 
-    def _is_provider_available(self, model: Model) -> bool:
-        """Check whether the provider for a given model has its API key available."""
-        # Resolve the effective service name (falls back to provider).
-        service_name = model.resolved_service_name()
-        # Check both the service_name and the provider for an API key mapping.
-        env_var = PROVIDER_API_KEY_MAP.get(service_name) or PROVIDER_API_KEY_MAP.get(
-            model.provider
-        )
-        if env_var is None:
-            # No mapping means the provider is always available
-            # (e.g. openai_codex uses OAuth, custom providers use their own config).
-            return True
-        return bool(os.getenv(env_var))
-
     def _initialize_models(self):
-        """Initialize the registry with default and custom models."""
-        # Lazily import to avoid circular dependencies between provider
-        # service modules and the LLM registry.
-        from .constants import AVAILABLE_MODELS
+        """Initialize the registry with models for providers whose API keys are available.
 
-        # Load and register built-in models, filtering out those whose
-        # provider API key is not available in the environment.
-        for model in AVAILABLE_MODELS:
-            if self._is_provider_available(model):
-                self.register_model(model)
-            else:
+        Instead of importing all provider model modules upfront (which is expensive
+        due to Pydantic model construction), this loads only the modules for
+        providers whose required API key is present in the environment.
+        """
+        for provider, (module_path, attr_name) in PROVIDER_MODEL_MODULES.items():
+            # Check if this provider's API key is available
+            env_var = PROVIDER_API_KEY_MAP.get(provider)
+            if env_var is not None and not os.getenv(env_var):
                 logger.info(
-                    f"Skipping model {model.provider}/{model.id} ({model.name}): "
-                    f"provider API key not set"
+                    f"Skipping provider '{provider}': API key {env_var} not set"
                 )
+                continue
+
+            try:
+                mod = importlib.import_module(module_path)
+                models = getattr(mod, attr_name, [])
+                for model in models:
+                    self.register_model(model)
+                self._loaded_providers.add(provider)
+            except Exception as e:
+                logger.warning(f"Failed to load models for provider '{provider}': {e}")
 
         # Load and register custom models from the configuration file
         self._load_custom_models_from_config()
@@ -169,12 +223,17 @@ class ModelRegistry:
         """
         Get all models for a specific provider.
 
+        Models are loaded lazily — if the provider's model module hasn't been
+        imported yet (e.g. the API key was set after startup), it is loaded
+        on demand.
+
         Args:
             provider: The provider name
 
         Returns:
             list of models for the provider
         """
+        self._load_provider_models(provider)
         return [model for model in self.models.values() if model.provider == provider]
 
     def set_current_model(self, full_qualified_model_id: str) -> bool:
