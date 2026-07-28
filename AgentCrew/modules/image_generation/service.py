@@ -22,27 +22,37 @@ class ImageGenerationService:
 
     DEFAULT_OUTPUT_DIR = ".agentcrew/images"
 
+    _PROVIDER_FACTORIES: tuple[type[BaseImageProvider], ...] | None = None
+
+    @classmethod
+    def _get_provider_classes(cls) -> tuple[type[BaseImageProvider], ...]:
+        """Lazily import and return provider classes.
+
+        Importing provider modules triggers heavy SDK imports (google.genai,
+        openai, etc.) so we defer this until first actual use.
+        """
+        if cls._PROVIDER_FACTORIES is None:
+            from .providers.deepinfra_provider import DeepInfraImageProvider
+            from .providers.gemini_provider import GeminiImageProvider
+            from .providers.openai_provider import OpenAIImageProvider
+
+            cls._PROVIDER_FACTORIES = (
+                GeminiImageProvider,
+                OpenAIImageProvider,
+                DeepInfraImageProvider,
+            )
+        return cls._PROVIDER_FACTORIES
+
     def __init__(self, output_dir: str | None = None):
         self._prompt_builder = MetaPromptBuilder()
         self._output_dir = output_dir or self.DEFAULT_OUTPUT_DIR
-        self._providers: list[BaseImageProvider] = []
-        self._initialize_providers()
+        self._providers: list[BaseImageProvider] | None = None
 
-    def _initialize_providers(self) -> None:
-        """Initialize providers in priority order."""
-        from .providers.deepinfra_provider import DeepInfraImageProvider
-        from .providers.gemini_provider import GeminiImageProvider
-        from .providers.openai_provider import OpenAIImageProvider
-
-        self._providers = [
-            GeminiImageProvider(),
-            OpenAIImageProvider(),
-            DeepInfraImageProvider(),
-        ]
-
-    def has_any_provider(self) -> bool:
-        """Check if at least one provider is available."""
-        return any(p.is_available() for p in self._providers)
+    def _get_providers(self) -> list[BaseImageProvider]:
+        """Lazily initialize and return provider instances."""
+        if self._providers is None:
+            self._providers = [cls() for cls in self._get_provider_classes()]
+        return self._providers
 
     async def generate_image(
         self,
@@ -75,7 +85,7 @@ class ImageGenerationService:
         reference_images = meta_prompt.get("images")
 
         last_error: str | None = None
-        for provider in self._providers:
+        for provider in self._get_providers():
             if not provider.is_available():
                 continue
 

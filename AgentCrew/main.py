@@ -2,6 +2,7 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 
 import click
 import requests
@@ -245,6 +246,89 @@ def version_is_older(current: str, latest: str) -> bool:
         return current != latest
 
 
+def _start_version_check_background(
+    current_version: str | None,
+) -> tuple[dict[str, object], threading.Thread]:
+    """Start a background thread to check for updates via the GitHub API.
+
+    The network call runs in a daemon thread so it does not block startup.
+    Caller should join the returned thread before accessing the result dict.
+
+    Returns:
+        Tuple of (result_dict, thread). The result dict is populated with:
+            - ``latest``: latest version string (or None)
+            - ``notes``: release notes (or None)
+            - ``is_newer``: bool (or not present if check failed)
+            - ``error``: error message (only present if check failed)
+    """
+    result: dict[str, object] = {}
+
+    def _check() -> None:
+        try:
+            latest_version, release_notes = get_latest_release_info()
+            result["latest"] = latest_version
+            result["notes"] = release_notes
+            if latest_version and current_version:
+                result["is_newer"] = version_is_older(current_version, latest_version)
+        except Exception as e:
+            result["error"] = str(e)
+
+    thread = threading.Thread(target=_check, daemon=True)
+    thread.start()
+    return result, thread
+
+
+def _show_version_result(result: dict[str, object]) -> bool:
+    """Display the version check result and optionally prompt for an update.
+
+    Args:
+        result: The result dict populated by ``_start_version_check_background``.
+
+    Returns:
+        True if the caller should exit (user chose to update), False otherwise.
+    """
+    if "error" in result:
+        click.echo(f"\u26a0\ufe0f  Update check failed: {result['error']}", err=True)
+        return False
+
+    latest = result.get("latest")
+    if not latest:
+        return False
+
+    if result.get("is_newer"):
+        release_notes = result.get("notes", "")
+        system = platform.system().lower()
+
+        click.echo("\n" + "=" * 60)
+        click.echo("\U0001f504 New version available!")
+        click.echo(f"Latest version: {latest}")
+        click.echo("=" * 60)
+
+        if release_notes:
+            click.echo("\n\U0001f4dd Release Notes:")
+            click.echo("-" * 40)
+            click.echo(release_notes)
+            click.echo("-" * 40 + "\n")
+
+        if system in ("linux", "darwin"):
+            if click.confirm("\nDo you want to update now?", default=False):
+                click.echo("\U0001f504 Starting update...")
+                run_update_command()
+                return True
+            click.echo("\u23ed\ufe0f Skipping update. Starting application...")
+        else:
+            command = (
+                "uv tool install --python=3.12 --reinstall agentcrew-ai[cpu]@latest "
+                "--index https://download.pytorch.org/whl/cpu "
+                "--index-strategy unsafe-best-match"
+            )
+            click.echo(f"Run the following command to update:\n\n{command}")
+    else:
+        click.echo(f"\u2705 You are running the latest version ({latest})")
+
+    return False
+
+
 def run_update_command():
     """Run the appropriate update command based on the operating system"""
     try:
@@ -303,7 +387,13 @@ def chat(
     trusted_project_plugins,
 ):
     """Start an interactive chat session with LLM"""
-    check_and_update()
+    current_version = get_current_version()
+    click.echo(f"AgentCrew version: {current_version or 'unknown'}")
+
+    # Start version check in a background thread so the network call
+    # runs in parallel with application setup (~1.2s).
+    version_result, version_thread = _start_version_check_background(current_version)
+
     from AgentCrew.app import AgentCrewApplication
 
     if memory_path:
@@ -318,6 +408,13 @@ def chat(
             console = True
     except ImportError:
         console = True
+
+    # Wait for version check to complete (it ran in parallel with setup)
+    version_thread.join(timeout=5.0)
+
+    # Show result before starting the console/GUI
+    if _show_version_result(version_result):
+        sys.exit(0)
 
     if console:
         app.run_console(
