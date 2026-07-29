@@ -20,6 +20,18 @@ FIREWORKS_MODELS = [
         output_token_price_1m=3.48,
     ),
     Model(
+        id="accounts/fireworks/models/kimi-k3",
+        provider="fireworks",
+        name="Kimi K3",
+        description="Kimi K3 on Fireworks - 2.8T MoE flagship model with 1M context, native vision, and always-on reasoning",
+        capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
+        force_sample_params=SampleParam(temperature=1.0),
+        max_context_token=1_000_000,
+        input_token_price_1m=3.00,
+        cached_token_price_1m=0.30,
+        output_token_price_1m=15.00,
+    ),
+    Model(
         id="accounts/fireworks/models/kimi-k2p6",
         provider="fireworks",
         name="Kimi K2.6",

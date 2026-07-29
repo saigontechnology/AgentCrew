@@ -4,7 +4,7 @@ This module only imports `Model` — no heavy service dependencies.
 Loaded independently of the together service package.
 """
 
-from AgentCrew.modules.llm.types import Model
+from AgentCrew.modules.llm.types import Model, SampleParam
 
 TOGETHER_MODELS = [
     Model(
@@ -89,6 +89,18 @@ TOGETHER_MODELS = [
         capabilities=["tool_use", "vision", "stream", "structured_output"],
         input_token_price_1m=0.3,
         output_token_price_1m=1.2,
+    ),
+    Model(
+        id="moonshotai/Kimi-K3",
+        provider="together",
+        name="Kimi K3",
+        description="MoonshotAI Kimi K3 on Together AI - 2.8T MoE flagship model with 1M context, native vision, and always-on reasoning",
+        capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
+        force_sample_params=SampleParam(temperature=1.0),
+        max_context_token=1_000_000,
+        input_token_price_1m=3.00,
+        cached_token_price_1m=0.30,
+        output_token_price_1m=15.00,
     ),
     Model(
         id="moonshotai/Kimi-K2.7-Code",
