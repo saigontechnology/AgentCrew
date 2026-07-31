@@ -30,19 +30,14 @@ def convert_a2a_message_to_agent(message: Message) -> dict[str, Any]:
         if part.HasField("text"):
             content.append({"type": "text", "text": part.text})
         elif part.HasField("raw"):
-            # Raw bytes — decode to string or keep as bytes
-            try:
-                text = part.raw.decode("utf-8", errors="replace")
-                content.append({"type": "text", "text": text})
-            except (UnicodeDecodeError, AttributeError):
-                content.append(
-                    {
-                        "type": "file",
-                        "file_data": part.raw,
-                        "file_name": part.filename or "file",
-                        "mime_type": part.media_type or "application/octet-stream",
-                    }
-                )
+            content.append(
+                {
+                    "type": "file",
+                    "file_data": part.raw,
+                    "file_name": part.filename or "file",
+                    "mime_type": part.media_type or "application/octet-stream",
+                }
+            )
         elif part.HasField("url"):
             content.append(
                 {

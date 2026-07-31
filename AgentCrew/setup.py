@@ -423,12 +423,14 @@ class ApplicationSetup:
             image_generation_service = ImageGenerationService()
             # Defer provider SDK imports — quick check using env vars and file existence
             _codex_auth_path = os.path.expanduser("~/.codex/auth.json")
-            if not any((
-                os.getenv("OPENAI_API_KEY"),
-                os.getenv("GEMINI_API_KEY"),
-                os.getenv("DEEPINFRA_API_KEY"),
-                os.path.isfile(_codex_auth_path),
-            )):
+            if not any(
+                (
+                    os.getenv("OPENAI_API_KEY"),
+                    os.getenv("GEMINI_API_KEY"),
+                    os.getenv("DEEPINFRA_API_KEY"),
+                    os.path.isfile(_codex_auth_path),
+                )
+            ):
                 click.echo(
                     "⚠️  Image generation tool not available:"
                     " No image generation provider found.\n"
