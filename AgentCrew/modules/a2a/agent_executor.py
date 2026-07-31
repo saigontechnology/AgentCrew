@@ -171,6 +171,34 @@ class AgentCrewA2AExecutor(AgentExecutor):
             self._file_handler = FileHandler()
         return self._file_handler
 
+    def _build_answer_state(
+        self,
+        context: RequestContext,
+        task_id: str,
+    ) -> AnswerArtifactState:
+        """Build AnswerArtifactState from persisted task snapshot.
+
+        Checks context.current_task.artifacts to determine if an answer
+        artifact already exists. Sets emitted=True only when the artifact
+        is found; otherwise leaves it False so the next chunk creates it.
+        """
+        artifact_id = f"answer_{task_id}"
+        state = AnswerArtifactState(artifact_id=artifact_id)
+
+        task = context.current_task
+        if task is None:
+            return state
+
+        for artifact in task.artifacts:
+            if artifact.artifact_id == artifact_id:
+                state.emitted = True
+                state.accumulated_text = "".join(
+                    part.text for part in artifact.parts if part.HasField("text")
+                )
+                break
+
+        return state
+
     def _convert_message_to_agent(
         self, context: RequestContext
     ) -> dict[str, Any] | None:
@@ -836,11 +864,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
             await self.session_store.append_history(context_id, tool_result_msg)
             history.append(tool_result_msg)
 
-        # Create answer state that continues from where we left off
-        answer_state = AnswerArtifactState(artifact_id=f"answer_{task_id}")
-        answer_state.emitted = (
-            True  # answer may have prior chunks, so next is append=true
-        )
+        answer_state = self._build_answer_state(context, task_id)
 
         if remaining_tools:
             for remaining_tool in remaining_tools:

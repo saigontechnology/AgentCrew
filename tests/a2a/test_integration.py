@@ -697,3 +697,212 @@ class TestExecutorScope:
 
         await executor._cleanup_cancel("task-a")
         await executor._cleanup_cancel("task-b")
+
+
+class TestResumeFromInputRequired:
+    """Regression tests for artifact append-before-create on resume."""
+
+    @pytest.mark.asyncio
+    async def test_resume_without_existing_artifact_uses_append_false(self):
+        """When no answer artifact exists in current_task, first resumed chunk must use append=False."""
+        from a2a.server.agent_execution import RequestContext
+        from a2a.server.context import ServerCallContext
+
+        from AgentCrew.modules.a2a.agent_executor import (
+            AgentCrewA2AExecutor,
+        )
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+
+        task_id = "test-task-no-artifact"
+        context_id = "test-ctx-no-artifact"
+
+        # Create a task with no artifacts
+        persisted_task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_INPUT_REQUIRED),
+            artifacts=[],
+        )
+
+        # Create request context with the persisted task
+        call_ctx = ServerCallContext()
+        ctx = RequestContext(
+            call_context=call_ctx,
+            task_id=task_id,
+            context_id=context_id,
+            task=persisted_task,
+        )
+
+        store = InMemorySessionStore()
+        executor = AgentCrewA2AExecutor(agent=MagicMock(), session_store=store)
+
+        # Call _build_answer_state
+        answer_state = executor._build_answer_state(ctx, task_id)
+
+        # Assert: emitted must be False since no artifact exists
+        assert answer_state.emitted is False, (
+            "emitted should be False when no answer artifact exists in current_task"
+        )
+        assert answer_state.artifact_id == f"answer_{task_id}"
+        assert answer_state.accumulated_text == ""
+
+    @pytest.mark.asyncio
+    async def test_resume_with_existing_artifact_uses_append_true(self):
+        """When answer artifact exists in current_task, first resumed chunk must use append=True."""
+        from a2a.server.agent_execution import RequestContext
+        from a2a.server.context import ServerCallContext
+
+        from AgentCrew.modules.a2a.agent_executor import AgentCrewA2AExecutor
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+
+        task_id = "test-task-with-artifact"
+        context_id = "test-ctx-with-artifact"
+
+        # Create a task with an existing answer artifact
+        persisted_task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_INPUT_REQUIRED),
+            artifacts=[
+                Artifact(
+                    artifact_id=f"answer_{task_id}",
+                    parts=[Part(text="Hello from before the ask")],
+                )
+            ],
+        )
+
+        call_ctx = ServerCallContext()
+        ctx = RequestContext(
+            call_context=call_ctx,
+            task_id=task_id,
+            context_id=context_id,
+            task=persisted_task,
+        )
+
+        store = InMemorySessionStore()
+        executor = AgentCrewA2AExecutor(agent=MagicMock(), session_store=store)
+
+        answer_state = executor._build_answer_state(ctx, task_id)
+
+        # Assert: emitted must be True since artifact exists
+        assert answer_state.emitted is True, (
+            "emitted should be True when answer artifact exists in current_task"
+        )
+        assert answer_state.artifact_id == f"answer_{task_id}"
+        assert answer_state.accumulated_text == "Hello from before the ask"
+
+    @pytest.mark.asyncio
+    async def test_resume_with_none_task_uses_append_false(self):
+        """When current_task is None, emitted must default to False (safe protocol default)."""
+        from a2a.server.agent_execution import RequestContext
+        from a2a.server.context import ServerCallContext
+
+        from AgentCrew.modules.a2a.agent_executor import AgentCrewA2AExecutor
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+
+        task_id = "test-task-none-task"
+        context_id = "test-ctx-none-task"
+
+        call_ctx = ServerCallContext()
+        ctx = RequestContext(
+            call_context=call_ctx,
+            task_id=task_id,
+            context_id=context_id,
+            task=None,
+        )
+
+        store = InMemorySessionStore()
+        executor = AgentCrewA2AExecutor(agent=MagicMock(), session_store=store)
+
+        answer_state = executor._build_answer_state(ctx, task_id)
+
+        assert answer_state.emitted is False
+        assert answer_state.accumulated_text == ""
+
+    @pytest.mark.asyncio
+    async def test_resume_with_multiple_parts_accumulates_text(self):
+        """When answer artifact has multiple text parts, accumulated_text concatenates them."""
+        from a2a.server.agent_execution import RequestContext
+        from a2a.server.context import ServerCallContext
+
+        from AgentCrew.modules.a2a.agent_executor import AgentCrewA2AExecutor
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+
+        task_id = "test-task-multi-parts"
+        context_id = "test-ctx-multi-parts"
+
+        persisted_task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_INPUT_REQUIRED),
+            artifacts=[
+                Artifact(
+                    artifact_id=f"answer_{task_id}",
+                    parts=[
+                        Part(text="First chunk "),
+                        Part(text="Second chunk"),
+                    ],
+                )
+            ],
+        )
+
+        call_ctx = ServerCallContext()
+        ctx = RequestContext(
+            call_context=call_ctx,
+            task_id=task_id,
+            context_id=context_id,
+            task=persisted_task,
+        )
+
+        store = InMemorySessionStore()
+        executor = AgentCrewA2AExecutor(agent=MagicMock(), session_store=store)
+
+        answer_state = executor._build_answer_state(ctx, task_id)
+
+        assert answer_state.emitted is True
+        assert answer_state.accumulated_text == "First chunk Second chunk"
+
+    @pytest.mark.asyncio
+    async def test_other_artifacts_do_not_trigger_emitted(self):
+        """Artifacts with non-answer IDs must not set emitted=True for the answer artifact."""
+        from a2a.server.agent_execution import RequestContext
+        from a2a.server.context import ServerCallContext
+
+        from AgentCrew.modules.a2a.agent_executor import AgentCrewA2AExecutor
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+
+        task_id = "test-task-other-artifacts"
+        context_id = "test-ctx-other-artifacts"
+
+        persisted_task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_INPUT_REQUIRED),
+            artifacts=[
+                Artifact(
+                    artifact_id=f"tool_{task_id}",
+                    parts=[Part(text="tool result")],
+                ),
+                Artifact(
+                    artifact_id=f"thinking_{task_id}",
+                    parts=[Part(text="thinking")],
+                ),
+            ],
+        )
+
+        call_ctx = ServerCallContext()
+        ctx = RequestContext(
+            call_context=call_ctx,
+            task_id=task_id,
+            context_id=context_id,
+            task=persisted_task,
+        )
+
+        store = InMemorySessionStore()
+        executor = AgentCrewA2AExecutor(agent=MagicMock(), session_store=store)
+
+        answer_state = executor._build_answer_state(ctx, task_id)
+
+        # Only answer artifact ID should count
+        assert answer_state.emitted is False
+        assert answer_state.accumulated_text == ""
