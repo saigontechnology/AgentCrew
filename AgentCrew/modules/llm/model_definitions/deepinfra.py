@@ -229,4 +229,16 @@ DEEPINFRA_MODELS = [
         cached_token_price_1m=0.028,
         output_token_price_1m=0.28,
     ),
+    Model(
+        id="deepseek-ai/DeepSeek-V4-Flash-0731",
+        provider="deepinfra",
+        name="DeepSeek V4 Flash 0731",
+        description="DeepSeek-V4-Flash-0731 on DeepInfra — official release of DeepSeek-V4-Flash superseding the preview, with substantially enhanced agentic capabilities",
+        capabilities=["tool_use", "thinking", "stream", "structured_output"],
+        vision_model="google/gemma-4-31B-it",
+        max_context_token=448_576,
+        input_token_price_1m=0.09,
+        cached_token_price_1m=0.018,
+        output_token_price_1m=0.18,
+    ),
 ]

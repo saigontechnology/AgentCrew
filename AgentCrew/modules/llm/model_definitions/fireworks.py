@@ -20,6 +20,18 @@ FIREWORKS_MODELS = [
         output_token_price_1m=3.48,
     ),
     Model(
+        id="accounts/fireworks/models/deepseek-v4-flash-0731",
+        provider="fireworks",
+        name="DeepSeek V4 Flash 0731",
+        description="DeepSeek-V4-Flash-0731 on Fireworks — official GA release of V4 Flash with substantially enhanced agentic capabilities",
+        capabilities=["tool_use", "thinking", "stream", "structured_output"],
+        vision_model="accounts/fireworks/models/minimax-m3",
+        max_context_token=448_576,
+        input_token_price_1m=0.14,
+        cached_token_price_1m=0.028,
+        output_token_price_1m=0.28,
+    ),
+    Model(
         id="accounts/fireworks/models/kimi-k3",
         provider="fireworks",
         name="Kimi K3",
