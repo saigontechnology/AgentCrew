@@ -56,3 +56,46 @@ class TokenUsage:
         if self.cache_creation_tokens:
             parts.append(f"cache_write={self.cache_creation_tokens}")
         return f"TokenUsage({', '.join(parts)})"
+
+
+@dataclass
+class ConversationUsage:
+    """Cumulative per-agent token/cost usage for the active conversation.
+
+    This is deliberately separate from :class:`TokenUsage`, which describes a
+    single LLM request or turn (and whose ``merge`` semantics are tailored to
+    request/recursive accumulation rather than generic cumulative counting).
+    One completed turn is folded into a conversation tracker exactly once via
+    :meth:`add`, and the tracker is reset when a new conversation starts (or
+    is loaded).
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    cache_creation_tokens: int = 0
+    total_input_tokens: int = 0
+    cost: float = 0.0
+
+    @property
+    def total_tokens(self) -> int:
+        """All tokens consumed (total input + output)."""
+        return self.total_input_tokens + self.output_tokens
+
+    def add(
+        self,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+        total_input_tokens: int = 0,
+        cost: float = 0.0,
+    ) -> None:
+        """Accumulate one completed turn's usage into this conversation tracker."""
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+        self.cached_tokens += cached_tokens
+        self.cache_creation_tokens += cache_creation_tokens
+        self.total_input_tokens += total_input_tokens
+        self.cost += cost

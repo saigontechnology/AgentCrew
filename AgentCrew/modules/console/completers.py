@@ -363,6 +363,10 @@ class ChatCompleter(Completer):
             ("/think", "Show or set thinking budget (usage: /think [budget])"),
             ("/usage", "Show current provider usage limits"),
             (
+                "/stats",
+                "Show per-agent token usage and cost for the current conversation (usage: /stats)",
+            ),
+            (
                 "/consolidate",
                 "Consolidate conversation messages (usage: /consolidate [count])",
             ),

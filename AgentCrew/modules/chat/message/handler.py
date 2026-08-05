@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 import traceback
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -80,6 +80,9 @@ class MessageHandler:
         self.current_user_input = None
         self.current_user_input_idx = -1
         self.last_assisstant_response_idx = -1
+        # Per-turn, per-agent ledger of raw LLM request usage for /stats.
+        self._turn_usage_ledger: dict[Any, list[TokenUsage]] = {}
+        self._turn_usage_committed: dict[Any, int] = {}
         self.file_handler: FileHandler | None = None
         self._queued_attached_files = []
         self.stream_generator = None
@@ -292,12 +295,33 @@ class MessageHandler:
             user_input = content
         return user_input
 
+    def _record_turn_request_usage(self, agent, token_usage: TokenUsage) -> None:
+        """Add one raw completed LLM request to the per-turn usage ledger.
+
+        Requests are keyed by the agent that actually executed them, so a
+        mid-turn transfer or deferred continuation is attributed to the agent
+        that consumed the tokens. Empty usages are skipped because they carry
+        no accounting weight.
+        """
+        if not token_usage:
+            return
+        from AgentCrew.modules.agents.local_agent import LocalAgent
+
+        if not isinstance(agent, LocalAgent):
+            return
+        self._turn_usage_ledger.setdefault(agent, []).append(token_usage)
+
     def _finalize_current_turn(
         self,
         token_usage: TokenUsage,
         store_memory: bool,
     ) -> list[dict]:
+        """Finalize the current turn (persistence, memory, usage tracking).
 
+        Args:
+            token_usage: The merged turn-level token usage.
+            store_memory: Whether memory should be stored for this turn.
+        """
         messages_for_this_turn = self._get_messages_for_current_turn()
 
         if self.current_conversation_id and messages_for_this_turn:
@@ -345,6 +369,17 @@ class MessageHandler:
             self.current_user_input_idx = -1
 
         self.last_assisstant_response_idx = len(self.streamline_messages)
+
+        # Commit only uncommitted per-agent request usage from the turn ledger.
+        # Raw requests are attributed to the agent that executed each one, so
+        # transfers and deferred continuations are accounted per agent and
+        # repeated finalization is idempotent.
+        for agent, requests in self._turn_usage_ledger.items():
+            committed = self._turn_usage_committed.get(agent, 0)
+            for usage in requests[committed:]:
+                agent.record_conversation_usage(usage)
+            self._turn_usage_committed[agent] = len(requests)
+
         return messages_for_this_turn
 
     MAX_EMPTY_RESPONSE_RETRIES = 5
@@ -380,6 +415,7 @@ class MessageHandler:
             nonlocal tool_uses, token_usage
             tool_uses = _tool_uses
             token_usage = token_usage.merge(_token_usage)
+            self._record_turn_request_usage(request_agent, _token_usage)
             # keep tracking token usage in middle of stream
             if self.persistent_service and self.current_conversation_id and token_usage:
                 metadata = {
@@ -393,7 +429,10 @@ class MessageHandler:
                 )
 
         try:
-            self.stream_generator = self.agent.process_messages(callback=process_result)
+            request_agent = self.agent
+            self.stream_generator = request_agent.process_messages(
+                callback=process_result
+            )
             stream_iter = self.stream_generator.__aiter__()
 
             async def get_next_stream_item():
@@ -773,6 +812,10 @@ class MessageHandler:
     ) -> tuple[str | None, TokenUsage]:
         if token_usage is None:
             token_usage = TokenUsage()
+            # Fresh user turn: open a new per-agent usage ledger. Recursive
+            # responses pass a non-None token_usage and keep the same ledger.
+            self._turn_usage_ledger = {}
+            self._turn_usage_committed = {}
         loop = asyncio.get_running_loop()
         session = self._create_stream_session()
         task = loop.create_task(

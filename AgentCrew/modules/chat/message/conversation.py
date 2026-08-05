@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from AgentCrew.modules.agents import RemoteAgent
+from AgentCrew.modules.agents import LocalAgent, RemoteAgent
 from AgentCrew.modules.chat.history import ConversationTurn
 from AgentCrew.modules.events import AppEvents
 
@@ -41,6 +41,9 @@ class ConversationManager:
                 self.message_handler.memory_service.loaded_conversation = False
                 self.message_handler.memory_service.clear_conversation_context()
             self.message_handler.agent_manager.clean_agents_messages()
+            for agent in self.message_handler.agent_manager.agents.values():
+                if isinstance(agent, LocalAgent):
+                    agent.reset_conversation_usage()
             self.message_handler.streamline_messages = []
             self.message_handler.conversation_turns = []  # Clear jump history
             self.message_handler.last_assisstant_response_idx = 0
@@ -151,10 +154,16 @@ class ConversationManager:
             self.message_handler.streamline_messages
         )
 
+        # Loaded conversations only persist the last turn's token metadata, so
+        # historical per-agent breakdowns cannot be reconstructed reliably.
+        # Per-agent conversation usage therefore restarts from zero on load.
+        for agent in self.message_handler.agent_manager.agents.values():
+            if isinstance(agent, LocalAgent):
+                agent.reset_conversation_usage()
+
         self.message_handler.last_assisstant_response_idx = len(
             self.message_handler.streamline_messages
         )
-
         self.message_handler.conversation_turns = []
 
         for i, message in enumerate(self.message_handler.streamline_messages):
@@ -180,8 +189,6 @@ class ConversationManager:
                     and not message_content.startswith("<Transfer_Request>")
                 ):
                     self.store_conversation_turn(message_content, i)
-
-        from AgentCrew.modules.agents import LocalAgent
 
         logger.info(f"Loaded conversation {conversation_id}")
         token_usage = None

@@ -17,7 +17,20 @@ async def run_agent_loop(
     *,
     tool_filter: Callable[[dict[str, Any]], bool] | None = None,
     prior_token_usage: TokenUsage | None = None,
+    request_usage_callback: Callable[[TokenUsage], None] | None = None,
 ) -> tuple[str, TokenUsage]:
+    """Run a full agent loop, returning the final response and merged usage.
+
+    Args:
+        agent: The agent to execute the loop for.
+        history: The conversation history for the loop.
+        tool_filter: Optional filter applied to tool calls before execution.
+        prior_token_usage: Usage merged from earlier segments of the same loop.
+        request_usage_callback: Optional hook invoked with each raw completed
+            LLM request's TokenUsage before it is merged into the returned
+            control-flow usage. Used by local-agent delegation to attribute
+            consumption to the registered target agent.
+    """
     current_response = ""
     thinking_content = ""
     thinking_signature = ""
@@ -29,6 +42,8 @@ async def run_agent_loop(
         nonlocal tool_uses, token_usage
         tool_uses = _tool_uses
         token_usage = token_usage.merge(_token_usage)
+        if request_usage_callback is not None:
+            request_usage_callback(_token_usage)
 
     async for (
         response_message,
@@ -56,7 +71,11 @@ async def run_agent_loop(
         # Prevent agent loop exit with empty response
         if current_response.strip() == "":
             return await run_agent_loop(
-                agent, history, tool_filter=tool_filter, prior_token_usage=token_usage
+                agent,
+                history,
+                tool_filter=tool_filter,
+                prior_token_usage=token_usage,
+                request_usage_callback=request_usage_callback,
             )
         return current_response, token_usage
 
@@ -193,5 +212,9 @@ async def run_agent_loop(
                 history.append(msg)
 
     return await run_agent_loop(
-        agent, history, tool_filter=tool_filter, prior_token_usage=token_usage
+        agent,
+        history,
+        tool_filter=tool_filter,
+        prior_token_usage=token_usage,
+        request_usage_callback=request_usage_callback,
     )

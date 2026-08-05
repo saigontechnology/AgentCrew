@@ -29,6 +29,7 @@ COMMAND_HELP_MESSAGES = [
     "Use '/think 0' or '/think none' to disable thinking mode.",
     "Use '/model [model_id]' to switch models or list available models.",
     "Use '/usage' to show current provider usage limits.",
+    "Use '/stats' to show per-agent token usage and cost for the current conversation.",
     "Use '/debug [agent|chat|system]' to show debug information.",
     "Use '/copy <number>' to copy the nth-latest assistant response to clipboard.",
     "Use '/jump <turn_number>' to rewind the conversation to a previous turn.",

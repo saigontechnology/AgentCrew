@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from loguru import logger
 
-from AgentCrew.modules.llm.token_usage import TokenUsage
+from AgentCrew.modules.llm.token_usage import ConversationUsage, TokenUsage
 
 from .base import BaseAgent, MessageType
 
@@ -63,6 +63,7 @@ class LocalAgent(BaseAgent):
         self.is_remoting_mode: bool = is_remoting_mode
         self.pinned_model_id: str | None = None
         self.token_usage = TokenUsage()
+        self.conversation_usage = ConversationUsage()
         self.voice_enabled: Literal["enabled", "disabled"] = normalize_voice_enabled(
             voice_enabled
         )
@@ -535,6 +536,33 @@ class LocalAgent(BaseAgent):
             if self.llm
             else 0
         )
+
+    def record_conversation_usage(self, token_usage: TokenUsage) -> None:
+        """Fold one completed turn's usage into this agent's conversation tracker.
+
+        Called exactly once per completed turn at turn finalization. Cost is
+        computed here against the agent's current LLM pricing, so display code
+        never needs to re-estimate prices. ``token_usage`` is the turn-level
+        merged usage already accumulated by the message handler across any
+        recursive tool-call requests.
+        """
+        cost = self.calculate_usage_cost(
+            token_usage.input_tokens,
+            token_usage.output_tokens,
+            token_usage.cached_tokens,
+        )
+        self.conversation_usage.add(
+            input_tokens=token_usage.input_tokens,
+            output_tokens=token_usage.output_tokens,
+            cached_tokens=token_usage.cached_tokens,
+            cache_creation_tokens=token_usage.cache_creation_tokens,
+            total_input_tokens=token_usage.total_input_tokens,
+            cost=cost,
+        )
+
+    def reset_conversation_usage(self) -> None:
+        """Reset this agent's conversation tracker (new/loaded conversation)."""
+        self.conversation_usage = ConversationUsage()
 
     def get_model(self) -> str:
         return f"{self.llm.provider_name}/{self.llm.model}" if self.llm else ""

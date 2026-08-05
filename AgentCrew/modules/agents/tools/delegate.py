@@ -141,6 +141,7 @@ def get_delegate_tool_handler(agent_manager: AgentManager) -> Callable:
                 agent=clone,
                 history=delegate_history,
                 tool_filter=lambda t: t["name"] not in ["transfer", "delegate"],
+                request_usage_callback=target_agent.record_conversation_usage,
             )
 
             return f"## Result from {target_agent_name}:\n\n{response}"

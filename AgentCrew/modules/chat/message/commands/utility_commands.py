@@ -11,6 +11,9 @@ from AgentCrew.modules.chat.message.commands.copy_utils import (
     get_copyable_assistants,
 )
 from AgentCrew.modules.events import AppEvents
+from AgentCrew.modules.llm.token_usage import ConversationUsage
+
+CONTEXT_BAR_LENGTH = 20
 
 if TYPE_CHECKING:
     from AgentCrew.modules.chat.message import MessageHandler
@@ -175,6 +178,148 @@ class UtilityCommands:
             await self.message_handler.bus.emit(
                 AppEvents.ERROR, message=f"Failed to retrieve usage: {e!s}"
             )
+        return CommandResult(handled=True, clear_flag=True)
+
+    @staticmethod
+    def _format_number(value: Any) -> str:
+        """Format an integer token count with thousands separators."""
+        try:
+            return f"{int(value):,}"
+        except (TypeError, ValueError):
+            return "0"
+
+    @staticmethod
+    def _format_cost(value: Any) -> str:
+        """Format a USD cost for display."""
+        try:
+            return f"${float(value):.4f}"
+        except (TypeError, ValueError):
+            return "$0.0000"
+
+    @classmethod
+    def _format_context_bar(cls, remaining_percent: float) -> str:
+        """Render a 20-cell context bar showing how much context is left.
+
+        Filled cells represent the remaining fraction, matching the
+        ``[████████░░░░░░░░░░░░] 38% left`` display style.
+        """
+        filled = round(remaining_percent / 100 * CONTEXT_BAR_LENGTH)
+        filled = max(0, min(CONTEXT_BAR_LENGTH, filled))
+        bar = "█" * filled + "░" * (CONTEXT_BAR_LENGTH - filled)
+        return f"[{bar}] {remaining_percent:.0f}% left"
+
+    @classmethod
+    def _context_usage(cls, agent) -> tuple[int | None, int, int | None, float | None]:
+        """Resolve an agent's context-window stats.
+
+        Returns ``(context_limit, occupied, remaining, remaining_percent)``.
+        ``context_limit``/``remaining`` are ``None`` when the model limit is
+        unknown. ``occupied`` is the agent's current prompt input usage
+        (context occupancy, not cumulative session consumption) and is clamped
+        to zero from below.
+        """
+        from AgentCrew.modules.llm.model_registry import ModelRegistry
+
+        model = ModelRegistry.get_instance().get_model(agent.get_model())
+        limit = model.max_context_token if model else None
+        occupied = max(0, int(getattr(agent.token_usage, "total_input_tokens", 0) or 0))
+        if limit is None:
+            return None, occupied, None, None
+        remaining = max(0, limit - occupied)
+        return limit, occupied, remaining, (remaining / limit) * 100
+
+    @classmethod
+    def _format_agent_stats(cls, agent, is_current: bool) -> str:
+        """Format one local agent's cumulative stats block."""
+        usage = getattr(agent, "conversation_usage", ConversationUsage())
+        name = f"* {agent.name} (current)" if is_current else f"  {agent.name}"
+        limit, occupied, _, percent = cls._context_usage(agent)
+        if limit is None:
+            context_line = (
+                f"Context: unknown limit | occupied: {cls._format_number(occupied)}"
+            )
+        else:
+            context_line = (
+                f"Context: {cls._format_context_bar(percent)} "
+                f"({cls._format_number(limit)} limit | "
+                f"{cls._format_number(occupied)} occupied)"
+            )
+        return "\n".join(
+            [
+                name,
+                f"  Model: {agent.get_model() or 'unknown'}",
+                (
+                    "  Tokens: "
+                    f"{cls._format_number(usage.input_tokens)} in | "
+                    f"{cls._format_number(usage.output_tokens)} out | "
+                    f"{cls._format_number(usage.cached_tokens)} cached | "
+                    f"{cls._format_number(usage.cache_creation_tokens)} cache-write | "
+                    f"{cls._format_number(usage.total_tokens)} total"
+                ),
+                f"  Cost: {cls._format_cost(usage.cost)}",
+                f"  {context_line}",
+            ]
+        )
+
+    @classmethod
+    def _format_stats_message(cls, agents: dict, current_agent_name: str) -> str:
+        """Render the /stats report for the current conversation.
+
+        Only local agents that recorded usage in this conversation are listed;
+        unused or remote agents are omitted. The final block aggregates the
+        per-agent cumulative token categories and cost. Context-window
+        capacities are not summed because each agent owns an independent
+        context window.
+        """
+        from AgentCrew.modules.agents import LocalAgent
+
+        involved = [
+            agent
+            for agent in agents.values()
+            if isinstance(agent, LocalAgent)
+            and agent.conversation_usage.total_tokens > 0
+        ]
+        lines = ["Token usage for the current conversation (per agent):"]
+        totals = ConversationUsage()
+        for agent in involved:
+            lines.append("")
+            usage = agent.conversation_usage
+            totals.add(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cached_tokens=usage.cached_tokens,
+                cache_creation_tokens=usage.cache_creation_tokens,
+                total_input_tokens=usage.total_input_tokens,
+                cost=usage.cost,
+            )
+            lines.append(
+                cls._format_agent_stats(agent, agent.name == current_agent_name)
+            )
+        lines.append("")
+        lines.append("Current conversation total:")
+        lines.append(
+            "  Tokens: "
+            f"{cls._format_number(totals.input_tokens)} in | "
+            f"{cls._format_number(totals.output_tokens)} out | "
+            f"{cls._format_number(totals.cached_tokens)} cached | "
+            f"{cls._format_number(totals.cache_creation_tokens)} cache-write | "
+            f"{cls._format_number(totals.total_tokens)} total"
+        )
+        lines.append(f"  Cost: {cls._format_cost(totals.cost)}")
+        return "\n".join(lines)
+
+    def handle_stats(self, user_input: str) -> CommandResult:
+        """Handle the /stats command: per-agent token usage and cost.
+
+        Reports cumulative per-agent token/cost usage for the active
+        conversation, per-local-agent context-window occupancy/remaining, and
+        the aggregate current-conversation total.
+        """
+        agent_manager = self.message_handler.agent_manager
+        agents = getattr(agent_manager, "agents", None) or {}
+        current_agent_name = getattr(self.message_handler.agent, "name", "")
+        message = self._format_stats_message(agents, current_agent_name)
+        self.message_handler.bus.emit_sync(AppEvents.SYSTEM_MESSAGE, message=message)
         return CommandResult(handled=True, clear_flag=True)
 
     async def handle_copy(self, user_input: str) -> CommandResult:
