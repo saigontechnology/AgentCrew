@@ -18,7 +18,7 @@ class FileCommands:
     def __init__(self, message_handler: MessageHandler):
         self.message_handler = message_handler
 
-    def handle_file(self, user_input: str) -> CommandResult:
+    async def handle_file(self, user_input: str) -> CommandResult:
         """Handle file command with support for multiple files."""
         file_paths_str: str = user_input[6:].strip()
         file_paths: list[str] = [
@@ -40,7 +40,9 @@ class FileCommands:
         for file_path in file_paths:
             if self.message_handler.file_handler is None:
                 self.message_handler.file_handler = FileHandler()
-            file_content = self.message_handler.file_handler.process_file(file_path)
+            file_content = await self.message_handler.file_handler.async_process_file(
+                file_path
+            )
 
             if file_content:
                 all_file_contents.append(file_content)

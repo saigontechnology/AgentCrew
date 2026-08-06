@@ -6,6 +6,7 @@ to change providers, add a new agent, connect external tools, or tune
 performance.
 
 > **When to use this guide:**
+>
 > - Setting up a new provider for the first time
 > - Adding a new agent with specific tools and instructions
 > - Connecting external services via MCP
@@ -15,8 +16,8 @@ performance.
 ## Configuration Files
 
 AgentCrew stores all configuration in `~/.AgentCrew/` (or
-`%USERPROFILE%\.AgentCrew\` on Windows). You can edit these files directly
-or manage them through the GUI settings panel.
+`%USERPROFILE%\.AgentCrew\` on Windows). You can edit these files directly or
+manage them through the GUI settings panel.
 
 ```
 ~/.AgentCrew/
@@ -29,6 +30,7 @@ or manage them through the GUI settings panel.
 ```
 
 > **When to edit each file:**
+>
 > - `config.json` — changing providers, API keys, themes, global preferences
 > - `agents.toml` — creating, modifying, or removing agents
 > - `mcp_servers.json` — connecting external tools via MCP
@@ -61,12 +63,15 @@ and budget options are listed first:
 
 **Required Keys:**
 
-- At least one AI provider key (CrofAI, DeepInfra, OpenAI, Gemini, Anthropic, etc.)
+- At least one AI provider key (CrofAI, DeepInfra, OpenAI, Gemini, Anthropic,
+  etc.)
 
 **Optional Keys:**
 
-- `CROFAI_API_KEY` — For CrofAI, an open-source friendly OpenAI-compatible provider
-- `CROFAI_BASE_URL` — Optional CrofAI endpoint override (defaults to `https://crof.ai/v1`)
+- `CROFAI_API_KEY` — For CrofAI, an open-source friendly OpenAI-compatible
+  provider
+- `CROFAI_BASE_URL` — Optional CrofAI endpoint override (defaults to
+  `https://crof.ai/v1`)
 - `TAVILY_API_KEY` — For web search capabilities
 - `VOYAGE_API_KEY` — For alternative embedding provider
 - `ELEVENLABS_API_KEY` — For voice synthesis
@@ -74,8 +79,10 @@ and budget options are listed first:
 **Getting API Keys:**
 
 - **CrofAI:** <https://crof.ai/> — open-source friendly, low-cost
-- **DeepInfra:** <https://deepinfra.com/dash/api_keys> — open models (LLaMA, Qwen)
-- **OpenCode Go:** Subscription-based, no API key — run `agentcrew chat --provider opencode_go`
+- **DeepInfra:** <https://deepinfra.com/dash/api_keys> — open models (LLaMA,
+  Qwen)
+- **OpenCode Go:** Subscription-based, no API key — run
+  `agentcrew chat --provider opencode_go`
 - **Command Code:** Subscription-based — curated frontier models
 - **OpenAI:** <https://platform.openai.com/api-keys>
 - **Google Gemini:** <https://aistudio.google.com/apikey> — free tier available
@@ -157,7 +164,8 @@ Add OpenAI-compatible providers like llama.cpp, Ollama, or LM Studio:
 
 - `id` - Unique model identifier
 - `name` - Human-readable model name
-- `provider` - (Optional) Override provider name; defaults to parent provider `name`
+- `provider` - (Optional) Override provider name; defaults to parent provider
+  `name`
 - `description` - Model description
 - `capabilities` - List of capability flags (see below)
 - `default` - Whether this is the default model for the provider
@@ -167,8 +175,10 @@ Add OpenAI-compatible providers like llama.cpp, Ollama, or LM Studio:
 - `default_reasoning` - Default reasoning/thinking level
   - Options: `null`, `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`
 - `max_context_token` - Maximum context window in tokens (default: `72000`)
-- `service_name` - Override the LLM service class name; leave `null` to use the provider name
-- `force_sample_params` - Override sampling parameters for this model (see below)
+- `service_name` - Override the LLM service class name; leave `null` to use the
+  provider name
+- `force_sample_params` - Override sampling parameters for this model (see
+  below)
   - `temperature` - Sampling temperature (0.0–5.0)
   - `top_p` - Nucleus sampling threshold (0.0–1.0)
   - `min_p` - Minimum probability threshold (0.0–1.0)
@@ -212,10 +222,12 @@ Control UI appearance, system behavior, and context management:
   - `false` — Prompt for approval before each tool use (safer)
   - Default: `false`
 
-- `auto_context_shrink` — Automatically shrink tool results to stay within the model's context window
-  - **How it works:** When the total input tokens exceed 85% of the model's maximum
-    context limit, AgentCrew starts replacing verbose tool result content with a
-    compact placeholder that shows only the tool name and its arguments (e.g.,
+- `auto_context_shrink` — Automatically shrink tool results to stay within the
+  model's context window
+  - **How it works:** When the total input tokens exceed 85% of the model's
+    maximum context limit, AgentCrew starts replacing verbose tool result
+    content with a compact placeholder that shows only the tool name and its
+    arguments (e.g.,
     `[tool:web_search(query=latest python ...) was truncated]`). The last 10
     messages are always kept intact regardless of token usage.
   - `true` — Enable automatic shrinking (recommended for long conversations)
@@ -224,9 +236,9 @@ Control UI appearance, system behavior, and context management:
 
 - `shrink_excluded` — List of tool names that should never have their results
   shrunk, even when `auto_context_shrink` is enabled
-  - **When to use:** Some tools return critical data that the agent needs in full
-    (e.g., `search_memory`, `read_file`, `web_search`). Adding them here preserves
-    their results.
+  - **When to use:** Some tools return critical data that the agent needs in
+    full (e.g., `search_memory`, `read_file`, `web_search`). Adding them here
+    preserves their results.
   - **Note:** `activate_skill` and `search_memory` are always excluded
     automatically and do not need to be listed here.
   - Example: `["web_search", "read_file", "code_analysis"]`
@@ -239,12 +251,12 @@ AgentCrew discovers plugins by scanning two filesystem directories:
 - `.agentcrew/plugins/` — **project-based plugins** (higher precedence)
 - `~/.AgentCrew/plugins/` — **global plugins** (fallback)
 
-Each entry may be a ``.py`` file (single-file plugin) or a subdirectory
-containing ``main.py`` (project plugin). Plugin directories are
-auto-created on first discovery. No configuration file is required.
+Each entry may be a `.py` file (single-file plugin) or a subdirectory containing
+`main.py` (project plugin). Plugin directories are auto-created on first
+discovery. No configuration file is required.
 
 **Security**: Project plugins are **not activated automatically** unless
-``trusted_project_plugins`` is enabled in ``global_settings``:
+`trusted_project_plugins` is enabled in `global_settings`:
 
 ```json
 {
@@ -657,10 +669,10 @@ export AGENTCREW_CONTEXT_SHRINK_THRESHOLD="10"
 
 ### Context Shrinking Environment Variables
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `AGENTCREW_DEFAULT_MAX_CONTEXT` | Overrides the token threshold at which shrinking activates. Set to a number of tokens (e.g., `120000`). The default is 85% of the model's maximum context window. | `85% of model max context` |
-| `AGENTCREW_CONTEXT_SHRINK_THRESHOLD` | Controls how many of the most recent messages are always preserved in full, regardless of token usage. | `10` |
+| Variable                             | Purpose                                                                                                                                                           | Default                    |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `AGENTCREW_DEFAULT_MAX_CONTEXT`      | Overrides the token threshold at which shrinking activates. Set to a number of tokens (e.g., `120000`). The default is 85% of the model's maximum context window. | `85% of model max context` |
+| `AGENTCREW_CONTEXT_SHRINK_THRESHOLD` | Controls how many of the most recent messages are always preserved in full, regardless of token usage.                                                            | `10`                       |
 
 ## Configuration Priority
 
@@ -821,6 +833,26 @@ agentcrew a2a-server --host 127.0.0.1 --port 41241
 
 Add authentication via nginx or Apache reverse proxy. AgentCrew doesn't handle
 authentication directly.
+
+### Document Processing
+
+Documents dropped into chat (Word, Excel, PowerPoint, PDF, RTF, EPUB,
+OpenDocument, CSV) are converted to Markdown before being sent to the agent.
+
+- **Default handler: [anydoc](https://github.com/firecrawl/anydoc)**
+  (`firecrawl-anydoc` core dependency). Supports `.doc/.docx/.docm`,
+  `.xls/.xlsx/.xlsm/.xlsb`, `.ppt/.pps/.pot/.pptx/.pptm/.ppsx/.ppsm`,
+  `.odt/.ods/.odp`, `.rtf`, `.epub`, `.pdf`, and `.csv`.
+- **Docling is an optional for ocr** installed via the `cpu`/`nvidia` extras
+  (`pip install "agentcrew-ai[cpu]"` or `[nvidia]`). It will be used instead of
+  anydoc if installed.
+- **Images inside documents** (embedded bytes or external URLs) are described by
+  a vision LLM and injected into the Markdown as plain text. Vision providers
+  are resolved from the same picture-description configuration used previously —
+  the API key environment variables are unchanged (e.g. `DEEPINFRA_API_KEY`,
+  `TOGETHER_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, ...). No vision key
+  configured? Documents are converted to Markdown as-is without image
+  descriptions.
 
 ## Configuration Schema Reference
 

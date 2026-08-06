@@ -86,7 +86,7 @@ class CommandProcessor:
                 handled=True, exit_flag=exit_flag, clear_flag=clear_flag
             )
         elif user_input.startswith("/file"):
-            return self.file_commands.handle_file(user_input)
+            return await self.file_commands.handle_file(user_input)
         elif user_input.startswith("/drop"):
             return self.file_commands.handle_drop(user_input)
         elif user_input.lower() == "/voice":

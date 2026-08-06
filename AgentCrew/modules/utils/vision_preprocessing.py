@@ -7,6 +7,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -118,7 +119,7 @@ class VisionDescriptionCache:
         )
         self.disabled = env_disabled if disabled is None else disabled
         configured_path = (
-            base_path or os.getenv("VISION_CACHE_PATH_ENV") or DEFAULT_VISION_CACHE_PATH
+            base_path or os.getenv(VISION_CACHE_PATH_ENV) or DEFAULT_VISION_CACHE_PATH
         )
         self.index_path = Path(configured_path).expanduser()
 
@@ -264,6 +265,95 @@ class VisionPreprocessingUtils:
         return model
 
     @staticmethod
+    async def describe_image_via_service(
+        image_url: str,
+        provider: str,
+        vision_model_id: str,
+        cache: VisionDescriptionCache | None = None,
+        llm_service: Any | None = None,
+    ) -> str | None:
+        """Describe an image through the LLM service layer (shared entry point).
+
+        Resolves the vision model from the model registry (falling back to the
+        raw model id for unregistered/custom providers), resolves the LLM
+        service via the ServiceManager (or reuses a caller-provided one),
+        consults the VisionDescriptionCache, and describes the image through
+        BaseLLMService.process_message (temperature 0.7). Returns None (never
+        raises) on any failure so callers degrade gracefully.
+        """
+        try:
+            model = ModelRegistry.get_instance().get_model(
+                f"{provider}/{vision_model_id}"
+            )
+            service = llm_service
+            if model is not None:
+                if "vision" not in model.capabilities:
+                    logger.warning(
+                        f"Image description skipped because {provider}/{vision_model_id} "
+                        "has no vision capability"
+                    )
+                    return None
+                if service is None:
+                    from AgentCrew.modules.llm.service_manager import ServiceManager
+
+                    service = ServiceManager.get_instance().get_service_for_model(model)
+            else:
+                logger.warning(
+                    f"Vision model not found in registry: {provider}/{vision_model_id}; "
+                    "using raw model id with the provider service"
+                )
+                if service is None:
+                    from AgentCrew.modules.llm.service_manager import ServiceManager
+
+                    service = ServiceManager.get_instance().get_service_for_provider(
+                        provider
+                    )
+            if service is None:
+                logger.warning(
+                    f"No LLM service available for vision model {provider}/{vision_model_id}"
+                )
+                return None
+
+            effective_cache = cache or VisionDescriptionCache()
+            fingerprint = fingerprint_image_url(image_url)
+            cache_key = build_vision_cache_key(
+                image_fingerprint=str(fingerprint["image_fingerprint"]),
+                provider=provider,
+                vision_model=vision_model_id,
+            )
+            cached = effective_cache.get(cache_key)
+            if (
+                cached
+                and isinstance(cached.get("description"), str)
+                and cached["description"].strip()
+            ):
+                return cached["description"].strip()
+
+            description = await VisionPreprocessingUtils._describe_image(
+                {"type": "image_url", "image_url": {"url": image_url}},
+                model if model is not None else SimpleNamespace(id=vision_model_id),
+                service,
+            )
+            if description and description.strip():
+                effective_cache.set(
+                    cache_key,
+                    {
+                        "image_fingerprint": fingerprint["image_fingerprint"],
+                        "image_source_type": fingerprint["image_source_type"],
+                        "image_mime_type": fingerprint["image_mime_type"],
+                        "provider": provider,
+                        "vision_model": vision_model_id,
+                        "description": description,
+                    },
+                )
+            return description or None
+        except Exception as exc:
+            logger.warning(
+                f"Image description failed for {provider}/{vision_model_id}: {exc!s}"
+            )
+            return None
+
+    @staticmethod
     def _is_image_url_part(part: Any) -> bool:
         if not isinstance(part, dict) or part.get("type") != "image_url":
             return False
@@ -278,35 +368,19 @@ class VisionPreprocessingUtils:
         llm_service: Any,
         cache: VisionDescriptionCache,
     ) -> dict[str, str]:
-        url = part["image_url"]["url"]
-        fingerprint = fingerprint_image_url(url)
-        cache_key = build_vision_cache_key(
-            image_fingerprint=str(fingerprint["image_fingerprint"]),
+        description = await VisionPreprocessingUtils.describe_image_via_service(
+            image_url=part["image_url"]["url"],
             provider=provider,
-            vision_model=vision_model.id,
+            vision_model_id=vision_model.id,
+            cache=cache,
+            llm_service=llm_service,
         )
-        cached = cache.get(cache_key)
-        if cached and isinstance(cached.get("description"), str):
-            description = cached["description"]
-        else:
-            description = await VisionPreprocessingUtils._describe_image(
-                part, vision_model, llm_service
-            )
-            if description.strip():
-                cache.set(
-                    cache_key,
-                    {
-                        "image_fingerprint": fingerprint["image_fingerprint"],
-                        "image_source_type": fingerprint["image_source_type"],
-                        "image_mime_type": fingerprint["image_mime_type"],
-                        "provider": provider,
-                        "vision_model": vision_model.id,
-                        "description": description,
-                    },
-                )
         return {
             "type": "text",
-            "text": f"[Image description generated by {provider}/{vision_model.id}]\n{description}",
+            "text": (
+                f"[Image description generated by {provider}/{vision_model.id}]\n"
+                f"{description or ''}"
+            ),
         }
 
     @staticmethod
