@@ -336,6 +336,7 @@ class TestExactlyOnceValidation:
             _make_tool_use("run_command", {"command": "ls", "working_dir": "."}),
             [],
             MagicMock(),
+            "default",
         )
         assert validate_count == 1, "A2A Executor validated once"
 
@@ -502,7 +503,7 @@ class TestA2AExecutor:
         from AgentCrew.modules.a2a.agent_executor import ToolCallResult
 
         result = await executor._execute_single_tool(
-            agent, "t1", "c1", tool_use, [], MagicMock()
+            agent, "t1", "c1", tool_use, [], MagicMock(), "default"
         )
         assert result == ToolCallResult.CONTINUE
         assert not agent.execute_tool_call.called
@@ -519,7 +520,7 @@ class TestA2AExecutor:
 
         with patch.object(executor, "_handle_ask_tool", AsyncMock()) as mock_handle:
             result = await executor._execute_single_tool(
-                agent, "t1", "c1", tool_use, [], MagicMock()
+                agent, "t1", "c1", tool_use, [], MagicMock(), "default"
             )
         assert result == ToolCallResult.CONTINUE
         assert not mock_handle.called
@@ -535,7 +536,7 @@ class TestA2AExecutor:
         with patch.object(executor, "_handle_ask_tool", AsyncMock()) as mock_handle:
             mock_handle.return_value = "input_required"
             result = await executor._execute_single_tool(
-                agent, "t1", "c1", tool_use, [], MagicMock()
+                agent, "t1", "c1", tool_use, [], MagicMock(), "default"
             )
         assert result == "input_required"
         assert mock_handle.called

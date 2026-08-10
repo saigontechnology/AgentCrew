@@ -39,7 +39,7 @@ from AgentCrew.modules.tools.parallel_executor import (
 )
 
 from .exceptions import TaskCanceledException
-from .session_store import AgentCrewSessionStore
+from .session_store import AgentCrewSessionStore, _owner_key
 
 if TYPE_CHECKING:
     from AgentCrew.modules.utils.file_handler import FileHandler
@@ -70,6 +70,12 @@ class AgentCrewA2AExecutor(AgentExecutor):
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._cancel_lock = asyncio.Lock()
 
+    @property
+    def _agent_namespace(self) -> str:
+        """Agent namespace used to keep pending/task state isolated per agent."""
+        name = getattr(self.agent, "name", "") or ""
+        return name if isinstance(name, str) else ""
+
     async def _get_cancel_event(self, task_id: str) -> asyncio.Event:
         async with self._cancel_lock:
             if task_id not in self._cancel_events:
@@ -83,13 +89,18 @@ class AgentCrewA2AExecutor(AgentExecutor):
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id or ""
         context_id = context.context_id or ""
+        owner = _owner_key(context.call_context)
 
         cancel_event = await self._get_cancel_event(task_id)
         cancel_event.clear()
 
         try:
-            history = await self.session_store.get_history(context_id)
-            pending = await self.session_store.get_pending_tools(task_id)
+            history, pending = await asyncio.gather(
+                self.session_store.get_history(context_id, owner),
+                self.session_store.get_pending_tools(
+                    task_id, owner, self._agent_namespace
+                ),
+            )
 
             if pending:
                 await self._resume_from_input_required(
@@ -102,7 +113,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
             if user_message:
                 user_message = await self._process_attachments(user_message)
                 history.append(user_message)
-                await self.session_store.append_history(context_id, user_message)
+                await self.session_store.append_history(context_id, user_message, owner)
 
             # Enqueue initial Task (required by v1 streaming spec)
             initial_task = Task(
@@ -450,6 +461,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         answer_state: AnswerArtifactState,
     ) -> tuple[str, TokenUsage]:
         cancel_event = await self._get_cancel_event(task_id)
+        owner = _owner_key(context.call_context)
         current_response = ""
         tool_uses: list[dict[str, Any]] = []
 
@@ -559,7 +571,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 )
                 if assistant_message:
                     await self.session_store.append_history(
-                        context_id, assistant_message
+                        context_id, assistant_message, owner
                     )
                     history.append(assistant_message)
 
@@ -570,6 +582,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                     tool_uses,
                     history,
                     event_queue,
+                    owner,
                 )
 
                 if result == ToolCallResult.INPUT_REQUIRED:
@@ -650,6 +663,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         tool_uses: list[dict[str, Any]],
         history: list[dict[str, Any]],
         event_queue: EventQueue,
+        owner: str,
     ) -> str:
         cancel_event = await self._get_cancel_event(task_id)
         parallel_buffer: list[dict[str, Any]] = []
@@ -665,7 +679,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
             if is_sequential_tool(tool_name):
                 if parallel_buffer:
                     await self._flush_parallel(
-                        agent, task_id, context_id, parallel_buffer, history
+                        agent, task_id, context_id, parallel_buffer, history, owner
                     )
                     parallel_buffer = []
                 result = await self._execute_single_tool(
@@ -675,11 +689,12 @@ class AgentCrewA2AExecutor(AgentExecutor):
                     tool_use,
                     history,
                     event_queue,
+                    owner,
                 )
                 if result == ToolCallResult.INPUT_REQUIRED:
                     remaining = tool_uses[i + 1 :]
                     await self.session_store.save_pending_tools(
-                        task_id, tool_use, remaining
+                        task_id, tool_use, remaining, owner, self._agent_namespace
                     )
                     return ToolCallResult.INPUT_REQUIRED
             else:
@@ -687,7 +702,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
 
         if parallel_buffer:
             await self._flush_parallel(
-                agent, task_id, context_id, parallel_buffer, history
+                agent, task_id, context_id, parallel_buffer, history, owner
             )
 
         return ToolCallResult.CONTINUE
@@ -700,6 +715,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         tool_use: dict[str, Any],
         history: list[dict[str, Any]],
         event_queue: EventQueue,
+        owner: str,
     ) -> str:
         tool_name = tool_use["name"]
 
@@ -715,13 +731,15 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 },
             )
             if error_message:
-                await self.session_store.append_history(context_id, error_message)
+                await self.session_store.append_history(
+                    context_id, error_message, owner
+                )
                 history.append(error_message)
             return ToolCallResult.CONTINUE
 
         if tool_name == "ask":
             return await self._handle_ask_tool(
-                agent, task_id, context_id, tool_use, history, event_queue
+                agent, task_id, context_id, tool_use, history, event_queue, owner
             )
 
         try:
@@ -731,7 +749,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 {"tool_use": tool_use, "tool_result": tool_result},
             )
             if tool_result_message:
-                await self.session_store.append_history(context_id, tool_result_message)
+                await self.session_store.append_history(
+                    context_id, tool_result_message, owner
+                )
                 history.append(tool_result_message)
         except CancelOperation:
             cancelled_message = agent.format_message(
@@ -744,7 +764,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 },
             )
             if cancelled_message:
-                await self.session_store.append_history(context_id, cancelled_message)
+                await self.session_store.append_history(
+                    context_id, cancelled_message, owner
+                )
                 history.append(cancelled_message)
         except Exception as e:
             error_message = agent.format_message(
@@ -756,7 +778,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 },
             )
             if error_message:
-                await self.session_store.append_history(context_id, error_message)
+                await self.session_store.append_history(
+                    context_id, error_message, owner
+                )
                 history.append(error_message)
         return ToolCallResult.CONTINUE
 
@@ -767,6 +791,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         context_id: str,
         tool_uses: list[dict[str, Any]],
         history: list[dict[str, Any]],
+        owner: str,
     ) -> None:
         if not tool_uses:
             return
@@ -804,7 +829,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 },
             )
             if msg:
-                await self.session_store.append_history(context_id, msg)
+                await self.session_store.append_history(context_id, msg, owner)
                 history.append(msg)
 
     async def _handle_ask_tool(
@@ -815,6 +840,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         tool_use: dict[str, Any],
         history: list[dict[str, Any]],
         event_queue: EventQueue,
+        owner: str,
     ) -> str:
         from .adapters import create_ask_message
 
@@ -823,7 +849,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
             questions = []
 
         ask_msg = create_ask_message(questions)
-        await self.session_store.save_pending_tools(task_id, tool_use, [])
+        await self.session_store.save_pending_tools(
+            task_id, tool_use, [], owner, self._agent_namespace
+        )
 
         ts = self._now_timestamp()
         status = TaskStatus(
@@ -851,6 +879,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         history: list[dict[str, Any]],
         pending: dict,
     ) -> None:
+        owner = _owner_key(context.call_context)
         user_response = get_message_text(context.message) if context.message else ""
 
         ask_tool_use = pending["ask_tool_use"]
@@ -861,7 +890,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
             {"tool_use": ask_tool_use, "tool_result": user_response},
         )
         if tool_result_msg:
-            await self.session_store.append_history(context_id, tool_result_msg)
+            await self.session_store.append_history(context_id, tool_result_msg, owner)
             history.append(tool_result_msg)
 
         answer_state = self._build_answer_state(context, task_id)
@@ -875,11 +904,14 @@ class AgentCrewA2AExecutor(AgentExecutor):
                     remaining_tool,
                     history,
                     event_queue,
+                    owner,
                 )
                 if result == ToolCallResult.INPUT_REQUIRED:
                     return
 
-        await self.session_store.clear_pending_tools(task_id)
+        await self.session_store.clear_pending_tools(
+            task_id, owner, self._agent_namespace
+        )
         await self._run_agent_loop(
             context,
             event_queue,
@@ -901,6 +933,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         token_usage: TokenUsage | None = None,
         answer_state: AnswerArtifactState | None = None,
     ) -> None:
+        owner = _owner_key(context.call_context)
         if token_usage is None:
             token_usage = TokenUsage()
         session_cost = agent.calculate_usage_cost(
@@ -914,7 +947,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 MessageType.Assistant, {"message": current_response}
             )
             if assistant_message:
-                await self.session_store.append_history(context_id, assistant_message)
+                await self.session_store.append_history(
+                    context_id, assistant_message, owner
+                )
                 history.append(assistant_message)
 
             user_msg = agent._extract_last_user_message_for_memory(history)

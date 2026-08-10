@@ -64,6 +64,15 @@ class A2AServer:
         self._session_stores: list = []
         self._task_stores: list = []
 
+        # One shared session store for all agents: conversation history is
+        # keyed by {owner}:{context_id} (no agent namespace) so a conversation
+        # can continue across agents. Per-agent task stores keep task and
+        # pending execution state isolated by agent namespace + owner.
+        shared_opts = dict(self.store_options)
+        shared_opts.pop("agent_namespace", None)
+        self.session_store = create_session_store(self.store_type, **shared_opts)
+        self._session_stores.append(self.session_store)
+
         self.app = self._create_app()
 
     def _create_app(self) -> Starlette:
@@ -124,17 +133,15 @@ class A2AServer:
             logger.warning(f"No agent card for {agent_name}")
             return []
 
-        # Create stores: both protocol TaskStore and AgentCrew session store
-        # Pass agent_namespace for per-agent isolation
+        # Create stores: protocol TaskStore stays agent-namespaced and
+        # owner-scoped; the session store is shared across all agents.
         store_opts = dict(self.store_options)
         store_opts["agent_namespace"] = agent_name
-        session_store = create_session_store(self.store_type, **store_opts)
         task_store = create_task_store(self.store_type, **store_opts)
 
-        self._session_stores.append(session_store)
         self._task_stores.append(task_store)
 
-        executor = AgentCrewA2AExecutor(agent, session_store)
+        executor = AgentCrewA2AExecutor(agent, self.session_store)
         handler = DefaultRequestHandlerV2(
             agent_executor=executor,
             task_store=task_store,

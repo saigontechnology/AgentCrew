@@ -4,7 +4,12 @@ AgentCrew session stores and durable SDK TaskStore adapters.
 Separation of concerns:
 - AgentCrewSessionStore — LLM history + pending tool state (AgentCrew owned)
 - SDK TaskStore adapters (create_task_store) — protocol task persistence
-- All stores accept an `agent_namespace` for multi-agent isolation.
+
+Identity rules:
+- Conversation history is keyed by ``{owner}:{context_id}`` with NO agent
+  namespace, so a conversation can continue across agents.
+- Pending tool state is keyed by ``{agent}:{owner}:{task_id}`` and protocol
+  tasks by ``{agent}:{owner}:{task_id}`` — both stay agent-namespaced.
 - Owner isolation uses a single `default` owner key when no auth context.
 """
 
@@ -38,6 +43,11 @@ def _owner_key(context: ServerCallContext | None) -> str:
     return "default"
 
 
+def _safe_owner(owner: str) -> str:
+    """Sanitize an owner/tenant for use in keys. Empty falls back to 'default'."""
+    return _safe_name(owner) if owner else "default"
+
+
 def _read_json(path: str) -> Any:
     """Synchronous helper: read and parse JSON from *path*."""
     with open(path) as f:
@@ -64,30 +74,58 @@ def atomic_write(path: str, data: Any) -> None:
 
 
 class AgentCrewSessionStore(ABC):
-    """Abstract store for AgentCrew execution state (history + pending tools)."""
+    """Abstract store for AgentCrew execution state (history + pending tools).
+
+    Identity rules:
+    - History is keyed by ``{owner}:{context_id}`` and intentionally has NO
+      agent namespace so a conversation can continue across agents.
+    - Pending tool state is keyed by ``{agent}:{owner}:{task_id}`` and stays
+      isolated per agent and per owner.
+    """
 
     @abstractmethod
-    async def get_history(self, context_id: str) -> list[dict[str, Any]]: ...
+    async def get_history(
+        self, context_id: str, owner: str = "default"
+    ) -> list[dict[str, Any]]: ...
     @abstractmethod
     async def append_history(
-        self, context_id: str, message: dict[str, Any]
+        self, context_id: str, message: dict[str, Any], owner: str = "default"
     ) -> None: ...
     @abstractmethod
     async def save_pending_tools(
-        self, task_id: str, ask_tool_use: dict, remaining_tools: list
+        self,
+        task_id: str,
+        ask_tool_use: dict,
+        remaining_tools: list,
+        owner: str = "default",
+        agent_namespace: str = "",
     ) -> None: ...
     @abstractmethod
-    async def get_pending_tools(self, task_id: str) -> dict | None: ...
+    async def get_pending_tools(
+        self, task_id: str, owner: str = "default", agent_namespace: str = ""
+    ) -> dict | None: ...
     @abstractmethod
-    async def clear_pending_tools(self, task_id: str) -> None: ...
+    async def clear_pending_tools(
+        self, task_id: str, owner: str = "default", agent_namespace: str = ""
+    ) -> None: ...
     @abstractmethod
-    async def cleanup(self, task_id: str, context_id: str) -> None: ...
+    async def cleanup(
+        self,
+        task_id: str,
+        context_id: str,
+        owner: str = "default",
+        agent_namespace: str = "",
+    ) -> None: ...
     async def close(self) -> None:
         pass
 
 
 class InMemorySessionStore(AgentCrewSessionStore):
-    """In-memory implementation. State lost on restart. Agent-isolated."""
+    """In-memory implementation. State lost on restart.
+
+    History is shared across agents for the same owner + context; pending tool
+    state is isolated by agent namespace + owner + task.
+    """
 
     def __init__(self, agent_namespace: str = "") -> None:
         self._agent = _safe_name(agent_namespace) if agent_namespace else ""
@@ -95,54 +133,80 @@ class InMemorySessionStore(AgentCrewSessionStore):
         self._pending: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
-    def _hk(self, cid: str) -> str:
-        return f"{self._agent}:{cid}" if self._agent else cid
+    def _hk(self, cid: str, owner: str) -> str:
+        return f"{_safe_owner(owner)}:{cid}"
 
-    def _pk(self, tid: str) -> str:
-        return f"{self._agent}:{tid}" if self._agent else tid
+    def _pk(self, tid: str, owner: str, agent_namespace: str = "") -> str:
+        ns = _safe_name(agent_namespace) if agent_namespace else self._agent
+        key = f"{_safe_owner(owner)}:{tid}"
+        return f"{ns}:{key}" if ns else key
 
-    async def get_history(self, context_id: str) -> list[dict[str, Any]]:
+    async def get_history(
+        self, context_id: str, owner: str = "default"
+    ) -> list[dict[str, Any]]:
         async with self._lock:
-            return list(self._histories.get(self._hk(context_id), []))
+            return list(self._histories.get(self._hk(context_id, owner), []))
 
-    async def append_history(self, context_id: str, message: dict[str, Any]) -> None:
-        k = self._hk(context_id)
+    async def append_history(
+        self, context_id: str, message: dict[str, Any], owner: str = "default"
+    ) -> None:
+        k = self._hk(context_id, owner)
         async with self._lock:
             if k not in self._histories:
                 self._histories[k] = []
             self._histories[k].append(message)
 
     async def save_pending_tools(
-        self, task_id: str, ask_tool_use: dict, remaining_tools: list
+        self,
+        task_id: str,
+        ask_tool_use: dict,
+        remaining_tools: list,
+        owner: str = "default",
+        agent_namespace: str = "",
     ) -> None:
         async with self._lock:
-            self._pending[self._pk(task_id)] = {
+            self._pending[self._pk(task_id, owner, agent_namespace)] = {
                 "ask_tool_use": ask_tool_use,
                 "remaining_tools": remaining_tools,
             }
 
-    async def get_pending_tools(self, task_id: str) -> dict | None:
+    async def get_pending_tools(
+        self, task_id: str, owner: str = "default", agent_namespace: str = ""
+    ) -> dict | None:
         async with self._lock:
-            return self._pending.get(self._pk(task_id))
+            return self._pending.get(self._pk(task_id, owner, agent_namespace))
 
-    async def clear_pending_tools(self, task_id: str) -> None:
+    async def clear_pending_tools(
+        self, task_id: str, owner: str = "default", agent_namespace: str = ""
+    ) -> None:
         async with self._lock:
-            self._pending.pop(self._pk(task_id), None)
+            self._pending.pop(self._pk(task_id, owner, agent_namespace), None)
 
-    async def cleanup(self, task_id: str, context_id: str) -> None:
+    async def cleanup(
+        self,
+        task_id: str,
+        context_id: str,
+        owner: str = "default",
+        agent_namespace: str = "",
+    ) -> None:
         async with self._lock:
-            self._pending.pop(self._pk(task_id), None)
-            self._histories.pop(self._hk(context_id), None)
+            self._pending.pop(self._pk(task_id, owner, agent_namespace), None)
+            self._histories.pop(self._hk(context_id, owner), None)
 
 
 class FileSessionStore(AgentCrewSessionStore):
-    """File-based. Survives restart. Agent-namespaced directory. Per-file lock."""
+    """File-based. Survives restart. Per-file lock.
+
+    History files live directly in the shared ``base_dir`` keyed by
+    owner + context so agents/containers sharing the same directory continue a
+    conversation. Pending tool state lives in an agent-namespaced subdirectory.
+    """
 
     def __init__(
         self, base_dir: str = ".agentcrew/a2a_v1", agent_namespace: str = ""
     ) -> None:
-        ns = _safe_name(agent_namespace) if agent_namespace else ""
-        self.base_dir = os.path.join(base_dir, ns) if ns else base_dir
+        self._agent = _safe_name(agent_namespace) if agent_namespace else ""
+        self.base_dir = base_dir
         os.makedirs(self.base_dir, exist_ok=True)
         self._file_locks: dict[str, asyncio.Lock] = {}
 
@@ -151,21 +215,37 @@ class FileSessionStore(AgentCrewSessionStore):
             self._file_locks[path] = asyncio.Lock()
         return self._file_locks[path]
 
-    def _history_path(self, context_id: str) -> str:
-        return os.path.join(self.base_dir, f"history_{_safe_name(context_id)}.json")
+    def _history_path(self, context_id: str, owner: str) -> str:
+        return os.path.join(
+            self.base_dir,
+            f"history_{_safe_owner(owner)}_{_safe_name(context_id)}.json",
+        )
 
-    def _pending_path(self, task_id: str) -> str:
-        return os.path.join(self.base_dir, f"pending_{_safe_name(task_id)}.json")
+    def _pending_dir(self, agent_namespace: str = "") -> str:
+        ns = _safe_name(agent_namespace) if agent_namespace else self._agent
+        d = os.path.join(self.base_dir, ns) if ns else self.base_dir
+        os.makedirs(d, exist_ok=True)
+        return d
 
-    async def get_history(self, context_id: str) -> list[dict[str, Any]]:
-        path = self._history_path(context_id)
+    def _pending_path(self, task_id: str, owner: str, agent_namespace: str = "") -> str:
+        return os.path.join(
+            self._pending_dir(agent_namespace),
+            f"pending_{_safe_owner(owner)}_{_safe_name(task_id)}.json",
+        )
+
+    async def get_history(
+        self, context_id: str, owner: str = "default"
+    ) -> list[dict[str, Any]]:
+        path = self._history_path(context_id, owner)
         async with self._lock_for(path):
             if not os.path.exists(path):
                 return []
             return await asyncio.to_thread(_read_json, path)
 
-    async def append_history(self, context_id: str, message: dict[str, Any]) -> None:
-        path = self._history_path(context_id)
+    async def append_history(
+        self, context_id: str, message: dict[str, Any], owner: str = "default"
+    ) -> None:
+        path = self._history_path(context_id, owner)
         async with self._lock_for(path):
             history = []
             if os.path.exists(path):
@@ -174,34 +254,53 @@ class FileSessionStore(AgentCrewSessionStore):
             await asyncio.to_thread(atomic_write, path, history)
 
     async def save_pending_tools(
-        self, task_id: str, ask_tool_use: dict, remaining_tools: list
+        self,
+        task_id: str,
+        ask_tool_use: dict,
+        remaining_tools: list,
+        owner: str = "default",
+        agent_namespace: str = "",
     ) -> None:
-        path = self._pending_path(task_id)
+        path = self._pending_path(task_id, owner, agent_namespace)
         data = {"ask_tool_use": ask_tool_use, "remaining_tools": remaining_tools}
         async with self._lock_for(path):
             await asyncio.to_thread(atomic_write, path, data)
 
-    async def get_pending_tools(self, task_id: str) -> dict | None:
-        path = self._pending_path(task_id)
+    async def get_pending_tools(
+        self, task_id: str, owner: str = "default", agent_namespace: str = ""
+    ) -> dict | None:
+        path = self._pending_path(task_id, owner, agent_namespace)
         async with self._lock_for(path):
             if not os.path.exists(path):
                 return None
             return await asyncio.to_thread(_read_json, path)
 
-    async def clear_pending_tools(self, task_id: str) -> None:
-        path = self._pending_path(task_id)
+    async def clear_pending_tools(
+        self, task_id: str, owner: str = "default", agent_namespace: str = ""
+    ) -> None:
+        path = self._pending_path(task_id, owner, agent_namespace)
         async with self._lock_for(path):
             await asyncio.to_thread(_remove_sync, path)
 
-    async def cleanup(self, task_id: str, context_id: str) -> None:
-        await self.clear_pending_tools(task_id)
-        hpath = self._history_path(context_id)
+    async def cleanup(
+        self,
+        task_id: str,
+        context_id: str,
+        owner: str = "default",
+        agent_namespace: str = "",
+    ) -> None:
+        await self.clear_pending_tools(task_id, owner, agent_namespace)
+        hpath = self._history_path(context_id, owner)
         async with self._lock_for(hpath):
             await asyncio.to_thread(_remove_sync, hpath)
 
 
 class RedisSessionStore(AgentCrewSessionStore):
-    """Redis-backed session store. Survives restart. Agent-namespaced prefix."""
+    """Redis-backed session store. Survives restart. Agent-namespaced prefix.
+
+    History uses a shared prefix keyed by owner + context; pending tool state
+    uses an agent-namespaced prefix.
+    """
 
     def __init__(
         self,
@@ -211,7 +310,9 @@ class RedisSessionStore(AgentCrewSessionStore):
     ) -> None:
         self._redis_url = redis_url
         ns = _safe_name(agent_namespace) if agent_namespace else ""
+        self._agent = ns
         self._prefix = f"a2a_v1_sesh_{ns}" if ns else "a2a_v1_sesh"
+        self._history_prefix = "a2a_v1_sesh"
         self._ttl = kwargs.get("ttl", 3600)
         self._redis = None
 
@@ -222,45 +323,68 @@ class RedisSessionStore(AgentCrewSessionStore):
             self._redis = aioredis.from_url(self._redis_url, decode_responses=True)
         return self._redis
 
-    def _hk(self, cid: str) -> str:
-        return f"{self._prefix}:history:{_safe_name(cid)}"
+    def _hk(self, cid: str, owner: str) -> str:
+        return f"{self._history_prefix}:history:{_safe_owner(owner)}:{_safe_name(cid)}"
 
-    def _pk(self, tid: str) -> str:
-        return f"{self._prefix}:pending:{_safe_name(tid)}"
+    def _pk(self, tid: str, owner: str, agent_namespace: str = "") -> str:
+        ns = _safe_name(agent_namespace) if agent_namespace else self._agent
+        prefix = f"a2a_v1_sesh_{ns}" if ns else "a2a_v1_sesh"
+        return f"{prefix}:pending:{_safe_owner(owner)}:{_safe_name(tid)}"
 
-    async def get_history(self, context_id: str) -> list[dict[str, Any]]:
+    async def get_history(
+        self, context_id: str, owner: str = "default"
+    ) -> list[dict[str, Any]]:
         r = await self._get_redis()
-        raw = await r.get(self._hk(context_id))
+        raw = await r.get(self._hk(context_id, owner))
         return json.loads(raw) if raw else []
 
-    async def append_history(self, context_id: str, message: dict[str, Any]) -> None:
+    async def append_history(
+        self, context_id: str, message: dict[str, Any], owner: str = "default"
+    ) -> None:
         r = await self._get_redis()
-        k = self._hk(context_id)
+        k = self._hk(context_id, owner)
         raw = await r.get(k)
         history = json.loads(raw) if raw else []
         history.append(message)
         await r.setex(k, self._ttl, json.dumps(history))
 
     async def save_pending_tools(
-        self, task_id: str, ask_tool_use: dict, remaining_tools: list
+        self,
+        task_id: str,
+        ask_tool_use: dict,
+        remaining_tools: list,
+        owner: str = "default",
+        agent_namespace: str = "",
     ) -> None:
         r = await self._get_redis()
         data = {"ask_tool_use": ask_tool_use, "remaining_tools": remaining_tools}
-        await r.setex(self._pk(task_id), self._ttl, json.dumps(data))
+        await r.setex(
+            self._pk(task_id, owner, agent_namespace), self._ttl, json.dumps(data)
+        )
 
-    async def get_pending_tools(self, task_id: str) -> dict | None:
+    async def get_pending_tools(
+        self, task_id: str, owner: str = "default", agent_namespace: str = ""
+    ) -> dict | None:
         r = await self._get_redis()
-        raw = await r.get(self._pk(task_id))
+        raw = await r.get(self._pk(task_id, owner, agent_namespace))
         return json.loads(raw) if raw else None
 
-    async def clear_pending_tools(self, task_id: str) -> None:
+    async def clear_pending_tools(
+        self, task_id: str, owner: str = "default", agent_namespace: str = ""
+    ) -> None:
         r = await self._get_redis()
-        await r.delete(self._pk(task_id))
+        await r.delete(self._pk(task_id, owner, agent_namespace))
 
-    async def cleanup(self, task_id: str, context_id: str) -> None:
+    async def cleanup(
+        self,
+        task_id: str,
+        context_id: str,
+        owner: str = "default",
+        agent_namespace: str = "",
+    ) -> None:
         r = await self._get_redis()
-        await r.delete(self._pk(task_id))
-        await r.delete(self._hk(context_id))
+        await r.delete(self._pk(task_id, owner, agent_namespace))
+        await r.delete(self._hk(context_id, owner))
 
     async def close(self) -> None:
         if self._redis:

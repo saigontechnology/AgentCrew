@@ -95,7 +95,7 @@ def anyio_backend():
     return "asyncio"
 
 
-async def _start_server(app, host="127.0.0.1", port=0):
+async def _start_server(app, host="127.0.0.1", port=0, wait_path="/test_agent/"):
     """Start uvicorn on a random port, return (url, server_task)."""
     import socket
 
@@ -113,7 +113,7 @@ async def _start_server(app, host="127.0.0.1", port=0):
     for _ in range(50):
         try:
             async with httpx.AsyncClient() as c:
-                r = await c.get(f"{url}/test_agent/", timeout=2)
+                r = await c.get(f"{url}{wait_path}", timeout=2)
                 if r.status_code < 500:
                     return url, server_task
         except (httpx.ConnectError, httpx.RemoteProtocolError):
@@ -673,6 +673,116 @@ class TestStoreIsolation:
         assert acc.phase == "idle"
 
 
+class TestSharedHistory:
+    """Owner-scoped conversation history shared across agents; tasks stay isolated."""
+
+    @pytest.mark.asyncio
+    async def test_file_history_shared_across_agent_stores(self, tmp_path):
+        """Two agents (containers) on the same file store share owner-scoped history."""
+        from AgentCrew.modules.a2a.session_store import FileSessionStore
+
+        store_a = FileSessionStore(base_dir=str(tmp_path), agent_namespace="agent-a")
+        store_b = FileSessionStore(base_dir=str(tmp_path), agent_namespace="agent-b")
+
+        await store_a.append_history(
+            "ctx-1", {"role": "user", "content": "hello"}, owner="owner-1"
+        )
+
+        history = await store_b.get_history("ctx-1", owner="owner-1")
+        assert len(history) == 1
+        assert history[0]["content"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_history_owner_isolation(self, tmp_path):
+        """Same context id under a different owner never shares history."""
+        from AgentCrew.modules.a2a.session_store import FileSessionStore
+
+        store = FileSessionStore(base_dir=str(tmp_path))
+        await store.append_history(
+            "ctx-1", {"role": "user", "content": "secret"}, owner="owner-1"
+        )
+
+        assert await store.get_history("ctx-1", owner="owner-1")
+        assert await store.get_history("ctx-1", owner="owner-2") == []
+
+        await store.append_history(
+            "ctx-1", {"role": "user", "content": "other"}, owner="owner-2"
+        )
+        hist2 = await store.get_history("ctx-1", owner="owner-2")
+        assert len(hist2) == 1
+        assert hist2[0]["content"] == "other"
+
+    @pytest.mark.asyncio
+    async def test_missing_context_returns_empty_history(self):
+        """A new/missing context returns an empty history without error."""
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+
+        store = InMemorySessionStore()
+        assert await store.get_history("brand-new-ctx", owner="owner-1") == []
+
+    @pytest.mark.asyncio
+    async def test_pending_tools_agent_and_owner_isolated(self):
+        """Pending/in-flight tool state stays agent-namespaced and owner-scoped."""
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+
+        store = InMemorySessionStore()
+        await store.save_pending_tools(
+            "task-1", {"name": "ask"}, [], owner="owner-1", agent_namespace="agent-a"
+        )
+
+        # Same task id under another agent is invisible
+        assert (
+            await store.get_pending_tools(
+                "task-1", owner="owner-1", agent_namespace="agent-b"
+            )
+            is None
+        )
+        # Same task id under another owner is invisible
+        assert (
+            await store.get_pending_tools(
+                "task-1", owner="owner-2", agent_namespace="agent-a"
+            )
+            is None
+        )
+        # Visible under the exact agent + owner scope
+        assert (
+            await store.get_pending_tools(
+                "task-1", owner="owner-1", agent_namespace="agent-a"
+            )
+            is not None
+        )
+        # Clear under the wrong scope leaves it intact
+        await store.clear_pending_tools(
+            "task-1", owner="owner-2", agent_namespace="agent-b"
+        )
+        assert (
+            await store.get_pending_tools(
+                "task-1", owner="owner-1", agent_namespace="agent-a"
+            )
+            is not None
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_tenant_uses_default_owner(self):
+        """Callers omitting tenant map to the default owner; explicit tenants stay isolated."""
+        from a2a.server.context import ServerCallContext
+
+        from AgentCrew.modules.a2a.session_store import (
+            InMemorySessionStore,
+            _owner_key,
+        )
+
+        assert _owner_key(ServerCallContext()) == "default"
+
+        store = InMemorySessionStore()
+        await store.append_history("ctx-1", {"role": "user", "content": "hi"})
+        # owner defaults to "default" for backward compatibility
+        assert len(await store.get_history("ctx-1")) == 1
+        assert len(await store.get_history("ctx-1", owner="default")) == 1
+        # An explicit tenant must NOT see the default-owner history
+        assert await store.get_history("ctx-1", owner="user-a") == []
+
+
 class TestExecutorScope:
     """Task-scoped cancellation tests."""
 
@@ -906,3 +1016,181 @@ class TestResumeFromInputRequired:
         # Only answer artifact ID should count
         assert answer_state.emitted is False
         assert answer_state.accumulated_text == ""
+
+
+class TestAgentSwitchContinuity:
+    """Cross-agent conversation continuity with agent-owned task isolation."""
+
+    @pytest.mark.asyncio
+    async def test_terminal_task_then_switch_agent_shares_history(self, tmp_path):
+        """Terminal task under agent A, then a new message under agent B with the same
+        tenant/context: agent B sees prior conversation messages but receives a new
+        agent-B-owned task, and tasks stay isolated across agents.
+        """
+        from a2a.server.context import ServerCallContext
+        from starlette.routing import Mount
+
+        from AgentCrew.modules.a2a.agent_executor import AgentCrewA2AExecutor
+        from AgentCrew.modules.a2a.session_store import (
+            FileAgentCrewTaskStore,
+            FileSessionStore,
+        )
+
+        class CaptureAgent(DummyLocalAgent):
+            def __init__(self, name):
+                super().__init__()
+                self.name = name
+                self.captured: list[list[dict[str, Any]]] = []
+
+            async def process_messages(self, messages, callback=None, **kwargs):
+                self.captured.append(list(messages))
+                yield f"reply from {self.name}", f"reply from {self.name}", None
+
+        # One shared session store wired to both agents (as A2AServer does now)
+        shared = FileSessionStore(base_dir=str(tmp_path))
+        agents: dict[str, CaptureAgent] = {}
+        task_stores: dict[str, FileAgentCrewTaskStore] = {}
+        handlers: dict[str, DefaultRequestHandlerV2] = {}
+        cards: dict[str, AgentCard] = {}
+        for name in ("agent-a", "agent-b"):
+            agents[name] = CaptureAgent(name)
+            task_stores[name] = FileAgentCrewTaskStore(
+                base_dir=str(tmp_path), agent_namespace=name
+            )
+            executor = AgentCrewA2AExecutor(agent=agents[name], session_store=shared)
+            card = AgentCard(
+                name=name,
+                description=f"{name} test agent",
+                version="1.0.0",
+                supported_interfaces=[
+                    AgentInterface(
+                        protocol_binding="JSONRPC",
+                        protocol_version="1.0",
+                        url=f"http://127.0.0.1:0/{name}/",
+                    ),
+                ],
+                capabilities=AgentCapabilities(streaming=True),
+                default_input_modes=["text/plain"],
+                default_output_modes=["text/plain"],
+            )
+            cards[name] = card
+            handlers[name] = DefaultRequestHandlerV2(
+                agent_executor=executor,
+                task_store=task_stores[name],
+                agent_card=card,
+            )
+
+        routes = []
+        for name in ("agent-a", "agent-b"):
+            routes.append(
+                Mount(
+                    f"/{name}",
+                    routes=[
+                        *create_agent_card_routes(cards[name]),
+                        *create_jsonrpc_routes(handlers[name], rpc_url="/"),
+                    ],
+                )
+            )
+        app = Starlette(routes=routes)
+        url, server_task = await _start_server(app, wait_path="/agent-a/")
+
+        def send_payload(text: str, context_id: str) -> dict[str, Any]:
+            return {
+                "jsonrpc": "2.0",
+                "id": "req-1",
+                "method": "SendMessage",
+                "params": {
+                    "message": {
+                        "role": "ROLE_USER",
+                        "parts": [{"text": text}],
+                        "messageId": f"msg-{text}",
+                        "contextId": context_id,
+                    },
+                    "configuration": {},
+                    "tenant": "user-1",
+                },
+            }
+
+        try:
+            async with httpx.AsyncClient() as c:
+                r1 = await c.post(
+                    f"{url}/agent-a/",
+                    json=send_payload("hello from user to agent-a", "ctx-1"),
+                    timeout=15,
+                    headers={"A2A-Version": "1.0"},
+                )
+                assert r1.status_code == 200
+                task_a = r1.json()["result"]["task"]["id"]
+
+                r2 = await c.post(
+                    f"{url}/agent-b/",
+                    json=send_payload("hello from user to agent-b", "ctx-1"),
+                    timeout=15,
+                    headers={"A2A-Version": "1.0"},
+                )
+                assert r2.status_code == 200
+                task_b = r2.json()["result"]["task"]["id"]
+        finally:
+            server_task.cancel()
+            try:
+                await server_task
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+
+        # A new message to agent B creates a new agent-B-owned task
+        assert task_a != task_b
+
+        # Agent B's executor received agent A's conversation history
+        assert agents["agent-b"].captured, "agent-b should have processed messages"
+        seen = agents["agent-b"].captured[0]
+        user_texts = [
+            part["text"]
+            for m in seen
+            if m.get("role") == "user"
+            for part in m.get("content", [])
+            if part.get("type") == "text"
+        ]
+        assert "hello from user to agent-a" in user_texts, (
+            "agent-b should see agent-a's user message"
+        )
+        reply_texts = [
+            part["text"]
+            for m in seen
+            if m.get("role") == "assistant"
+            for part in m.get("content", [])
+            if part.get("type") == "text"
+        ]
+        assert any("reply from agent-a" in t for t in reply_texts), (
+            "agent-b should see agent-a's assistant reply"
+        )
+
+        # Shared history persisted under owner + context (no agent namespace)
+        history = await shared.get_history("ctx-1", owner="user-1")
+        hist_texts = [
+            part["text"]
+            for m in history
+            if m.get("role") == "user"
+            for part in m.get("content", [])
+            if part.get("type") == "text"
+        ]
+        assert "hello from user to agent-a" in hist_texts
+        assert "hello from user to agent-b" in hist_texts
+
+        # Task isolation: agent B cannot see agent A's task, and vice versa
+        ctx_user1 = ServerCallContext()
+        ctx_user1.tenant = "user-1"
+        store_b = FileAgentCrewTaskStore(
+            base_dir=str(tmp_path), agent_namespace="agent-b"
+        )
+        assert await store_b.get(task_a, ctx_user1) is None, (
+            "agent-b must not see agent-a's task"
+        )
+        assert await store_b.get(task_b, ctx_user1) is not None, (
+            "agent-b must own its new task"
+        )
+        store_a = FileAgentCrewTaskStore(
+            base_dir=str(tmp_path), agent_namespace="agent-a"
+        )
+        assert await store_a.get(task_b, ctx_user1) is None, (
+            "agent-a must not see agent-b's task"
+        )
