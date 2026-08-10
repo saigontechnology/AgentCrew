@@ -1017,6 +1017,250 @@ class TestResumeFromInputRequired:
         assert answer_state.emitted is False
         assert answer_state.accumulated_text == ""
 
+    @pytest.mark.asyncio
+    async def test_resume_with_turn_2_artifact_restores_state(self):
+        """A persisted per-turn answer artifact restores artifact_id, turn, emitted and text."""
+        from a2a.server.agent_execution import RequestContext
+        from a2a.server.context import ServerCallContext
+
+        from AgentCrew.modules.a2a.agent_executor import AgentCrewA2AExecutor
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+
+        task_id = "test-task-turn-2"
+        context_id = "test-ctx-turn-2"
+
+        persisted_task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_INPUT_REQUIRED),
+            artifacts=[
+                Artifact(
+                    artifact_id=f"answer_{task_id}_turn_2",
+                    parts=[Part(text="Answer text from turn two")],
+                )
+            ],
+        )
+
+        call_ctx = ServerCallContext()
+        ctx = RequestContext(
+            call_context=call_ctx,
+            task_id=task_id,
+            context_id=context_id,
+            task=persisted_task,
+        )
+
+        store = InMemorySessionStore()
+        executor = AgentCrewA2AExecutor(agent=MagicMock(), session_store=store)
+
+        answer_state = executor._build_answer_state(ctx, task_id)
+
+        assert answer_state.artifact_id == f"answer_{task_id}_turn_2"
+        assert answer_state.turn == 2
+        assert answer_state.emitted is True
+        assert answer_state.accumulated_text == "Answer text from turn two"
+
+    @pytest.mark.asyncio
+    async def test_resume_picks_latest_turn_artifact(self):
+        """With answer artifacts across turns present, the latest turn is restored."""
+        from a2a.server.agent_execution import RequestContext
+        from a2a.server.context import ServerCallContext
+
+        from AgentCrew.modules.a2a.agent_executor import AgentCrewA2AExecutor
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+
+        task_id = "test-task-latest-turn"
+        context_id = "test-ctx-latest-turn"
+
+        persisted_task = Task(
+            id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_INPUT_REQUIRED),
+            artifacts=[
+                Artifact(
+                    artifact_id=f"answer_{task_id}",
+                    parts=[Part(text="turn zero text")],
+                ),
+                Artifact(
+                    artifact_id=f"answer_{task_id}_turn_1",
+                    parts=[Part(text="turn one text")],
+                ),
+                Artifact(
+                    artifact_id=f"answer_{task_id}_turn_3",
+                    parts=[Part(text="turn three text")],
+                ),
+                Artifact(
+                    artifact_id=f"tool_{task_id}_turn_3",
+                    parts=[Part(text="tool artifact")],
+                ),
+                Artifact(
+                    artifact_id=f"answer_{task_id}_turn_notanumber",
+                    parts=[Part(text="ignored")],
+                ),
+            ],
+        )
+
+        call_ctx = ServerCallContext()
+        ctx = RequestContext(
+            call_context=call_ctx,
+            task_id=task_id,
+            context_id=context_id,
+            task=persisted_task,
+        )
+
+        store = InMemorySessionStore()
+        executor = AgentCrewA2AExecutor(agent=MagicMock(), session_store=store)
+
+        answer_state = executor._build_answer_state(ctx, task_id)
+
+        assert answer_state.artifact_id == f"answer_{task_id}_turn_3"
+        assert answer_state.turn == 3
+        assert answer_state.emitted is True
+        assert answer_state.accumulated_text == "turn three text"
+
+
+class TestMultiTurnArtifacts:
+    """Per-turn artifact IDs for recursive _process_task calls."""
+
+    @pytest.mark.asyncio
+    async def test_tool_recursion_uses_per_turn_artifact_ids(self, monkeypatch):
+        """Each new-turn recursion streams into its own per-turn answer/thinking/tool artifacts."""
+        from a2a.server.agent_execution import RequestContext
+        from a2a.server.context import ServerCallContext
+
+        from AgentCrew.modules.a2a import agent_executor as executor_module
+        from AgentCrew.modules.a2a.agent_executor import (
+            AgentCrewA2AExecutor,
+            AnswerArtifactState,
+        )
+        from AgentCrew.modules.a2a.session_store import InMemorySessionStore
+        from AgentCrew.modules.llm.token_usage import TokenUsage
+
+        task_id = "multi-turn-task"
+        context_id = "multi-turn-ctx"
+
+        class MultiTurnStreamingAgent(DummyLocalAgent):
+            """Streams two tool-use rounds, then a plain final round."""
+
+            def __init__(self):
+                super().__init__()
+                self.process_calls = 0
+
+            async def process_messages(self, messages, callback=None, **kwargs):
+                self.process_calls += 1
+                usage = TokenUsage(input_tokens=10, output_tokens=5)
+                if self.process_calls < 3:
+                    if callback:
+                        callback(
+                            [{"name": "dummy_tool", "input": {"query": "x"}}],
+                            usage,
+                        )
+                    yield (
+                        f"turn {self.process_calls} response",
+                        f"turn {self.process_calls} chunk",
+                        (f"thinking {self.process_calls}", "cursor"),
+                    )
+                else:
+                    yield (
+                        "final response",
+                        "final chunk",
+                        ("final thinking", "cursor"),
+                    )
+
+            def validate_tool_use(self, tool_use):
+                return None
+
+            async def execute_tool_call(self, tool_use):
+                return "tool done"
+
+        created_states: list[tuple[str, int]] = []
+        original_state_cls = AnswerArtifactState
+
+        class RecordingState(original_state_cls):
+            def __init__(self, artifact_id, turn=0):
+                created_states.append((artifact_id, turn))
+                super().__init__(artifact_id, turn=turn)
+
+        monkeypatch.setattr(executor_module, "AnswerArtifactState", RecordingState)
+
+        store = InMemorySessionStore()
+        executor = AgentCrewA2AExecutor(
+            agent=MultiTurnStreamingAgent(), session_store=store
+        )
+
+        call_ctx = ServerCallContext()
+        ctx = RequestContext(
+            call_context=call_ctx,
+            task_id=task_id,
+            context_id=context_id,
+            task=None,
+        )
+
+        events: list[Any] = []
+
+        class RecordingQueue:
+            async def enqueue_event(self, event):
+                events.append(event)
+
+        initial_state = executor_module.AnswerArtifactState(
+            artifact_id=f"answer_{task_id}"
+        )
+        await executor._run_agent_loop(
+            ctx, RecordingQueue(), task_id, context_id, [], initial_state
+        )
+
+        artifact_updates = [
+            e for e in events if isinstance(e, TaskArtifactUpdateEvent)
+        ]
+        artifact_ids = [u.artifact.artifact_id for u in artifact_updates]
+
+        # Turn 0 keeps the legacy artifact IDs; later turns carry a turn suffix
+        assert f"answer_{task_id}" in artifact_ids
+        assert f"answer_{task_id}_turn_1" in artifact_ids
+        assert f"answer_{task_id}_turn_2" in artifact_ids
+        assert f"thinking_{task_id}" in artifact_ids
+        assert f"thinking_{task_id}_turn_1" in artifact_ids
+        assert f"thinking_{task_id}_turn_2" in artifact_ids
+        assert f"tool_{task_id}" in artifact_ids
+        assert f"tool_{task_id}_turn_1" in artifact_ids
+
+        # Fresh per-turn answer states carry the incremented turn counter
+        assert (f"answer_{task_id}", 0) in created_states
+        assert (f"answer_{task_id}_turn_1", 1) in created_states
+        assert (f"answer_{task_id}_turn_2", 2) in created_states
+
+        # Each turn's chunks land only in that turn's artifact
+        def text_of(artifact_id):
+            return "".join(
+                part.text
+                for u in artifact_updates
+                if u.artifact.artifact_id == artifact_id
+                for part in u.artifact.parts
+            )
+
+        assert "turn 1 chunk" in text_of(f"answer_{task_id}")
+        assert "turn 2 chunk" in text_of(f"answer_{task_id}_turn_1")
+        assert "final chunk" in text_of(f"answer_{task_id}_turn_2")
+        assert "turn 2 chunk" not in text_of(f"answer_{task_id}")
+
+        # First chunk of each turn must create its artifact (append=False)
+        def first_chunk(artifact_id):
+            return next(
+                u
+                for u in artifact_updates
+                if u.artifact.artifact_id == artifact_id and u.artifact.parts
+            )
+
+        assert first_chunk(f"answer_{task_id}").append is False
+        assert first_chunk(f"answer_{task_id}_turn_1").append is False
+
+        # Task must complete successfully (guards against silent loop failures)
+        completed = any(
+            isinstance(e, TaskStatusUpdateEvent)
+            and e.status.state == TaskState.TASK_STATE_COMPLETED
+            for e in events
+        )
+        assert completed
+
 
 class TestAgentSwitchContinuity:
     """Cross-agent conversation continuity with agent-owned task isolation."""

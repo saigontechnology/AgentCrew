@@ -189,9 +189,11 @@ class AgentCrewA2AExecutor(AgentExecutor):
     ) -> AnswerArtifactState:
         """Build AnswerArtifactState from persisted task snapshot.
 
-        Checks context.current_task.artifacts to determine if an answer
-        artifact already exists. Sets emitted=True only when the artifact
-        is found; otherwise leaves it False so the next chunk creates it.
+        Checks context.current_task.artifacts to find the latest answer
+        artifact across turns (turn 0 uses ``answer_{task_id}``, later turns
+        use ``answer_{task_id}_turn_{n}``). Sets emitted=True only when an
+        artifact is found; otherwise leaves it False so the next chunk
+        creates it.
         """
         artifact_id = f"answer_{task_id}"
         state = AnswerArtifactState(artifact_id=artifact_id)
@@ -200,13 +202,32 @@ class AgentCrewA2AExecutor(AgentExecutor):
         if task is None:
             return state
 
+        turn_prefix = f"answer_{task_id}_turn_"
+        latest_artifact: Artifact | None = None
+        latest_turn = -1
+
         for artifact in task.artifacts:
+            artifact_turn = 0
             if artifact.artifact_id == artifact_id:
-                state.emitted = True
-                state.accumulated_text = "".join(
-                    part.text for part in artifact.parts if part.HasField("text")
-                )
-                break
+                artifact_turn = 0
+            elif artifact.artifact_id.startswith(turn_prefix):
+                suffix = artifact.artifact_id[len(turn_prefix):]
+                if not suffix.isdigit():
+                    continue
+                artifact_turn = int(suffix)
+            else:
+                continue
+            if artifact_turn > latest_turn:
+                latest_turn = artifact_turn
+                latest_artifact = artifact
+
+        if latest_artifact is not None:
+            state.artifact_id = latest_artifact.artifact_id
+            state.turn = latest_turn
+            state.emitted = True
+            state.accumulated_text = "".join(
+                part.text for part in latest_artifact.parts if part.HasField("text")
+            )
 
         return state
 
@@ -520,8 +541,14 @@ class AgentCrewA2AExecutor(AgentExecutor):
                     if think_text:
                         think_state = getattr(answer_state, "_think_state", None)
                         if think_state is None:
+                            if answer_state.turn > 0:
+                                think_artifact_id = (
+                                    f"thinking_{task_id}_turn_{answer_state.turn}"
+                                )
+                            else:
+                                think_artifact_id = f"thinking_{task_id}"
                             think_state = AnswerArtifactState(
-                                artifact_id=f"thinking_{task_id}"
+                                artifact_id=think_artifact_id
                             )
                             answer_state._think_state = think_state
                         await event_queue.enqueue_event(
@@ -546,9 +573,12 @@ class AgentCrewA2AExecutor(AgentExecutor):
             if tool_uses:
                 from .adapters import convert_agent_response_to_a2a_artifact
 
+                tool_artifact_id = f"tool_{task_id}"
+                if answer_state.turn > 0:
+                    tool_artifact_id = f"tool_{task_id}_turn_{answer_state.turn}"
                 tool_artifact = convert_agent_response_to_a2a_artifact(
                     "",
-                    artifact_id=f"tool_{task_id}",
+                    artifact_id=tool_artifact_id,
                     tool_uses=tool_uses,
                 )
                 if tool_artifact:
@@ -588,7 +618,13 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 if result == ToolCallResult.INPUT_REQUIRED:
                     return "", token_usage
 
-                # Recurse with same answer_state — append flag is preserved
+                # Recurse with a fresh state for the next turn so each LLM/tool
+                # round streams into its own per-turn artifact
+                next_turn = answer_state.turn + 1
+                next_answer_state = AnswerArtifactState(
+                    artifact_id=f"answer_{task_id}_turn_{next_turn}",
+                    turn=next_turn,
+                )
                 return await self._process_task(
                     context,
                     event_queue,
@@ -599,7 +635,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                     artifacts,
                     token_usage,
                     retried_count,
-                    answer_state,
+                    next_answer_state,
                 )
 
             # Finalize — mark last chunk
@@ -1019,12 +1055,14 @@ class AnswerArtifactState:
 
     Attributes:
         artifact_id: Stable artifact ID for the answer.
+        turn: Zero-based turn counter; incremented on each new-turn recursion.
         emitted: Whether at least one chunk has been emitted.
         accumulated_text: Full accumulated text for deduplication purposes.
     """
 
-    def __init__(self, artifact_id: str) -> None:
+    def __init__(self, artifact_id: str, turn: int = 0) -> None:
         self.artifact_id = artifact_id
+        self.turn = turn
         self.emitted = False
         self.accumulated_text = ""
         self._think_state: AnswerArtifactState | None = None
