@@ -23,7 +23,7 @@ from typing import Any
 
 from a2a.server.context import ServerCallContext
 from a2a.server.tasks.task_store import TaskStore
-from a2a.types.a2a_pb2 import ListTasksRequest, ListTasksResponse, Task
+from a2a.types.a2a_pb2 import ListTasksRequest, ListTasksResponse, Task, TaskState
 from google.protobuf.json_format import MessageToDict, ParseDict
 
 # ---------------------------------------------------------------------------
@@ -65,6 +65,113 @@ def atomic_write(path: str, data: Any) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
+_TERMINAL_TASK_STATES = {
+    TaskState.TASK_STATE_COMPLETED,
+    TaskState.TASK_STATE_CANCELED,
+    TaskState.TASK_STATE_FAILED,
+    TaskState.TASK_STATE_REJECTED,
+}
+
+
+def _task_to_jsonl_line(task: Task) -> str:
+    """Serialize a Task as one compact JSONL line (camelCase keys)."""
+    d = MessageToDict(
+        task,
+        preserving_proto_field_name=False,
+        always_print_fields_with_no_presence=True,
+    )
+    return json.dumps(d, separators=(",", ":")) + "\n"
+
+
+def _parse_task_line(line: str) -> Task | None:
+    """Parse a single JSONL line into a Task; None when torn/invalid."""
+    try:
+        d = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(d, dict):
+        return None
+    try:
+        task = Task()
+        ParseDict(d, task)
+        return task
+    except Exception:
+        return None
+
+
+def _is_single_json_object(content: str) -> bool:
+    """True when *content* is a single JSON object (legacy task file)."""
+    try:
+        return isinstance(json.loads(content), dict)
+    except (json.JSONDecodeError, ValueError):
+        return False
+
+
+def _inspect_task_file(path: str) -> tuple[Task | None, int]:
+    """Read *path* once; return the latest task and its JSONL line count.
+
+    A count of ``-1`` marks a legacy single-object JSON file that still needs
+    migration to JSONL on the next save. Torn/invalid JSONL lines are
+    ignored when counting so a crash mid-append cannot poison steady-state
+    appends.
+    """
+    try:
+        content = _read_content(path)
+    except OSError:
+        return None, 0
+    if not content.strip():
+        return None, 0
+    if _is_single_json_object(content) and "\n" in content.strip("\n"):
+        try:
+            task = Task()
+            ParseDict(json.loads(content), task)
+            return task, -1
+        except Exception:
+            return None, -1
+    last_task = None
+    count = 0
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        task = _parse_task_line(line)
+        if task is not None:
+            last_task = task
+            count += 1
+    return last_task, count
+
+
+def _read_content(path: str) -> str:
+    """Synchronous helper: read raw file content."""
+    with open(path) as f:
+        return f.read()
+
+
+def _append_jsonl(path: str, line: str) -> None:
+    """Append one JSONL line to *path*, preserving a JSONL record boundary.
+
+    Inspects only the final byte and inserts a newline when a non-empty file
+    does not end with one, so a torn trailing fragment left by a crash
+    mid-append cannot merge with the next snapshot into one invalid line.
+    """
+    with open(path, "a+") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        if size > 0:
+            f.seek(size - 1)
+            if f.read(1) != "\n":
+                f.write("\n")
+        f.write(line)
+
+
+def _write_jsonl_single(path: str, line: str) -> None:
+    """Atomically rewrite *path* containing only *line* (tmp + replace)."""
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(line)
     os.replace(tmp, path)
 
 
@@ -460,7 +567,20 @@ class InMemoryAgentCrewTaskStore(TaskStore):
 
 
 class FileAgentCrewTaskStore(TaskStore):
-    """File-backed SDK TaskStore — tasks survive restart. Agent-namespaced subdir."""
+    """File-backed SDK TaskStore — tasks survive restart. Agent-namespaced subdir.
+
+    Tasks are persisted as JSONL: every ``save()`` appends one compact JSON
+    snapshot line, and reads return the LAST valid line (tolerating a torn
+    trailing line). Legacy single-object JSON files written by earlier
+    versions are still readable and migrated on the next save. Files are
+    compacted atomically back to a single line once the tracked snapshot
+    count reaches ``_JSONL_COMPACTION_THRESHOLD`` or the saved task reaches
+    a terminal state. Steady-state saves append without rereading prior
+    snapshots; ``MessageToDict`` and ``Task.CopyFrom`` still scale with the
+    current task size.
+    """
+
+    _JSONL_COMPACTION_THRESHOLD = 100
 
     def __init__(
         self, base_dir: str = ".agentcrew/a2a_v1", agent_namespace: str = ""
@@ -472,22 +592,52 @@ class FileAgentCrewTaskStore(TaskStore):
             else os.path.join(base_dir, "tasks")
         )
         os.makedirs(self._base_dir, exist_ok=True)
-        self._lock = asyncio.Lock()
+        self._file_locks: dict[str, asyncio.Lock] = {}
         self._cache: dict[str, Task] = {}
+        # Per-path JSONL snapshot line count; -1 marks a legacy file pending
+        # migration. An absent key means the file has not been inspected yet.
+        self._line_counts: dict[str, int] = {}
+
+    def _lock_for(self, path: str) -> asyncio.Lock:
+        if path not in self._file_locks:
+            self._file_locks[path] = asyncio.Lock()
+        return self._file_locks[path]
 
     def _task_path(self, task_id: str, owner: str) -> str:
         return os.path.join(self._base_dir, f"task_{owner}_{_safe_name(task_id)}.json")
 
+    async def _line_count_for(self, path: str) -> int:
+        """Tracked JSONL line count for *path*, initializing from disk once.
+
+        Must be called while holding the per-path lock. Legacy files are
+        reported as ``-1`` and migrated by the next ``save()``.
+        """
+        count = self._line_counts.get(path)
+        if count is None:
+            if os.path.exists(path):
+                _, count = await asyncio.to_thread(_inspect_task_file, path)
+            else:
+                count = 0
+            self._line_counts[path] = count
+        return count
+
     async def save(self, task: Task, context: ServerCallContext) -> None:
         owner = _owner_key(context)
         path = self._task_path(task.id, owner)
-        d = MessageToDict(
-            task,
-            preserving_proto_field_name=False,
-            always_print_fields_with_no_presence=True,
-        )
-        async with self._lock:
-            await asyncio.to_thread(atomic_write, path, d)
+        line = _task_to_jsonl_line(task)
+        is_terminal = task.status.state in _TERMINAL_TASK_STATES
+        async with self._lock_for(path):
+            count = await self._line_count_for(path)
+            if (
+                count == -1
+                or is_terminal
+                or count >= self._JSONL_COMPACTION_THRESHOLD
+            ):
+                await asyncio.to_thread(_write_jsonl_single, path, line)
+                self._line_counts[path] = 1
+            else:
+                await asyncio.to_thread(_append_jsonl, path, line)
+                self._line_counts[path] = count + 1
             t = Task()
             t.CopyFrom(task)
             self._cache[f"{owner}:{task.id}"] = t
@@ -495,40 +645,52 @@ class FileAgentCrewTaskStore(TaskStore):
     async def get(self, task_id: str, context: ServerCallContext) -> Task | None:
         owner = _owner_key(context)
         ck = f"{owner}:{task_id}"
-        async with self._lock:
+        path = self._task_path(task_id, owner)
+        async with self._lock_for(path):
             if ck in self._cache:
                 t = Task()
                 t.CopyFrom(self._cache[ck])
                 return t
-        path = self._task_path(task_id, owner)
-        if not os.path.exists(path):
-            return None
-        d = await asyncio.to_thread(_read_json, path)
-        task = Task()
-        ParseDict(d, task)
-        async with self._lock:
-            t = Task()
-            t.CopyFrom(task)
-            self._cache[ck] = t
-        return task
+            if not os.path.exists(path):
+                return None
+            task, count = await asyncio.to_thread(_inspect_task_file, path)
+            if task is None:
+                return None
+            self._line_counts[path] = count
+            cached = Task()
+            cached.CopyFrom(task)
+            self._cache[ck] = cached
+            result = Task()
+            result.CopyFrom(cached)
+            return result
 
     async def list(
         self, params: ListTasksRequest, context: ServerCallContext
     ) -> ListTasksResponse:
         owner = _owner_key(context)
-        async with self._lock:
-            # Populate cache from disk if needed
-            tasks = []
-            for fname in os.listdir(self._base_dir):
-                if fname.startswith(f"task_{owner}_") and fname.endswith(".json"):
-                    ck = f"{owner}:{fname[len(f'task_{owner}_') : -5]}"
-                    if ck not in self._cache:
-                        fpath = os.path.join(self._base_dir, fname)
-                        d = await asyncio.to_thread(_read_json, fpath)
-                        task = Task()
-                        ParseDict(d, task)
-                        self._cache[ck] = task
-                    tasks.append(self._cache[ck])
+        tasks = []
+        for fname in await asyncio.to_thread(os.listdir, self._base_dir):
+            if fname.startswith(f"task_{owner}_") and fname.endswith(".json"):
+                ck = f"{owner}:{fname[len(f'task_{owner}_') : -5]}"
+                path = os.path.join(self._base_dir, fname)
+                async with self._lock_for(path):
+                    if ck in self._cache:
+                        t = Task()
+                        t.CopyFrom(self._cache[ck])
+                        tasks.append(t)
+                        continue
+                    if not os.path.exists(path):
+                        continue
+                    task, count = await asyncio.to_thread(_inspect_task_file, path)
+                    if task is None:
+                        continue
+                    self._line_counts[path] = count
+                    cached = Task()
+                    cached.CopyFrom(task)
+                    self._cache[ck] = cached
+                    t = Task()
+                    t.CopyFrom(cached)
+                    tasks.append(t)
         return ListTasksResponse(
             tasks=tasks, total_size=len(tasks), page_size=len(tasks)
         )
@@ -536,9 +698,10 @@ class FileAgentCrewTaskStore(TaskStore):
     async def delete(self, task_id: str, context: ServerCallContext) -> None:
         owner = _owner_key(context)
         path = self._task_path(task_id, owner)
-        async with self._lock:
+        async with self._lock_for(path):
             self._cache.pop(f"{owner}:{task_id}", None)
-        await asyncio.to_thread(_remove_sync, path)
+            self._line_counts.pop(path, None)
+            await asyncio.to_thread(_remove_sync, path)
 
 
 class RedisAgentCrewTaskStore(TaskStore):
