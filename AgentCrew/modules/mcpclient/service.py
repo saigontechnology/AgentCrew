@@ -63,7 +63,7 @@ class MCPService:
         self.file_handler: FileHandler | None = None
         self._config_manager: MCPConfigManager | None = None
         self._acp_server_configs: dict[str, MCPServerConfig] = {}
-        self._oauth_locks: dict[str, asyncio.Lock] = {}
+        self._oauth_locks: dict[tuple[str, int], asyncio.Lock] = {}
 
     def _get_file_handler(self) -> FileHandler:
         if self.file_handler is None:
@@ -88,10 +88,18 @@ class MCPService:
         return None
 
     def _get_oauth_lock(self, server_name: str) -> asyncio.Lock:
-        """Get or create a per-server asyncio.Lock for serializing OAuth flows."""
-        if server_name not in self._oauth_locks:
-            self._oauth_locks[server_name] = asyncio.Lock()
-        return self._oauth_locks[server_name]
+        """Get or create a per-server per-event-loop asyncio.Lock for OAuth flows.
+
+        The lock is keyed by ``(server_name, event loop id)`` so each event
+        loop gets its own lock. ``asyncio.Lock`` binds lazily to the loop
+        that first acquires it; a single cached lock shared across loops
+        (e.g. the A2A server loop and a background-thread ``asyncio.run()``
+        loop) raises "bound to a different event loop".
+        """
+        key = (server_name, id(asyncio.get_running_loop()))
+        if key not in self._oauth_locks:
+            self._oauth_locks[key] = asyncio.Lock()
+        return self._oauth_locks[key]
 
     async def _create_session(
         self, server_config: MCPServerConfig
@@ -99,10 +107,11 @@ class MCPService:
         """Create a temporary MCP client session.
 
         For streaming (HTTP/SSE) servers, session creation is serialized per
-        server via an asyncio.Lock. This prevents concurrent OAuth flows from
-        conflicting on the same callback port: the first call triggers OAuth
-        and saves the token, while subsequent calls wait for the lock, then
-        find a valid token and skip OAuth entirely.
+        server per event loop via an asyncio.Lock. This prevents concurrent
+        OAuth flows from conflicting on the same callback port: the first
+        call triggers OAuth and saves the token, while subsequent calls on
+        the same event loop wait for the lock, then find a valid token and
+        skip OAuth entirely.
 
         Returns ``(session, ctx)`` where ``ctx`` is the transport context
         manager. The caller must call :meth:`_close_session` when done.
@@ -116,7 +125,7 @@ class MCPService:
     async def _create_session_impl(
         self, server_config: MCPServerConfig
     ) -> tuple[ClientSession, Any]:
-        """Internal session creation (called under per-server OAuth lock for streaming servers)."""
+        """Internal session creation (called under the per-server per-loop OAuth lock for streaming servers)."""
         if server_config.streaming_server:
             headers = server_config.headers or {}
             token_storage = self._build_token_storage(server_config)

@@ -75,6 +75,7 @@ class LocalAgent(BaseAgent):
         )  # Set of tool names that are registered with the LLM
         self._defer_tool_registration = False
         self.mcps_loading = []
+        self._mcp_discovery_task: asyncio.Task | None = None
 
         from AgentCrew.modules.agents.manager import AgentMode
 
@@ -280,14 +281,61 @@ class LocalAgent(BaseAgent):
         """
         Async variant of :meth:`activate`.
 
-        Currently delegates to the sync implementation because MCP discovery
-        already runs in a background thread. Future variants may await
-        discovery on the current event loop.
+        Replicates the sync activation steps but runs MCP discovery natively
+        on the current event loop as a non-blocking background task instead
+        of spawning a thread with ``asyncio.run()``. Async callers
+        (transfer, delegate, ACP, chat commands, A2A turn executor/agent
+        manager) should use this method to keep MCP work on their own event
+        loop and avoid cross-event-loop asyncio primitives.
 
         Returns:
             True if activation was successful, False otherwise
         """
-        return self.activate()
+        if not self.llm:
+            return False
+
+        if self.is_active:
+            return True  # Already active
+
+        self.register_tools()
+
+        # Run MCP discovery on the current loop as a non-blocking background
+        # task. The task reference is held so it cannot be garbage collected;
+        # exceptions are logged inside the wrapper coroutine.
+        from AgentCrew.modules.mcpclient import MCPSessionManager
+
+        mcp_manager = MCPSessionManager.get_instance()
+        if mcp_manager.initialized:
+            self._mcp_discovery_task = asyncio.create_task(
+                self._run_mcp_discovery(mcp_manager)
+            )
+
+        system_prompt = (
+            f"<Name>{self.name}</Name>\n"
+            f"<Description>{self.description}</Description>\n"
+            f"<Instructions>\n{self.get_system_prompt()}\n</Instructions>"
+        )
+        if self.custom_system_prompt:
+            system_prompt = f"{system_prompt}\n\n{self.custom_system_prompt}"
+        if self.tool_prompts:
+            system_prompt = f"{system_prompt}\n\n{'\n\n'.join(self.tool_prompts)}"
+
+        self.llm.set_system_prompt(self._parse_system_prompt(system_prompt))
+        self.llm.temperature = self.temperature if self.temperature is not None else 0.4
+        self._defer_tool_registration = True
+        self.is_active = True
+        return True
+
+    async def _run_mcp_discovery(self, mcp_manager) -> None:
+        """Run MCP discovery for this agent on the current event loop.
+
+        Wraps the manager discovery call so failures are logged instead of
+        surfacing as unhandled background task exceptions.
+        """
+        try:
+            await mcp_manager.discover_mcps_for_agent(self.name)
+        except Exception:
+            logger.exception(f"LocalAgent: MCP discovery failed for '{self.name}'")
 
     def _register_tools_with_llm(self):
         """Register all of this agent's tools with the LLM service."""
