@@ -200,9 +200,7 @@ async def test_tool_recursion_stops_prior_turn_flush_tasks(monkeypatch):
     assert all(t.done() for t in tracked), "no prior-turn timer may stay alive"
 
     artifact_ids = [
-        e.artifact.artifact_id
-        for e in events
-        if isinstance(e, TaskArtifactUpdateEvent)
+        e.artifact.artifact_id for e in events if isinstance(e, TaskArtifactUpdateEvent)
     ]
     assert "answer_t1" in artifact_ids
     assert "answer_t1_turn_1" in artifact_ids
@@ -243,9 +241,7 @@ async def test_input_required_stops_flush_task(monkeypatch):
 
     agent = _FakeAgent([ask_turn])
     executor = _make_executor(agent)
-    executor._execute_tool_calls = AsyncMock(
-        return_value=ToolCallResult.INPUT_REQUIRED
-    )
+    executor._execute_tool_calls = AsyncMock(return_value=ToolCallResult.INPUT_REQUIRED)
 
     events = await _run_and_drain(executor, EventQueueLegacy(max_queue_size=1024))
 

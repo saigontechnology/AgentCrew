@@ -38,9 +38,7 @@ class AttachmentProcessor:
             self._file_handler = FileHandler()
         return self._file_handler
 
-    async def process_attachments(
-        self, user_message: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def process_attachments(self, user_message: dict[str, Any]) -> dict[str, Any]:
         """Process any file or file_uri content items through FileHandler.
 
         Replaces inline file payloads and file URIs with their FileHandler-processed

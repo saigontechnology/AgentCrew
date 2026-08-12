@@ -1208,9 +1208,7 @@ class TestMultiTurnArtifacts:
             ctx, RecordingQueue(), task_id, context_id, [], initial_state
         )
 
-        artifact_updates = [
-            e for e in events if isinstance(e, TaskArtifactUpdateEvent)
-        ]
+        artifact_updates = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
         artifact_ids = [u.artifact.artifact_id for u in artifact_updates]
 
         # Turn 0 keeps the legacy artifact IDs; later turns carry a turn suffix

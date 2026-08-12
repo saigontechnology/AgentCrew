@@ -272,8 +272,7 @@ class TestA2AServerOrphanedTasks:
         assert events[0].id == "orphan-working"
         assert events[0].status.state == TaskState.TASK_STATE_FAILED
         assert (
-            events[0].status.message.parts[0].text
-            == "Task execution was interrupted."
+            events[0].status.message.parts[0].text == "Task execution was interrupted."
         )
         # The FAILED state is persisted for future resubscribes.
         persisted = asyncio.run(store.get("orphan-working", ctx))
@@ -378,9 +377,7 @@ class TestA2AServerOrphanedTasks:
         from AgentCrew.modules.a2a.session_store import FileAgentCrewTaskStore
 
         ctx = ServerCallContext()
-        store = FileAgentCrewTaskStore(
-            base_dir=str(tmp_path), agent_namespace="stub"
-        )
+        store = FileAgentCrewTaskStore(base_dir=str(tmp_path), agent_namespace="stub")
         asyncio.run(
             store.save(
                 Task(
@@ -429,9 +426,7 @@ class TestA2AServerOrphanedTasks:
             pass
 
         # Fresh store instance reads the reconciled state from disk.
-        store2 = FileAgentCrewTaskStore(
-            base_dir=str(tmp_path), agent_namespace="stub"
-        )
+        store2 = FileAgentCrewTaskStore(base_dir=str(tmp_path), agent_namespace="stub")
         orphan = asyncio.run(store2.get("restart-orphan", ctx))
         assert orphan is not None
         assert orphan.status.state == TaskState.TASK_STATE_FAILED

@@ -100,9 +100,7 @@ class AgentCrewRequestHandlerV2(DefaultRequestHandlerV2):
         # resume it. Mark FAILED and persist so this resubscribe terminates
         # instead of hanging on an idle SDK producer.
         task.status.state = TaskState.TASK_STATE_FAILED
-        task.status.message.parts.add(
-            text="Task execution was interrupted."
-        )
+        task.status.message.parts.add(text="Task execution was interrupted.")
         await self.task_store.save(task, context)
         yield task
 

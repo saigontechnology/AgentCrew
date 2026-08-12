@@ -1277,7 +1277,5 @@ class TestParallelDescribe:
             ("0", 4),
             ("-2", 4),
         ]:
-            with patch.dict(
-                os.environ, {"AGENTCREW_VISION_CONCURRENCY": value}
-            ):
+            with patch.dict(os.environ, {"AGENTCREW_VISION_CONCURRENCY": value}):
                 assert _resolve_describe_concurrency() == expected, (value, expected)

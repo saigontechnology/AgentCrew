@@ -628,11 +628,7 @@ class FileAgentCrewTaskStore(TaskStore):
         is_terminal = task.status.state in _TERMINAL_TASK_STATES
         async with self._lock_for(path):
             count = await self._line_count_for(path)
-            if (
-                count == -1
-                or is_terminal
-                or count >= self._JSONL_COMPACTION_THRESHOLD
-            ):
+            if count == -1 or is_terminal or count >= self._JSONL_COMPACTION_THRESHOLD:
                 await asyncio.to_thread(_write_jsonl_single, path, line)
                 self._line_counts[path] = 1
             else:

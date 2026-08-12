@@ -65,9 +65,8 @@ class TestPerEventLoopOAuthLocks:
         service = MCPService()
 
         async def acquire():
-            assert (
-                service._get_oauth_lock("server_a")
-                is not service._get_oauth_lock("server_b")
+            assert service._get_oauth_lock("server_a") is not service._get_oauth_lock(
+                "server_b"
             )
 
         asyncio.run(acquire())
@@ -83,9 +82,7 @@ class TestActivateAsyncDiscovery:
             tools=[],
         )
         monkeypatch.setattr(agent, "register_tools", lambda: None)
-        monkeypatch.setattr(
-            MCPSessionManager, "get_instance", lambda: fake_manager
-        )
+        monkeypatch.setattr(MCPSessionManager, "get_instance", lambda: fake_manager)
         return agent
 
     def test_activate_async_runs_discovery_on_current_loop(self, monkeypatch):
