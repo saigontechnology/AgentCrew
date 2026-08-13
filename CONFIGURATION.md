@@ -149,6 +149,38 @@ Add OpenAI-compatible providers like llama.cpp, Ollama, or LM Studio:
 }
 ```
 
+```json
+  "custom_llm_providers": [
+    {
+      "name": "ollama",
+      "type": "openai_compatible",
+      "api_base_url": "http://localhost:11434/v1",
+      "api_key": "ollama", # any string for placeholder
+      "default_model_id": "llama3.2:latest",
+      "available_models": [
+        {
+          "id": "llama3.2:latest",
+          "name": "Ollama llama3.2:latest",
+          "provider": "ollama",
+          "capabilities": ["tool_use", "stream"],
+          "default": true,
+          "description": "Local Ollama model",
+          "input_token_price_1m": 0.0,
+          "output_token_price_1m": 0.0,
+          "cached_token_price_1m": 0.0,
+          "default_reasoning": null,
+          "max_context_token": 72000,
+          "service_name": null,
+          "force_sample_params": null
+        }
+      ],
+      "is_stream": false,
+      "extra_headers": {}
+    }
+  ]
+}
+```
+
 **Fields:**
 
 - `name` - Unique identifier for the provider
