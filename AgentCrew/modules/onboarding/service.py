@@ -5,10 +5,11 @@ import os
 import re
 import sys
 import tomllib
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from prompt_toolkit import prompt
+from prompt_toolkit import PromptSession, prompt
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
@@ -212,6 +213,21 @@ _ONBOARDING_STYLE = Style.from_dict(
 )
 
 
+@dataclass
+class OnboardingGenerationResult:
+    """Result of the onboarding agent-definition generation chat.
+
+    Attributes:
+        toml_definition: Raw LLM response containing a valid agent definition.
+        last_response: Last assistant text produced before failure, if any.
+        error: Human-readable failure reason, if generation did not succeed.
+    """
+
+    toml_definition: str | None = None
+    last_response: str | None = None
+    error: str | None = None
+
+
 class OnboardingService:
     """Guides new users through creating their first agent interactively."""
 
@@ -332,24 +348,32 @@ class OnboardingService:
         self._print_status("Creating your agent '" + agent_name + "'...")
 
         try:
-            toml_definition = asyncio.run(
+            result = asyncio.run(
                 self._run_onboarding_chat(agent_name, agent_description)
             )
         except Exception as e:
             logger.warning("Onboarding LLM call failed: " + str(e))
-            toml_definition = None
+            result = OnboardingGenerationResult(error=f"{type(e).__name__}: {e}")
 
-        if not toml_definition:
-            self._print_error(
-                "Failed to generate agent definition. You can create one manually in agents.toml."
+        if result.toml_definition:
+            if not self._save_agent(result.toml_definition):
+                return False
+
+            self._print_success(
+                "Agent '" + agent_name + "' has been saved to agents.toml!"
             )
-            return False
+            return True
 
-        if not self._save_agent(toml_definition):
-            return False
+        if result.error or result.last_response:
+            failure_message = "Failed to generate agent definition."
+            if result.error:
+                failure_message += "\nReason: " + result.error
+            if result.last_response:
+                failure_message += "\n\nLast model response:\n" + result.last_response
+            failure_message += "\n\nYou can create one manually in agents.toml."
+            self._print_error(failure_message)
 
-        self._print_success("Agent '" + agent_name + "' has been saved to agents.toml!")
-        return True
+        return False
 
     def _print_header(self) -> None:
         self.console.print("")
@@ -451,8 +475,9 @@ class OnboardingService:
 
     async def _run_onboarding_chat(
         self, agent_name: str, agent_description: str
-    ) -> str | None:
+    ) -> OnboardingGenerationResult:
         """Run a multi-turn conversation with the LLM to gather info and generate an agent."""
+        last_response: str | None = None
         try:
             initial_message = (
                 "I want to create a personalized agent.\n\n"
@@ -474,34 +499,43 @@ class OnboardingService:
                     onboarding_agent, prompt
                 )
                 if not isinstance(result_text, str):
-                    return None
+                    return OnboardingGenerationResult(
+                        error="LLM returned an empty or invalid response."
+                    )
+                last_response = result_text
 
                 extracted = OnboardingService._extract_toml(result_text)
-                print(result_text)
                 if extracted:
                     try:
                         parsed = tomllib.loads(extracted)
                         if OnboardingService._looks_like_agent_definition(parsed):
-                            return result_text
+                            return OnboardingGenerationResult(
+                                toml_definition=result_text
+                            )
                     except Exception:
                         logger.debug("Failed to parse extracted text as TOML")
 
                 self._print_assistant_message(result_text)
 
-                user_answer = self._ask_onboarding_input()
+                user_answer = await self._ask_onboarding_input()
                 if user_answer is None:
-                    return None
+                    return OnboardingGenerationResult()
 
                 conversation.append({"assistant": result_text, "user": user_answer})
 
-            self._print_error(
-                "Reached maximum conversation turns without getting an agent definition."
+            return OnboardingGenerationResult(
+                error=(
+                    "Reached maximum conversation turns without getting a valid "
+                    "agent definition."
+                ),
+                last_response=last_response,
             )
-            return None
 
         except Exception as e:
             logger.warning("LLM agent generation failed: " + str(e))
-            return None
+            return OnboardingGenerationResult(
+                error=f"{type(e).__name__}: {e}", last_response=last_response
+            )
 
     def _build_onboarding_agent(self) -> LocalAgent:
         onboarding_agent = LocalAgent(
@@ -551,7 +585,7 @@ class OnboardingService:
         )
         self.console.print("")
 
-    def _ask_onboarding_input(self) -> str | None:
+    async def _ask_onboarding_input(self) -> str | None:
         kb = self._kb_skip()
 
         @kb.add(Keys.ControlS)
@@ -559,7 +593,7 @@ class OnboardingService:
             """Submit on Ctrl+S."""
             event.current_buffer.validate_and_handle()
 
-        result = prompt(
+        result = await PromptSession().prompt_async(
             HTML(
                 "<ansigreen>Your answer</ansigreen> <ansigrey>(type 'skip' to cancel, Alt+Enter or Ctrl+S to submit)</ansigrey>\n"
             ),
