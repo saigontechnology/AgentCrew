@@ -27,6 +27,7 @@ from ..constants import (
     RICH_STYLE_YELLOW,
     RICH_STYLE_YELLOW_BOLD,
 )
+from .search import ConversationSearchIndex, SearchMatch
 
 
 class ConversationBrowserUI:
@@ -44,6 +45,7 @@ class ConversationBrowserUI:
         self.scroll_offset = 0
         self._get_conversation_history = get_conversation_history
         self._preview_cache: dict[str, tuple[list[dict[str, Any]], int]] = {}
+        self._search_index = ConversationSearchIndex(get_conversation_history)
         self.selected_items: set[int] = set()
         self._live: Live | None = None
         self._layout: Layout | None = None
@@ -56,11 +58,12 @@ class ConversationBrowserUI:
 
     def set_conversations(self, conversations: list[dict[str, Any]]):
         """Set the conversations list to browse."""
-        self._all_conversations = conversations
-        self.conversations = conversations
+        self._all_conversations = list(conversations)
+        self.conversations = list(conversations)
         self.selected_index = 0
         self.scroll_offset = 0
         self._preview_cache.clear()
+        self._search_index.clear()
         self.selected_items.clear()
         self._search_query = ""
         self._search_mode = False
@@ -82,7 +85,7 @@ class ConversationBrowserUI:
         self._search_mode = False
         if clear_filter:
             self._search_query = ""
-            self.conversations = self._all_conversations
+            self.conversations = list(self._all_conversations)
             self.selected_index = 0
             self.scroll_offset = 0
             self.selected_items.clear()
@@ -105,15 +108,10 @@ class ConversationBrowserUI:
 
     def _filter_conversations(self):
         """Filter conversations based on search query."""
-        if not self._search_query:
-            self.conversations = self._all_conversations
-        else:
-            query_lower = self._search_query.lower()
-            self.conversations = [
-                c
-                for c in self._all_conversations
-                if query_lower in c.get("title", "").lower()
-            ]
+        self.conversations = self._search_index.filter(
+            self._all_conversations,
+            self._search_query,
+        )
         self.selected_index = 0
         self.scroll_offset = 0
         self.selected_items.clear()
@@ -145,12 +143,27 @@ class ConversationBrowserUI:
 
     def remove_conversations(self, indices: list[int]):
         """Remove conversations at specified indices and update UI state."""
-        for idx in sorted(indices, reverse=True):
-            if 0 <= idx < len(self.conversations):
-                convo_id = self.conversations[idx].get("id")
-                if convo_id:
-                    self._preview_cache.pop(convo_id, None)
-                del self.conversations[idx]
+        conversation_ids = {
+            self.conversations[idx].get("id")
+            for idx in indices
+            if 0 <= idx < len(self.conversations) and self.conversations[idx].get("id")
+        }
+        if not conversation_ids:
+            return
+
+        self._all_conversations = [
+            conversation
+            for conversation in self._all_conversations
+            if conversation.get("id") not in conversation_ids
+        ]
+        self.conversations = [
+            conversation
+            for conversation in self.conversations
+            if conversation.get("id") not in conversation_ids
+        ]
+        for conversation_id in conversation_ids:
+            self._preview_cache.pop(conversation_id, None)
+        self._search_index.remove(conversation_ids)
         self.selected_items.clear()
         if self.selected_index >= len(self.conversations):
             self.selected_index = max(0, len(self.conversations) - 1)
@@ -430,6 +443,13 @@ class ConversationBrowserUI:
 
         preview_lines.append(Text(""))
         preview_lines.append(meta_table)
+
+        search_match = (
+            self._search_index.get_match(convo_id) if self._search_query else None
+        )
+        if search_match is not None:
+            preview_lines.extend(self._create_search_match_preview(search_match))
+
         preview_lines.append(Text(""))
         preview_lines.append(Rule(title="Recent Messages", style=RICH_STYLE_GRAY))
 
@@ -490,6 +510,31 @@ class ConversationBrowserUI:
             border_style="green",
             box=ROUNDED,
         )
+
+    def _create_search_match_preview(self, match: SearchMatch) -> list[Text | Rule]:
+        """Render the first title or message match with surrounding context."""
+        source_label = "Title"
+        if match.source == "message":
+            source_label = (match.role or "message").capitalize()
+
+        header = Text()
+        header.append(f"{source_label}: ", style=RICH_STYLE_GREEN_BOLD)
+
+        snippet = match.snippet()
+        if snippet.has_leading_ellipsis:
+            header.append("…", style=RICH_STYLE_GRAY)
+        header.append(snippet.before, style=RICH_STYLE_WHITE)
+        header.append(snippet.matched, style="bold black on yellow")
+        header.append(snippet.after, style=RICH_STYLE_WHITE)
+        if snippet.has_trailing_ellipsis:
+            header.append("…", style=RICH_STYLE_GRAY)
+
+        return [
+            Text(""),
+            Rule(title="Search Match", style=RICH_STYLE_YELLOW),
+            Text(""),
+            header,
+        ]
 
     def _create_help_panel(self) -> Panel:
         """Create the help panel with keyboard shortcuts."""
@@ -569,7 +614,7 @@ class ConversationBrowserUI:
             search_table,
             border_style="cyan",
             box=ROUNDED,
-            title=Text("Search ", style=RICH_STYLE_YELLOW_BOLD),
+            title=Text("Search Titles & Messages ", style=RICH_STYLE_YELLOW_BOLD),
         )
 
     def _create_layout(self) -> Layout:
