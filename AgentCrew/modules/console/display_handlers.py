@@ -729,12 +729,26 @@ class DisplayHandlers:
         self.display_divider()
 
     def print_prompt_prefix(
-        self, agent_name: str, model_name: str, yolo_mode_enabled: bool
+        self,
+        agent_name: str,
+        model_name: str,
+        yolo_mode_enabled: bool,
+        reasoning_effort: str | None = None,
     ):
         """Print the prompt prefix with agent and model information."""
         title = Text(f"\n [{agent_name}", style=RICH_STYLE_RED)
         title.append(":")
-        title.append(f"{model_name}]", style=RICH_STYLE_BLUE)
+        title.append(f"{model_name}", style=RICH_STYLE_BLUE)
+
+        if reasoning_effort:
+            effort = (
+                reasoning_effort.name.lower()
+                if hasattr(reasoning_effort, "name")
+                else str(reasoning_effort).lower()
+            )
+            title.append(f":{effort}", style=RICH_STYLE_GREEN)
+
+        title.append("]")
 
         if yolo_mode_enabled:
             title.append("\n [YOLO mode enabled]", style=RICH_STYLE_YELLOW_BOLD)

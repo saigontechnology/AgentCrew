@@ -125,7 +125,7 @@ FIREWORKS_MODELS = [
             temperature=1.0,
         ),
         capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
-        default_reasoning="medium",
+        default_reasoning="high",
         input_token_price_1m=0.95,
         cached_token_price_1m=0.19,
         output_token_price_1m=4.0,

@@ -668,6 +668,7 @@ class ConsoleUI:
             self.message_handler.agent.name,
             self.message_handler.agent.get_model(),
             self.message_handler.tool_manager.get_effective_yolo_mode(),
+            getattr(self.message_handler.agent.llm, "reasoning_effort", None),
         )
 
         self.display_handlers.print_divider("👤 YOU: ", with_time=True)
