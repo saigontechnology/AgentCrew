@@ -501,9 +501,7 @@ class InputHandler:
                 self.message_handler.agent.name,
                 self.message_handler.agent.get_model(),
                 self.message_handler.tool_manager.get_effective_yolo_mode(),
-                getattr(
-                    self.message_handler.agent.llm, "reasoning_effort", None
-                ),
+                getattr(self.message_handler.agent.llm, "reasoning_effort", None),
             )
             self._start_input_thread()
         else:
@@ -513,9 +511,7 @@ class InputHandler:
                     self.message_handler.agent.name,
                     self.message_handler.agent.get_model(),
                     self.message_handler.tool_manager.get_effective_yolo_mode(),
-                    getattr(
-                        self.message_handler.agent.llm, "reasoning_effort", None
-                    ),
+                    getattr(self.message_handler.agent.llm, "reasoning_effort", None),
                 )
             self.clear_buffer()
 

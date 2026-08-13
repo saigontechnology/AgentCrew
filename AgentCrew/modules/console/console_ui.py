@@ -6,6 +6,7 @@ Refactored to use separate modules for different responsibilities.
 from __future__ import annotations
 
 import asyncio
+import os
 import queue
 import signal
 import sys
@@ -788,8 +789,21 @@ class ConsoleUI:
         )
         self.session_cost += self._total_cost
 
+    def _set_terminal_title(self) -> None:
+        """Set the terminal window title to '<current directory> - agentcrew'."""
+        title = f"{os.path.basename(os.getcwd())} - agentcrew"
+        try:
+            if sys.platform == "win32":
+                os.system(f"title {title}")
+            else:
+                sys.stdout.write(f"\x1b]0;{title}\x07")
+                sys.stdout.flush()
+        except OSError:
+            pass
+
     def start(self):
         """Start the console UI main loop."""
+        self._set_terminal_title()
         self.print_logo()
         self.print_welcome_message()
 
