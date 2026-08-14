@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+from array import array
+from bisect import bisect_right
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
@@ -21,6 +23,60 @@ class SearchFragment:
 
     role: str
     text: str
+    normalized_text: str = field(init=False, repr=False, compare=False)
+    _extra_normalized_offsets: array[int] | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        normalized_text = self.text.casefold()
+        object.__setattr__(self, "normalized_text", normalized_text)
+
+        if len(normalized_text) == len(self.text):
+            return
+
+        extra_normalized_offsets = array("I")
+        normalized_offset = 0
+        for char in self.text:
+            folded_length = len(char.casefold())
+            extra_normalized_offsets.extend(
+                range(normalized_offset + 1, normalized_offset + folded_length)
+            )
+            normalized_offset += folded_length
+
+        object.__setattr__(
+            self,
+            "_extra_normalized_offsets",
+            extra_normalized_offsets,
+        )
+
+    def find_span(self, normalized_query: str) -> tuple[int, int] | None:
+        """Find a normalized query and map its span back to the original text."""
+        normalized_start = self.normalized_text.find(normalized_query)
+        if normalized_start < 0:
+            return None
+
+        normalized_end = normalized_start + len(normalized_query)
+        if self._extra_normalized_offsets is None:
+            return normalized_start, normalized_end
+
+        original_start = normalized_start - bisect_right(
+            self._extra_normalized_offsets,
+            normalized_start,
+        )
+        last_normalized_offset = normalized_end - 1
+        original_end = (
+            last_normalized_offset
+            - bisect_right(
+                self._extra_normalized_offsets,
+                last_normalized_offset,
+            )
+            + 1
+        )
+        return original_start, original_end
 
 
 @dataclass(frozen=True)
@@ -191,7 +247,7 @@ class ConversationSearchIndex:
                 continue
 
             for fragment in self._get_message_fragments(conversation_id):
-                message_span = _find_casefold_span(fragment.text, normalized_query)
+                message_span = fragment.find_span(normalized_query)
                 if message_span is None:
                     continue
                 matches.append(conversation)

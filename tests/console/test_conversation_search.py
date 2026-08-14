@@ -9,6 +9,7 @@ from AgentCrew.modules.console.conversation_browser.browser_ui import (
 )
 from AgentCrew.modules.console.conversation_browser.search import (
     ConversationSearchIndex,
+    SearchFragment,
     SearchMatch,
     iter_searchable_message_text,
 )
@@ -82,6 +83,35 @@ def test_search_uses_unicode_casefold() -> None:
         start=0,
         end=6,
     )
+
+
+def test_search_fragment_precomputes_normalized_text_and_sparse_offsets() -> None:
+    ascii_fragment = SearchFragment(role="user", text="ALPHA beta")
+    unicode_fragment = SearchFragment(role="assistant", text="ß Straße")
+
+    assert ascii_fragment.normalized_text == "alpha beta"
+    assert ascii_fragment._extra_normalized_offsets is None
+    assert unicode_fragment.normalized_text == "ss strasse"
+    assert unicode_fragment._extra_normalized_offsets is not None
+    assert len(unicode_fragment._extra_normalized_offsets) == 2
+    assert unicode_fragment.find_span("sse") == (6, 8)
+
+
+def test_search_fragment_does_not_renormalize_text_for_each_query() -> None:
+    class CountingText(str):
+        casefold_calls = 0
+
+        def casefold(self) -> str:
+            self.casefold_calls += 1
+            return super().casefold()
+
+    text = CountingText("Alpha beta")
+    fragment = SearchFragment(role="user", text=text)
+
+    assert fragment.find_span("alpha") == (0, 5)
+    assert fragment.find_span("beta") == (6, 10)
+    assert fragment.find_span("missing") is None
+    assert text.casefold_calls == 1
 
 
 def test_match_snippet_collapses_whitespace_and_adds_ellipses() -> None:
