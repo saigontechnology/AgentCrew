@@ -10,7 +10,6 @@ from urllib.parse import unquote, urlparse
 
 from loguru import logger
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.auth.exceptions import OAuthRegistrationError
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
@@ -42,22 +41,6 @@ if TYPE_CHECKING:
 
 # Initialize the logger
 mcp_log_io = FileLogIO("mcpclient_agentcrew")
-
-# Bound on how long establishing a single MCP session (transport connect +
-# initialize) may take. A broken OAuth flow (e.g. an MCP server redirecting
-# client registration with a 307 to a sign-in page) can kill the transport's
-# background task while initialize() waits forever for a response; without
-# this bound such a failure hangs the caller and any A2A task using the tool.
-# The 24h httpx read timeout remains load-bearing for long-lived SSE/
-# server-push idle connections and intentionally only applies to reads, not
-# session setup.
-MCP_SESSION_SETUP_TIMEOUT = 60.0
-
-# Overall budget for a single stateless MCP tool call's connect phase (OAuth
-# lock acquisition + session setup). Kept slightly larger than the session-setup
-# budget so the descriptive session-setup TimeoutError surfaces before this
-# backstop fires.
-MCP_TOOL_CALL_TIMEOUT = MCP_SESSION_SETUP_TIMEOUT + 5.0
 
 
 class MCPService:
@@ -183,15 +166,7 @@ class MCPService:
             )
             ctx = stdio_client(server_params, errlog=mcp_log_io)
 
-        try:
-            stream_context = await asyncio.wait_for(
-                ctx.__aenter__(), timeout=MCP_SESSION_SETUP_TIMEOUT
-            )
-        except TimeoutError:
-            raise TimeoutError(
-                f"MCPService: timed out connecting to MCP server "
-                f"'{server_config.name}' after {MCP_SESSION_SETUP_TIMEOUT}s"
-            ) from None
+        stream_context = await ctx.__aenter__()
         read_stream, write_stream = stream_context[0], stream_context[1]
         session = ClientSession(read_stream, write_stream)
         try:
@@ -203,23 +178,13 @@ class MCPService:
         retried = 0
         while retried < 3:
             try:
-                await asyncio.wait_for(
-                    session.initialize(), timeout=MCP_SESSION_SETUP_TIMEOUT
-                )
+                await session.initialize()
                 return session, ctx
-            except TimeoutError:
-                await self._close_session(session, ctx)
-                raise TimeoutError(
-                    f"MCPService: timed out initializing MCP session with "
-                    f"'{server_config.name}' after {MCP_SESSION_SETUP_TIMEOUT}s"
-                ) from None
-            except OAuthRegistrationError:
-                await self._close_session(session, ctx)
-                raise
             except Exception:
                 retried += 1
                 if retried >= 3:
-                    await self._close_session(session, ctx)
+                    await session.__aexit__(None, None, None)
+                    await ctx.__aexit__(None, None, None)
                     raise
                 logger.warning(
                     f"MCPService: Retrying connection to '{server_config.name}' "
@@ -373,10 +338,7 @@ class MCPService:
                 session = None
                 ctx = None
                 try:
-                    session, ctx = await asyncio.wait_for(
-                        self._create_session(server_config),
-                        timeout=MCP_TOOL_CALL_TIMEOUT,
-                    )
+                    session, ctx = await self._create_session(server_config)
                     result = await session.call_tool(tool_name, params)
                     return await self._format_contents_async(result.content, session)
                 except Exception as e:
