@@ -871,7 +871,7 @@ class MessageHandler:
                 return False
 
             if hasattr(self.agent, "voice_enabled"):
-                return self.agent.voice_enabled == "enabled"
+                return getattr(self.agent, "voice_enabled", "disabled") == "enabled"
 
             return False
         except Exception as e:

@@ -858,7 +858,7 @@ class LocalAgent(BaseAgent):
 
     async def pre_process_message(
         self,
-        messages: list[dict[str, Any]] | None = None,
+        messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]] | None:
         """
         Run context.build hooks and pre-processing, returning the final
@@ -877,8 +877,6 @@ class LocalAgent(BaseAgent):
             self._register_tools_with_llm()
             self._defer_tool_registration = False
 
-        preparing_messages = messages or self.history
-
         from AgentCrew.modules.events.hook_payloads import (
             ContextBuildContext,
             ContextBuildResult,
@@ -893,7 +891,7 @@ class LocalAgent(BaseAgent):
         # ── context.build before hook ────────────────────────────────
         _before_payload: ContextBuildContext = {
             "system_prompt": self.llm.get_system_prompt() if self.llm else "",
-            "messages": preparing_messages,
+            "messages": messages,
         }
         _before_ctx = await _hooks.run_before(
             HookPoints.CONTEXT_BUILD,
@@ -903,14 +901,14 @@ class LocalAgent(BaseAgent):
             logger.info("context.build cancelled by before hook — aborting turn")
             return None
         if "messages" in _before_ctx:
-            preparing_messages = _before_ctx["messages"]
+            messages = _before_ctx["messages"]
         _before_sp = _before_ctx.get("system_prompt", "")
         _current_sp = self.llm.get_system_prompt() if self.llm else ""
         if _before_sp != _current_sp:
             self.llm.set_system_prompt(_before_sp)
         # ─────────────────────────────────────────────────────────────
 
-        self._clean_shrinkable_tool_result(preparing_messages)
+        self._clean_shrinkable_tool_result(messages)
         enhancing_messages = messages[:] if messages else self.history[:]
         self._enhance_agent_context_messages(enhancing_messages)
         from AgentCrew.modules.utils import VisionPreprocessingUtils
@@ -960,7 +958,7 @@ class LocalAgent(BaseAgent):
         if not self.llm:
             return
 
-        final_messages = await self.pre_process_message(messages)
+        final_messages = await self.pre_process_message(messages or self.history)
         if final_messages is None:
             return
 

@@ -50,10 +50,12 @@ class AgentCommands:
             self.message_handler.agent = (
                 self.message_handler.agent_manager.get_current_agent()
             )
-            old_agent = self.message_handler.agent_manager.get_agent(old_agent_name)
-            if old_agent:
-                self.message_handler.agent.history = list(old_agent.history)
-                old_agent.history = []
+            # prevents reset agent history already involved in conversation
+            if len(self.message_handler.agent.history) == 0:
+                old_agent = self.message_handler.agent_manager.get_agent(old_agent_name)
+                if old_agent:
+                    self.message_handler.agent.history = old_agent.history[:]
+                    old_agent.history = []
 
             try:
                 GlobalConfig().set_last_used_agent(agent_name)
