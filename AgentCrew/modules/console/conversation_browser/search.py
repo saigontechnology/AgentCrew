@@ -173,12 +173,6 @@ def iter_searchable_message_fragments(message: Any) -> Iterable[SearchFragment]:
             yield SearchFragment(role=role, text=text)
 
 
-def iter_searchable_message_text(message: Any) -> Iterable[str]:
-    """Yield user-visible text fragments from a persisted chat message."""
-    for fragment in iter_searchable_message_fragments(message):
-        yield fragment.text
-
-
 class ConversationSearchIndex:
     """
     Session-local full-text index for persisted conversations.

@@ -11,7 +11,7 @@ from AgentCrew.modules.console.conversation_browser.search import (
     ConversationSearchIndex,
     SearchFragment,
     SearchMatch,
-    iter_searchable_message_text,
+    iter_searchable_message_fragments,
 )
 
 
@@ -191,17 +191,21 @@ def test_loader_failure_is_cached_and_title_search_still_works() -> None:
     assert calls == 1
 
 
-def test_message_text_extractor_handles_malformed_content() -> None:
-    assert list(iter_searchable_message_text(None)) == []
-    assert list(iter_searchable_message_text({"role": "user", "content": 42})) == []
+def test_message_fragment_extractor_handles_malformed_content() -> None:
+    def extract_text(message: Any) -> list[str]:
+        return [
+            fragment.text for fragment in iter_searchable_message_fragments(message)
+        ]
+
+    assert extract_text({"role": "user", "content": "visible"}) == ["visible"]
+    assert extract_text(None) == []
+    assert extract_text({"role": "user", "content": 42}) == []
     assert (
-        list(
-            iter_searchable_message_text(
-                {
-                    "role": "assistant",
-                    "content": [None, {"type": "text", "text": 42}],
-                }
-            )
+        extract_text(
+            {
+                "role": "assistant",
+                "content": [None, {"type": "text", "text": 42}],
+            }
         )
         == []
     )
