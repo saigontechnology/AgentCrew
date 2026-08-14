@@ -218,8 +218,9 @@ class UtilityCommands:
         (context occupancy, not cumulative session consumption) and is clamped
         to zero from below.
         """
-        from AgentCrew.modules.llm.model_registry import ModelRegistry
         import os
+
+        from AgentCrew.modules.llm.model_registry import ModelRegistry
 
         model = ModelRegistry.get_instance().get_model(agent.get_model())
         limit = int(
