@@ -109,6 +109,13 @@ Or store keys in `~/.AgentCrew/config.json`:
 }
 ```
 
+Custom providers:
+
+Custom providers such as Ollama, llama.cpp, and LM Studio are configured in
+the same `~/.AgentCrew/config.json` file.
+See [Custom LLM Providers](CONFIGURATION.md#custom-llm-providers) for the full
+schema, llama.cpp configuration, model capabilities, and sampling options.
+
 **All supported providers:**
 
 | Provider         | Cost profile               | Best for                               |
