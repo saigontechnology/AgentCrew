@@ -289,11 +289,14 @@ You must analyze and plan out the steps then execute it with your available tool
         from AgentCrew.modules.llm.model_registry import ModelRegistry
 
         agent = self._agent
-        shrink_context_threshold = int(
-            os.getenv(
-                "AGENTCREW_DEFAULT_MAX_CONTEXT",
-                ModelRegistry.get_model_limit(agent.get_model()) * 0.85,
+        shrink_context_threshold = (
+            int(
+                os.getenv(
+                    "AGENTCREW_DEFAULT_MAX_CONTEXT",
+                    ModelRegistry.get_model_limit(agent.get_model()),
+                )
             )
+            * 0.85
         )
 
         unique_tool_indices = []

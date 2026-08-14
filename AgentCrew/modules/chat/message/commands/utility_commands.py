@@ -219,11 +219,17 @@ class UtilityCommands:
         to zero from below.
         """
         from AgentCrew.modules.llm.model_registry import ModelRegistry
+        import os
 
         model = ModelRegistry.get_instance().get_model(agent.get_model())
-        limit = model.max_context_token if model else None
+        limit = int(
+            os.getenv(
+                "AGENTCREW_DEFAULT_MAX_CONTEXT",
+                model.max_context_token if model else 0,
+            )
+        )
         occupied = max(0, int(getattr(agent.token_usage, "total_input_tokens", 0) or 0))
-        if limit is None:
+        if limit == 0:
             return None, occupied, None, None
         remaining = max(0, limit - occupied)
         return limit, occupied, remaining, (remaining / limit) * 100
@@ -240,7 +246,7 @@ class UtilityCommands:
             )
         else:
             context_line = (
-                f"Context: {cls._format_context_bar(percent)} "
+                f"Context: {cls._format_context_bar(percent or 0)} "
                 f"({cls._format_number(limit)} limit | "
                 f"{cls._format_number(occupied)} occupied)"
             )
