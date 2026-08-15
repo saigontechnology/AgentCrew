@@ -93,9 +93,9 @@ class ConversationUsage:
         cost: float = 0.0,
     ) -> None:
         """Accumulate one completed turn's usage into this conversation tracker."""
-        self.input_tokens += input_tokens
-        self.output_tokens += output_tokens
-        self.cached_tokens += cached_tokens
-        self.cache_creation_tokens += cache_creation_tokens
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cached_tokens = cached_tokens
+        self.cache_creation_tokens = cache_creation_tokens
         self.total_input_tokens += total_input_tokens
         self.cost += cost
