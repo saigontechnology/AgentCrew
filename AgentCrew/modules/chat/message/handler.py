@@ -410,6 +410,7 @@ class MessageHandler:
 
         # Create a reference to the streaming generator
         self.stream_generator = None
+        request_agent = self.agent
 
         def process_result(_tool_uses, _token_usage):
             nonlocal tool_uses, token_usage
@@ -429,7 +430,6 @@ class MessageHandler:
                 )
 
         try:
-            request_agent = self.agent
             self.stream_generator = request_agent.process_messages(
                 callback=process_result
             )

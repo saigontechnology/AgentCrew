@@ -909,7 +909,7 @@ class LocalAgent(BaseAgent):
         # ─────────────────────────────────────────────────────────────
 
         self._clean_shrinkable_tool_result(messages)
-        enhancing_messages = messages[:] if messages else self.history[:]
+        enhancing_messages = messages[:]
         self._enhance_agent_context_messages(enhancing_messages)
         from AgentCrew.modules.utils import VisionPreprocessingUtils
 

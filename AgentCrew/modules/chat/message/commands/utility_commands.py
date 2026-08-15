@@ -450,6 +450,8 @@ class UtilityCommands:
             /debug chat    - Show only chat/streamline messages
             /debug system  - Show the current LLM system prompt
         """
+        import copy
+
         parts = user_input.lower().split()
         filter_type = parts[1] if len(parts) > 1 else None
         valid_filters = ("agent", "chat", "system")
@@ -465,14 +467,14 @@ class UtilityCommands:
             self.message_handler.bus.emit_sync(
                 AppEvents.DEBUG_REQUESTED,
                 type="agent",
-                messages=self.message_handler.agent.clean_history,
+                messages=copy.deepcopy(self.message_handler.agent.clean_history),
             )
 
         if filter_type is None or filter_type == "chat":
             self.message_handler.bus.emit_sync(
                 AppEvents.DEBUG_REQUESTED,
                 type="chat",
-                messages=self.message_handler.streamline_messages,
+                messages=copy.deepcopy(self.message_handler.streamline_messages),
             )
 
         if filter_type == "system" and self.message_handler.agent.llm:
