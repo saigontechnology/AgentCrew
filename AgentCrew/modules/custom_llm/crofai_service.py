@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-import httpx
+import httpx2
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -40,7 +40,7 @@ class CrofAIService(CustomLLMService):
 
         usage_url = self._usage_api_url(self.base_url or "https://crof.ai/v1")
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx2.AsyncClient(timeout=30) as client:
                 response = await client.get(
                     usage_url,
                     headers={

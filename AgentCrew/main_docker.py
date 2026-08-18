@@ -34,6 +34,15 @@ def cli():
     httpx_logger = logging.getLogger("httpx")
     httpx_logger.setLevel(logging.ERROR)
 
+    httpcore_logger = logging.getLogger("httpcore")
+    httpcore_logger.setLevel(logging.ERROR)
+
+    httpx2_logger = logging.getLogger("httpx2")
+    httpx2_logger.setLevel(logging.ERROR)
+
+    httpcore2_logger = logging.getLogger("httpcore2")
+    httpcore2_logger.setLevel(logging.ERROR)
+
     logger.add(
         sys.stderr,
         level=log_level,

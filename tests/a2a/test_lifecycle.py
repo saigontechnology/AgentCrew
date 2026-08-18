@@ -105,27 +105,27 @@ class TestRemoteAgentCloseIdempotency:
         agent.agent_url = "http://localhost:9999"
         agent.headers = {}
         agent._client = None
-        agent._client_own_httpx = None
+        agent._client_own_http = None
 
         # Call close multiple times — should not raise
         await agent.close()
         await agent.close()
 
     @pytest.mark.asyncio
-    async def test_close_closes_httpx_if_present(self):
-        """close() closes the httpx client if it exists."""
+    async def test_close_closes_http_client_if_present(self):
+        """close() closes the HTTP client if it exists."""
         mock_httpx = AsyncMock()
         agent = RemoteAgent.__new__(RemoteAgent)
         agent.name = "test-remote"
         agent.agent_url = "http://localhost:9999"
         agent.headers = {}
         agent._client = None
-        agent._client_own_httpx = mock_httpx
+        agent._client_own_http = mock_httpx
 
         await agent.close()
 
         mock_httpx.aclose.assert_called_once()
-        assert agent._client_own_httpx is None
+        assert agent._client_own_http is None
 
     @pytest.mark.asyncio
     async def test_close_logs_and_continues_on_exception(self):
@@ -256,3 +256,26 @@ class TestApplicationModeWiring:
         source = inspect.getsource(AgentCrewApplication.run_gui)
         assert "self.setup.shutdown()" in source
         assert "MCPSessionManager.get_instance().cleanup()" in source
+
+
+class TestRemoteAgentHttpClientBoundary:
+    """Documents the accepted httpx -> httpx2 residual risk at the a2a-sdk
+    boundary: the client handed to ClientConfig is httpx2, while a2a-sdk types
+    and catches httpx exceptions, so httpx2 transport errors bypass the SDK's
+    A2AClientError conversion."""
+
+    def test_client_config_uses_httpx2_client_not_httpx(self):
+        import httpx
+        import httpx2
+        from a2a.client import ClientConfig
+
+        async def run():
+            client = httpx2.AsyncClient()
+            try:
+                config = ClientConfig(httpx_client=client)
+                assert isinstance(config.httpx_client, httpx2.AsyncClient)
+                assert not isinstance(config.httpx_client, httpx.AsyncClient)
+            finally:
+                await client.aclose()
+
+        asyncio.run(run())

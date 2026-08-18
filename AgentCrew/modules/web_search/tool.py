@@ -129,9 +129,9 @@ def get_web_extract_tool_handler(tavily_service: TavilySearchService):
             import base64
             import mimetypes
 
-            import httpx
+            import httpx2
 
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx2.AsyncClient(timeout=15) as client:
                 response = await client.get(img_url)
                 response.raise_for_status()
                 content = response.content

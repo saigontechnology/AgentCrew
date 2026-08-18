@@ -880,10 +880,10 @@ async def describe_external_image(url: str) -> str | None:
                 f"Skipping external image with unsupported scheme: {parsed.scheme!r}"
             )
             return None
-        import httpx
+        import httpx2
 
         response = await asyncio.to_thread(
-            httpx.get, url, follow_redirects=True, timeout=30.0
+            httpx2.get, url, follow_redirects=True, timeout=30.0
         )
         response.raise_for_status()
         content_type = response.headers.get("content-type", "")

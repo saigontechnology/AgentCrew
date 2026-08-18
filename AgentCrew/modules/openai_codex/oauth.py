@@ -11,7 +11,7 @@ from threading import Event, Thread
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
-import httpx
+import httpx2
 from loguru import logger
 
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -373,7 +373,7 @@ class OpenAICodexOAuth:
         if not self._tokens or not self._tokens.get("refresh"):
             return False
         try:
-            with httpx.Client(timeout=30) as client:
+            with httpx2.Client(timeout=30) as client:
                 resp = client.post(
                     TOKEN_ENDPOINT,
                     data={
@@ -486,7 +486,7 @@ class OpenAICodexOAuth:
             return False
 
         try:
-            with httpx.Client(timeout=30) as client:
+            with httpx2.Client(timeout=30) as client:
                 resp = client.post(
                     TOKEN_ENDPOINT,
                     data={

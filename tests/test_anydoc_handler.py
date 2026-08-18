@@ -531,7 +531,7 @@ class TestDescribeExternalImage:
     def test_success_fetches_and_describes(self):
         with (
             patch(
-                "httpx.get",
+                "httpx2.get",
                 return_value=_FakeResponse(content=PNG_BYTES, content_type="image/png"),
             ),
             patch(
@@ -547,7 +547,7 @@ class TestDescribeExternalImage:
         mock_describe.assert_awaited_once_with(PNG_BYTES, "image/png")
 
     def test_non_http_scheme_returns_none(self):
-        with patch("httpx.get") as mock_get:
+        with patch("httpx2.get") as mock_get:
             description = asyncio.run(
                 describe_external_image("ftp://example.com/l.png")
             )
@@ -557,7 +557,7 @@ class TestDescribeExternalImage:
     def test_non_image_content_type_returns_none(self):
         with (
             patch(
-                "httpx.get",
+                "httpx2.get",
                 return_value=_FakeResponse(
                     content=b"<html/>", content_type="text/html"
                 ),
@@ -578,7 +578,7 @@ class TestDescribeExternalImage:
         with (
             patch("AgentCrew.modules.utils.anydoc_handler.MAX_FILE_SIZE", 100),
             patch(
-                "httpx.get",
+                "httpx2.get",
                 return_value=_FakeResponse(content=big, content_type="image/png"),
             ),
             patch(
@@ -594,7 +594,7 @@ class TestDescribeExternalImage:
 
     def test_fetch_failure_returns_none(self):
         with (
-            patch("httpx.get", side_effect=RuntimeError("timeout")),
+            patch("httpx2.get", side_effect=RuntimeError("timeout")),
             patch(
                 "AgentCrew.modules.utils.anydoc_handler.describe_image_bytes",
                 new_callable=AsyncMock,

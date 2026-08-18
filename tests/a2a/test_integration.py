@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
-import httpx
+import httpx2
 import pytest
 import uvicorn
 from a2a.client import create_client
@@ -112,11 +112,11 @@ async def _start_server(app, host="127.0.0.1", port=0, wait_path="/test_agent/")
     url = f"http://{host}:{port}"
     for _ in range(50):
         try:
-            async with httpx.AsyncClient() as c:
+            async with httpx2.AsyncClient() as c:
                 r = await c.get(f"{url}{wait_path}", timeout=2)
                 if r.status_code < 500:
                     return url, server_task
-        except (httpx.ConnectError, httpx.RemoteProtocolError):
+        except (httpx2.ConnectError, httpx2.RemoteProtocolError):
             await asyncio.sleep(0.1)
     raise RuntimeError("Server did not start")
 
@@ -196,7 +196,7 @@ class TestServerBasics:
 
         try:
             # Fetch v1 card
-            async with httpx.AsyncClient() as c:
+            async with httpx2.AsyncClient() as c:
                 r = await c.get(f"{url}/.well-known/agent-card.json")
                 assert r.status_code == 200
                 data = r.json()
@@ -204,7 +204,7 @@ class TestServerBasics:
                 assert data["name"] == "test_agent"
 
             # Legacy v0.3 endpoint must be absent
-            async with httpx.AsyncClient() as c:
+            async with httpx2.AsyncClient() as c:
                 r = await c.get(f"{url}/.well-known/agent.json")
                 assert r.status_code == 404
         finally:
@@ -280,7 +280,7 @@ class TestServerBasics:
         url, server_task = await _start_server(app)
 
         try:
-            async with httpx.AsyncClient() as c:
+            async with httpx2.AsyncClient() as c:
                 req = {
                     "jsonrpc": "2.0",
                     "id": "req-1",
@@ -1354,7 +1354,7 @@ class TestAgentSwitchContinuity:
             }
 
         try:
-            async with httpx.AsyncClient() as c:
+            async with httpx2.AsyncClient() as c:
                 r1 = await c.post(
                     f"{url}/agent-a/",
                     json=send_payload("hello from user to agent-a", "ctx-1"),

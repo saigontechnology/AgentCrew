@@ -7,4 +7,14 @@
             "key": "value"
         },
         "enabledForAgents": ["string"]
+    },
+    "remote_server_id": {
+        "name": "string",
+        "url": "https://mcp.example.com/mcp",
+        "streaming_server": true,
+        "headers": {
+            "Authorization": "Bearer <token>"
+        },
+        "enabledForAgents": ["string"]
+    }
 }

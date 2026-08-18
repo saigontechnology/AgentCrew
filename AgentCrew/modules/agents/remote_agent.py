@@ -16,7 +16,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-import httpx
+import httpx2
 from a2a.client import ClientConfig, create_client
 from a2a.helpers import get_message_text
 from a2a.types.a2a_pb2 import (
@@ -109,7 +109,7 @@ class RemoteAgent(BaseAgent):
         self.agent_url = agent_url.rstrip("/")
         self.headers = headers or {}
         self._client = None
-        self._client_own_httpx = None
+        self._client_own_http = None
         self.current_task_id: str | None = None
         self.current_context_id: str | None = None
         self._state = ArtifactAccumulator()
@@ -119,11 +119,17 @@ class RemoteAgent(BaseAgent):
         if self._client is not None:
             return self._client
 
-        httpx_client = httpx.AsyncClient(
+        httpx_client = httpx2.AsyncClient(
             headers=self.headers,
-            timeout=httpx.Timeout(600.0),
+            timeout=httpx2.Timeout(600.0),
         )
-        self._client_own_httpx = httpx_client
+        self._client_own_http = httpx_client
+        # Accepted residual risk (httpx -> httpx2 migration): a2a-sdk's
+        # ClientConfig.httpx_client is typed httpx.AsyncClient and its
+        # transports catch httpx.TimeoutException/HTTPStatusError/RequestError.
+        # httpx2 exception classes are distinct, so network/status errors
+        # bypass the SDK's A2AClientError conversion. Revisit if a2a-sdk
+        # adopts httpx2.
         config = ClientConfig(httpx_client=httpx_client)
         self._client = await create_client(self.agent_url, client_config=config)
         return self._client
@@ -133,9 +139,9 @@ class RemoteAgent(BaseAgent):
         if self._client:
             await self._client.close()
             self._client = None
-        if self._client_own_httpx:
-            await self._client_own_httpx.aclose()
-            self._client_own_httpx = None
+        if self._client_own_http:
+            await self._client_own_http.aclose()
+            self._client_own_http = None
 
     def activate(self) -> bool:
         self.is_active = True
@@ -375,11 +381,11 @@ class RemoteAgent(BaseAgent):
                 break
 
             except (
-                httpx.ReadError,
-                httpx.RemoteProtocolError,
-                httpx.ReadTimeout,
-                httpx.ConnectError,
-                httpx.CloseError,
+                httpx2.ReadError,
+                httpx2.RemoteProtocolError,
+                httpx2.ReadTimeout,
+                httpx2.ConnectError,
+                httpx2.CloseError,
             ) as e:
                 retry_count += 1
                 if retry_count > max_retries:

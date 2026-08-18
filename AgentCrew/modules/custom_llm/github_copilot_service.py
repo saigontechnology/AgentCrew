@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-import httpx
+import httpx2
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -246,7 +246,7 @@ class GithubCopilotService(CustomLLMService):
                 "limits": [],
             }
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx2.AsyncClient(timeout=30) as client:
             response = await client.get(
                 "https://api.github.com/copilot_internal/user",
                 headers={

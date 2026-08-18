@@ -157,7 +157,7 @@ class AttachmentProcessor:
                 return result
 
             if parsed.scheme in ("http", "https"):
-                import httpx
+                import httpx2
 
                 file_name = item.get("file_name") or "download"
                 suffix = Path(file_name).suffix if Path(file_name).suffix else ".bin"
@@ -166,7 +166,7 @@ class AttachmentProcessor:
                     tmp_path = tmp.name
                     should_cleanup = True
 
-                with httpx.Client(follow_redirects=True, timeout=30) as client:
+                with httpx2.Client(follow_redirects=True, timeout=30) as client:
                     resp = client.get(uri)
                     resp.raise_for_status()
 

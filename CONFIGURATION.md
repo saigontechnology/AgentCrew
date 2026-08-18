@@ -539,8 +539,8 @@ Model Context Protocol (MCP) extends agent capabilities with external tools.
 - `enabledForAgents` - List of agents that can use this server
   - Empty array `[]` = available to all agents
   - `["Agent1", "Agent2"]` = only these agents can use it
-- `streaming_server` - Set to `true` for SSE-based MCP servers
-- `url` - For remote MCP servers instead of local command
+- `streaming_server` - Set to `true` for remote (HTTP/SSE) MCP servers that use a `url` instead of a local command
+- `url` - For remote MCP servers instead of local command. URLs ending in `/sse` use the legacy SSE transport; any other URL uses Streamable HTTP
 
 ### MCP Server Examples
 
@@ -611,6 +611,26 @@ Model Context Protocol (MCP) extends agent capabilities with external tools.
   }
 }
 ```
+
+**Remote MCP Server using legacy SSE:**
+
+```json
+{
+  "remote_sse": {
+    "name": "remote_sse",
+    "url": "https://mcp.example.com/sse",
+    "streaming_server": true,
+    "enabledForAgents": ["Researcher"]
+  }
+}
+```
+
+Remote servers can also pass `headers` (e.g. static bearer tokens) and use OAuth flows:
+when a remote server requires OAuth, AgentCrew opens the authorization URL in your
+browser and persists the resulting tokens under `persistents/tokens/<server>.json`.
+AgentCrew connects to MCP servers using the MCP Python SDK (`mcp==2.0.0` in this release); remote
+connections negotiate the legacy MCP protocol for compatibility with existing
+MCP servers.
 
 ## Adaptive Behaviors (persistents/adaptive.json)
 

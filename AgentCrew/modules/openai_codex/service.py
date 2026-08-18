@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-import httpx
+import httpx2
 from loguru import logger
 
 from AgentCrew.modules.llm.model_registry import ModelRegistry
@@ -148,7 +148,7 @@ class OpenAICodexService(OpenAIResponseService):
         if self._oauth.account_id:
             headers["ChatGPT-Account-ID"] = self._oauth.account_id
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx2.AsyncClient(timeout=30) as client:
             response = await client.get(
                 self._usage_url(),
                 headers=headers,
