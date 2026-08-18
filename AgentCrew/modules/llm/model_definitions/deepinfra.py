@@ -241,4 +241,16 @@ DEEPINFRA_MODELS = [
         cached_token_price_1m=0.018,
         output_token_price_1m=0.18,
     ),
+    Model(
+        id="Qwen/Qwen3.8-2.4T-A95B",
+        provider="deepinfra",
+        name="Qwen 3.8 2.4T A95B",
+        description="Qwen3.8-2.4T-A95B is Alibaba's flagship 2.4T-parameter sparse MoE model (~95B active) for coding, long-horizon agentic work, and multimodal reasoning",
+        capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
+        default_reasoning="high",
+        max_context_token=262_144,
+        input_token_price_1m=2.0,
+        cached_token_price_1m=0.2,
+        output_token_price_1m=6.0,
+    ),
 ]

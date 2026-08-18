@@ -318,4 +318,16 @@ CROFAI_MODELS = [
         output_token_price_1m=1.50,
         cached_token_price_1m=0.04,
     ),
+    Model(
+        id="qwen3.8-27b",
+        provider="crofai",
+        name="Qwen3.8 27B",
+        description="Qwen3.8 27B (Q4_0) on CrofAI with custom reasoning support.",
+        capabilities=["tool_use", "vision", "thinking", "stream", "structured_output"],
+        default_reasoning="high",
+        max_context_token=262_144,
+        input_token_price_1m=0.25,
+        output_token_price_1m=2.10,
+        cached_token_price_1m=0.06,
+    ),
 ]
