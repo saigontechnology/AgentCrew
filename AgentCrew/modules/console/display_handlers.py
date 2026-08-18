@@ -182,7 +182,7 @@ class DisplayHandlers:
 
         formatted = self._format_messages_for_debug(messages)
         try:
-            self.console.print(json.dumps(formatted, indent=2))
+            self.console.print(json.dumps(formatted, indent=2), markup=False)
         except Exception:
             self.console.print(str(formatted))
 
@@ -278,7 +278,7 @@ class DisplayHandlers:
                             formatted_content.append(
                                 {
                                     "type": item_type,
-                                    "content": self._truncate_content(
+                                    "text": self._truncate_content(
                                         item.get("text", item), max_content_length
                                     ),
                                 }
@@ -741,12 +741,7 @@ class DisplayHandlers:
         title.append(f"{model_name}", style=RICH_STYLE_BLUE)
 
         if reasoning_effort:
-            effort = (
-                reasoning_effort.name.lower()
-                if hasattr(reasoning_effort, "name")
-                else str(reasoning_effort).lower()
-            )
-            title.append(f":{effort}", style=RICH_STYLE_GREEN)
+            title.append(f":{reasoning_effort}", style=RICH_STYLE_GREEN)
 
         title.append("]")
 

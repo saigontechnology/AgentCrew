@@ -364,7 +364,7 @@ You must analyze and plan out the steps then execute it with your available tool
                     for _k, _v in _raw_args.items():
                         _v_str = str(_v)
                         if len(_v_str) > 50:
-                            _v_str = _v_str[:50] + "..."
+                            _v_str = _v_str[:25] + "..." + _v_str[-25:]
                         _arg_parts.append(f"{_k}={_v_str}")
                     _arg_preview = ", ".join(_arg_parts)
 
