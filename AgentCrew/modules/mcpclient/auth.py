@@ -8,7 +8,7 @@ from threading import Lock, Thread
 from urllib.parse import parse_qs, urlparse
 
 from loguru import logger
-from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider, TokenStorage
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl
 
@@ -196,7 +196,13 @@ class OAuthCallbackServer:
         """Get the callback URL for this server."""
         return f"http://{self.host}:{self.port}/callback"
 
-    def set_result(self, code: str | None, state: str | None, error: str | None):
+    def set_result(
+        self,
+        code: str | None,
+        state: str | None,
+        error: str | None,
+        iss: str | None = None,
+    ):
         """
         Thread-safe method to set the callback result.
 
@@ -204,11 +210,12 @@ class OAuthCallbackServer:
             code: Authorization code from OAuth provider
             state: State parameter from OAuth provider
             error: Error message if authorization failed
+            iss: Issuer parameter (RFC 9207) from the authorization response
         """
         with self.result_lock:
-            self.result = {"code": code, "state": state, "error": error}
+            self.result = {"code": code, "state": state, "iss": iss, "error": error}
             logger.info(
-                f"OAuth callback result set: error={error}, has_code={code is not None}"
+                f"OAuth callback result set: error={error}, has_code={code is not None}, has_iss={iss is not None}"
             )
 
     def get_result(self) -> dict[str, str | None]:
@@ -249,8 +256,9 @@ class OAuthCallbackServer:
                 code = params.get("code", [None])[0]
                 state = params.get("state", [None])[0]
                 error = params.get("error", [None])[0]
+                iss = params.get("iss", [None])[0]
 
-                callback_server.set_result(code, state, error)
+                callback_server.set_result(code, state, error, iss)
 
                 if error:
                     self._send_error_response(error)
@@ -339,7 +347,7 @@ class OAuthCallbackServer:
 
         logger.info("OAuth callback server stopped")
 
-    async def wait_for_callback(self, timeout: float = 300) -> tuple[str, str | None]:
+    async def wait_for_callback(self, timeout: float = 300) -> AuthorizationCodeResult:
         """
         Wait for OAuth callback to be received.
 
@@ -347,7 +355,7 @@ class OAuthCallbackServer:
             timeout: Maximum time to wait in seconds (default: 5 minutes)
 
         Returns:
-            tuple: (authorization_code, state)
+            AuthorizationCodeResult: The authorization code, state, and issuer
 
         Raises:
             Exception: If callback fails or times out
@@ -381,7 +389,7 @@ class OAuthCallbackServer:
             raise RuntimeError("No authorization code received from OAuth callback")
 
         logger.info("OAuth callback successful, authorization code received")
-        return code, state
+        return AuthorizationCodeResult(code=code, state=state, iss=result.get("iss"))
 
 
 class OAuthClientResolver:
@@ -409,15 +417,15 @@ class OAuthClientResolver:
                 "⚠️ Failed to open browser automatically. Please visit the URL manually."
             )
 
-    async def handle_callback(self) -> tuple[str, str | None]:
+    async def handle_callback(self) -> AuthorizationCodeResult:
         """
         Handle OAuth callback by starting a temporary local HTTP server.
 
         This function creates a callback server, waits for the OAuth callback,
-        and returns the authorization code and state.
+        and returns the authorization code, state, and issuer.
 
         Returns:
-            tuple: (authorization_code, state)
+            AuthorizationCodeResult: The authorization code, state, and issuer
 
         Raises:
             Exception: If the callback fails or times out
@@ -432,10 +440,10 @@ class OAuthClientResolver:
         try:
             callback_server.start()
 
-            code, state = await callback_server.wait_for_callback(timeout=600)
+            result = await callback_server.wait_for_callback(timeout=600)
 
             print("✅ Authorization successful!\n")
-            return code, state
+            return result
 
         except Exception as e:
             logger.error(f"OAuth callback failed: {e}")

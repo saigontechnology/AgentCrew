@@ -4,27 +4,38 @@ import json
 import time
 from types import SimpleNamespace
 
+import httpx2
 import pytest
+from mcp import MCPError
+from mcp.client.auth import AuthorizationCodeResult
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from mcp.types import (
     BlobResourceContents,
     ImageContent,
+    ListPromptsResult,
     ListResourcesResult,
+    ListToolsResult,
+    Prompt,
     ReadResourceResult,
     Resource,
     ResourceLink,
     TextContent,
     TextResourceContents,
+    Tool,
 )
 
 from AgentCrew.modules.agents.context_manager import AgentContextManager
-from AgentCrew.modules.mcpclient.auth import InlineTokenStorage
+from AgentCrew.modules.mcpclient.auth import (
+    FileTokenStorage,
+    InlineTokenStorage,
+    OAuthCallbackServer,
+)
 from AgentCrew.modules.mcpclient.config import (
     MCPConfigManager,
     MCPOAuthOverrideConfig,
     MCPServerConfig,
 )
-from AgentCrew.modules.mcpclient.service import MCPService
+from AgentCrew.modules.mcpclient.service import MCPService, _MCPSessionScope
 
 
 class FakeTokenStorage:
@@ -292,6 +303,106 @@ class TestInlineTokenStorage:
         assert base_storage.set_client_info_calls == [new_client_info]
 
 
+class TestFileTokenStorage:
+    def _write_token_file(self, tmp_path, server_name, data):
+        token_file = tmp_path / "tokens" / f"{server_name}.json"
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text(json.dumps(data), encoding="utf-8")
+        return token_file
+
+    def test_loads_legacy_client_info_without_issuer(self, tmp_path, monkeypatch):
+        """v1-era stored client info (no issuer) must still load and stay usable."""
+        monkeypatch.setenv("AGENTCREW_PERSISTENCE_DIR", str(tmp_path))
+        self._write_token_file(
+            tmp_path,
+            "server1",
+            {
+                "tokens": {
+                    "access_token": "legacy_token",
+                    "token_type": "bearer",
+                    "refresh_token": "refresh_token",
+                    "expires_in": 3600,
+                },
+                "client_info": {
+                    "client_id": "legacy-client",
+                    "redirect_uris": ["http://localhost:14142/callback"],
+                },
+            },
+        )
+        storage = FileTokenStorage("server1")
+
+        async def run():
+            tokens = await storage.get_tokens()
+            client_info = await storage.get_client_info()
+            assert tokens.access_token == "legacy_token"
+            assert client_info.client_id == "legacy-client"
+            assert client_info.issuer is None
+
+        asyncio.run(run())
+
+    def test_loads_issuer_bearing_client_info(self, tmp_path, monkeypatch):
+        """Newly persisted issuer-bound client info round-trips."""
+        monkeypatch.setenv("AGENTCREW_PERSISTENCE_DIR", str(tmp_path))
+        self._write_token_file(
+            tmp_path,
+            "server1",
+            {
+                "tokens": None,
+                "client_info": {
+                    "client_id": "new-client",
+                    "redirect_uris": ["http://localhost:14142/callback"],
+                    "issuer": "https://as.example.com",
+                },
+            },
+        )
+        storage = FileTokenStorage("server1")
+
+        async def run():
+            client_info = await storage.get_client_info()
+            assert client_info.client_id == "new-client"
+            assert client_info.issuer == "https://as.example.com"
+
+        asyncio.run(run())
+
+    def test_corrupt_token_file_loads_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AGENTCREW_PERSISTENCE_DIR", str(tmp_path))
+        (tmp_path / "tokens").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "tokens" / "server1.json").write_text("{not json", encoding="utf-8")
+        storage = FileTokenStorage("server1")
+
+        async def run():
+            assert await storage.get_tokens() is None
+            assert await storage.get_client_info() is None
+
+        asyncio.run(run())
+
+
+class TestOAuthCallback:
+    def test_wait_for_callback_returns_authorization_code_result_with_iss(self):
+        server = OAuthCallbackServer(host="localhost", port=0)
+        server.set_result("code123", "state456", None, "https://as.example.com")
+
+        result = asyncio.run(server.wait_for_callback(timeout=5))
+
+        assert isinstance(result, AuthorizationCodeResult)
+        assert result.code == "code123"
+        assert result.state == "state456"
+        assert result.iss == "https://as.example.com"
+
+    def test_wait_for_callback_raises_on_error_result(self):
+        server = OAuthCallbackServer(host="localhost", port=0)
+        server.set_result(None, None, "access_denied")
+
+        with pytest.raises(RuntimeError, match="access_denied"):
+            asyncio.run(server.wait_for_callback(timeout=5))
+
+    def test_wait_for_callback_times_out(self):
+        server = OAuthCallbackServer(host="localhost", port=0)
+
+        with pytest.raises(TimeoutError, match="authorization timeout"):
+            asyncio.run(server.wait_for_callback(timeout=0.5))
+
+
 class FakeResourceSession:
     def __init__(self, result=None, error=None):
         self.result = result
@@ -310,11 +421,9 @@ class FakeFileHandler:
         self.result = result
         self.processed_paths = []
 
-    def process_file(self, file_path):
+    async def async_process_file(self, file_path):
         self.processed_paths.append(file_path)
-        if self.result is not None:
-            return self.result
-        return None
+        return self.result
 
 
 class FakeListResourcesSession:
@@ -328,14 +437,123 @@ class FakeListResourcesSession:
         return self.pages[effective_cursor or "first"]
 
 
-class FakeLocalAgent:
-    def __init__(self):
-        self.mcp_resources = {}
-        self.registered_tools = []
-        self.is_active = False
+class FakeDiscoverySession:
+    def __init__(self, tools=None, resources_pages=None, prompts=None):
+        self.tools = tools or []
+        self.resources_pages = resources_pages or {}
+        self.prompts = prompts or []
 
-    def register_tool(self, definition_func, handler_factory, service_instance=None):
-        self.registered_tools.append(definition_func())
+    async def list_tools(self, params=None):
+        return ListToolsResult(tools=self.tools)
+
+    async def list_resources(self, cursor=None, params=None):
+        effective_cursor = cursor or getattr(params, "cursor", None)
+        return self.resources_pages[effective_cursor or "first"]
+
+    async def list_prompts(self, params=None):
+        return ListPromptsResult(prompts=self.prompts)
+
+
+class RecordingScope:
+    def __init__(self):
+        self.closed = 0
+
+    async def aclose(self, primary_error=None):
+        self.closed += 1
+
+
+def _stub_create_session(session, scope):
+    async def _create(server_config):
+        return session, scope
+
+    return _create
+
+
+class FakeTransportCtx:
+    """Async context manager double for an MCP transport."""
+
+    def __init__(self, exit_error=None, exit_cancel=False):
+        self.entered = 0
+        self.exited = 0
+        self.exit_error = exit_error
+        self.exit_cancel = exit_cancel
+
+    async def __aenter__(self):
+        self.entered += 1
+        return (None, None)
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.exited += 1
+        if self.exit_cancel:
+            raise asyncio.CancelledError()
+        if self.exit_error:
+            raise self.exit_error
+
+
+class FakeSession:
+    """ClientSession double recording lifecycle and optional failures."""
+
+    def __init__(
+        self,
+        initialize_error=None,
+        call_tool_error=None,
+        call_tool_result=None,
+    ):
+        self.entered = 0
+        self.exited = 0
+        self.initialize_calls = 0
+        self.initialize_hang = False
+        self.initialize_error = initialize_error
+        self.call_tool_error = call_tool_error
+        self.call_tool_result = call_tool_result
+        self.call_tool_hang = False
+        self.exit_cancel = False
+        self.protocol_version = "2025-11-25"
+
+    async def __aenter__(self):
+        self.entered += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.exited += 1
+        if self.exit_cancel:
+            raise asyncio.CancelledError()
+
+    async def initialize(self):
+        self.initialize_calls += 1
+        if self.initialize_hang:
+            await asyncio.Event().wait()
+        if self.initialize_error:
+            raise self.initialize_error
+
+    async def call_tool(self, name, arguments=None, **kwargs):
+        if self.call_tool_hang:
+            await asyncio.Event().wait()
+        if self.call_tool_error:
+            raise self.call_tool_error
+        return self.call_tool_result
+
+
+class FakeHttpClient:
+    """httpx2.AsyncClient double recording enter/close exactly once."""
+
+    def __init__(self):
+        self.entered = 0
+        self.closed = 0
+
+    async def __aenter__(self):
+        self.entered += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def aclose(self):
+        self.closed += 1
+
+
+async def _noop_sleep(*args, **kwargs):
+    return None
 
 
 class TestMCPService:
@@ -380,83 +598,119 @@ class TestMCPService:
         assert token_storage.base_storage is base_storage
 
     @pytest.mark.asyncio
-    async def test_register_server_resources_lists_resources_and_registers_scoped_tool(
-        self, monkeypatch
-    ):
+    async def test_discover_server_tools_lists_tools_resources_and_prompts(self):
         service = MCPService()
-        fake_agent = FakeLocalAgent()
-        fake_manager = SimpleNamespace(get_local_agent=lambda agent_name: fake_agent)
-        monkeypatch.setattr(
-            "AgentCrew.modules.mcpclient.service.AgentManager.get_instance",
-            lambda: fake_manager,
-        )
-        service.sessions["Engineer__docs"] = FakeListResourcesSession(
-            {
+        session = FakeDiscoverySession(
+            tools=[
+                Tool(
+                    name="read",
+                    description="Read a file",
+                    input_schema={"type": "object"},
+                )
+            ],
+            resources_pages={
                 "first": ListResourcesResult(
                     resources=[
                         Resource(
                             uri="file:///tmp/guide.md",
                             name="guide.md",
                             description="Guide",
-                            mimeType="text/markdown",
-                            size=42,
+                            mime_type="text/markdown",
+                        )
+                    ],
+                    next_cursor="page2",
+                ),
+                "page2": ListResourcesResult(
+                    resources=[
+                        Resource(
+                            uri="file:///tmp/other.md",
+                            name="other.md",
+                            mime_type="text/markdown",
                         )
                     ]
-                )
-            }
+                ),
+            },
+            prompts=[Prompt(name="summarize", description="Summarize the guide")],
         )
+        scope = RecordingScope()
+        service._create_session = _stub_create_session(session, scope)
         server_config = MCPServerConfig(
             name="docs",
             command="python",
             args=["server.py"],
             enabledForAgents=["Engineer"],
         )
-        await service.register_server_resources(
-            "Engineer__docs", server_config, ["Engineer"]
-        )
 
-        assert fake_agent.mcp_resources == {
-            "docs": [
-                {
-                    "uri": "file:///tmp/guide.md",
-                    "name": "guide.md",
-                    "description": "Guide",
-                    "mimeType": "text/markdown",
-                    "size": 42,
-                }
-            ]
-        }
-        assert (
-            fake_agent.registered_tools[0]["function"]["name"] == "docs__get_resource"
-        )
-        assert service.server_resources == fake_agent.mcp_resources
+        tools = await service.discover_server_tools(server_config, "Engineer")
 
-    def test_server_scoped_get_resource_handler_reads_known_resource(self):
+        assert [tool.name for tool in tools] == ["read"]
+        assert "read" in service.tools_cache["docs"]
+        assert service.server_resources["docs"] == [
+            {
+                "uri": "file:///tmp/guide.md",
+                "name": "guide.md",
+                "description": "Guide",
+                "mimeType": "text/markdown",
+            },
+            {
+                "uri": "file:///tmp/other.md",
+                "name": "other.md",
+                "mimeType": "text/markdown",
+            },
+        ]
+        assert [prompt.name for prompt in service.server_prompts["docs"]] == [
+            "summarize"
+        ]
+        assert scope.closed == 1
+
+    @pytest.mark.asyncio
+    async def test_get_resource_handler_uses_string_uri_and_closes_session(self):
         service = MCPService()
+        service.server_resources["docs"] = [
+            {
+                "uri": "file:///tmp/guide.md",
+                "name": "guide.md",
+                "mimeType": "text/markdown",
+            }
+        ]
+        service._get_server_config = lambda server_name: MCPServerConfig(
+            name="docs",
+            command="python",
+            args=["server.py"],
+            enabledForAgents=["Engineer"],
+        )
         session = FakeResourceSession(
             ReadResourceResult(
                 contents=[
                     TextResourceContents(
                         uri="file:///tmp/guide.md",
-                        mimeType="text/plain",
+                        mime_type="text/plain",
                         text="guide",
                     )
                 ]
             )
         )
-        service.sessions["Engineer__docs"] = session
-        service.connected_servers["Engineer__docs"] = True
-        service.server_resources["docs"] = [
-            {"uri": "file:///tmp/guide.md", "name": "guide.md"}
-        ]
-        service._format_resource_link = lambda resource_link, resource_session: [
-            {"type": "text", "text": str(resource_link.uri)}
-        ]
+        scope = RecordingScope()
+        service._create_session = _stub_create_session(session, scope)
+        captured = {}
 
-        handler = service._create_get_resource_handler("Engineer__docs", "docs")()
-        result = asyncio.run(handler("file:///tmp/guide.md"))
+        async def fake_format(resource_link, active_session):
+            captured["uri"] = resource_link.uri
+            captured["mime_type"] = resource_link.mime_type
+            captured["session"] = active_session
+            return [{"type": "text", "text": str(resource_link.uri)}]
+
+        service._format_resource_link_async = fake_format
+
+        handler = service._create_get_resource_handler("docs", "docs")()
+        result = await handler("file:///tmp/guide.md")
 
         assert result == [{"type": "text", "text": "file:///tmp/guide.md"}]
+        assert captured["uri"] == "file:///tmp/guide.md"
+        assert isinstance(captured["uri"], str)
+        assert captured["mime_type"] == "text/markdown"
+        assert captured["session"] is session
+        assert scope.closed == 1
 
     def test_mcp_resources_prompt_lists_server_scoped_resource_tools(self):
         agent = SimpleNamespace(
@@ -482,13 +736,63 @@ class TestMCPService:
         assert "file:///tmp/guide.md" in prompt
         assert "Developer guide" in prompt
 
-    def test_format_contents_keeps_text_and_image_behavior(self):
+    @pytest.mark.asyncio
+    async def test_list_all_resources_paginates_with_next_cursor(self):
+        service = MCPService()
+        session = FakeListResourcesSession(
+            {
+                "first": ListResourcesResult(
+                    resources=[
+                        Resource(
+                            uri="file:///a.txt",
+                            name="a",
+                            mime_type="text/plain",
+                        )
+                    ],
+                    next_cursor="page2",
+                ),
+                "page2": ListResourcesResult(
+                    resources=[
+                        Resource(
+                            uri="file:///b.txt",
+                            name="b",
+                            mime_type="text/plain",
+                        )
+                    ]
+                ),
+            }
+        )
+
+        resources = await service._list_all_resources(session)
+
+        assert [resource.name for resource in resources] == ["a", "b"]
+        assert session.list_resources_calls == [None, "page2"]
+
+    def test_format_resource_for_agent_keeps_mime_type_output_key(self):
         service = MCPService()
 
-        formatted = service._format_contents(
+        data = service._format_resource_for_agent(
+            Resource(
+                uri="file:///guide.md",
+                name="guide.md",
+                mime_type="text/markdown",
+            )
+        )
+
+        assert data == {
+            "uri": "file:///guide.md",
+            "name": "guide.md",
+            "mimeType": "text/markdown",
+        }
+
+    @pytest.mark.asyncio
+    async def test_format_contents_async_keeps_text_and_image_behavior(self):
+        service = MCPService()
+
+        formatted = await service._format_contents_async(
             [
                 TextContent(type="text", text="hello"),
-                ImageContent(type="image", data="abc", mimeType="image/png"),
+                ImageContent(type="image", data="abc", mime_type="image/png"),
             ]
         )
 
@@ -500,90 +804,96 @@ class TestMCPService:
             },
         ]
 
-    def test_format_contents_resource_link_reads_and_processes_text_resource(self):
+    @pytest.mark.asyncio
+    async def test_format_contents_async_resource_link_reads_and_processes_text_resource(
+        self,
+    ):
         service = MCPService()
         processed_output = {"type": "text", "text": "processed content"}
         fake_file_handler = FakeFileHandler(result=processed_output)
         service._get_file_handler = lambda: fake_file_handler
-        service._run_async = lambda coro: asyncio.run(coro)
         resource_link = ResourceLink(
             type="resource_link",
             uri="file:///tmp/example.txt",
             name="example.txt",
-            mimeType="text/plain",
+            mime_type="text/plain",
         )
         session = FakeResourceSession(
             ReadResourceResult(
                 contents=[
                     TextResourceContents(
                         uri="file:///tmp/example.txt",
-                        mimeType="text/plain",
+                        mime_type="text/plain",
                         text="resource text",
                     )
                 ]
             )
         )
 
-        formatted = service._format_contents([resource_link], session)
+        formatted = await service._format_contents_async([resource_link], session)
 
         assert session.read_resource_calls == ["file:///tmp/example.txt"]
         assert formatted == [processed_output]
         assert len(fake_file_handler.processed_paths) == 1
         assert fake_file_handler.processed_paths[0].endswith(".txt")
 
-    def test_format_contents_resource_link_falls_back_for_unsupported_mime(self):
+    @pytest.mark.asyncio
+    async def test_format_contents_async_resource_link_falls_back_for_unsupported_mime(
+        self,
+    ):
         service = MCPService()
         service._get_file_handler = lambda: FakeFileHandler(result=None)
-        service._run_async = lambda coro: asyncio.run(coro)
         resource_link = ResourceLink(
             type="resource_link",
             uri="file:///tmp/data.bin",
             name="data.bin",
-            mimeType="application/octet-stream",
+            mime_type="application/octet-stream",
         )
         session = FakeResourceSession(
             ReadResourceResult(
                 contents=[
                     BlobResourceContents(
                         uri="file:///tmp/data.bin",
-                        mimeType="application/octet-stream",
+                        mime_type="application/octet-stream",
                         blob=base64.b64encode(b"binary").decode("utf-8"),
                     )
                 ]
             )
         )
 
-        formatted = service._format_contents([resource_link], session)
+        formatted = await service._format_contents_async([resource_link], session)
 
         assert formatted[0]["type"] == "text"
         assert "MCP resource link could not be processed" in formatted[0]["text"]
         assert "file:///tmp/data.bin" in formatted[0]["text"]
         assert "application/octet-stream" in formatted[0]["text"]
 
-    def test_format_contents_resource_link_image_falls_back_to_image_format(self):
+    @pytest.mark.asyncio
+    async def test_format_contents_async_resource_link_image_falls_back_to_image_format(
+        self,
+    ):
         service = MCPService()
         service._get_file_handler = lambda: FakeFileHandler(result=None)
-        service._run_async = lambda coro: asyncio.run(coro)
         image_data = base64.b64encode(b"image-bytes").decode("utf-8")
         resource_link = ResourceLink(
             type="resource_link",
             uri="file:///tmp/image.png",
             name="image.png",
-            mimeType="image/png",
+            mime_type="image/png",
         )
         session = FakeResourceSession(
             ReadResourceResult(
                 contents=[
                     BlobResourceContents(
                         uri="file:///tmp/image.png",
-                        mimeType="image/png",
+                        mime_type="image/png",
                         blob=image_data,
                     )
                 ]
             )
         )
 
-        formatted = service._format_contents([resource_link], session)
+        formatted = await service._format_contents_async([resource_link], session)
 
         assert formatted == [
             {
@@ -592,19 +902,440 @@ class TestMCPService:
             }
         ]
 
-    def test_format_contents_resource_link_read_failure_falls_back(self):
+    @pytest.mark.asyncio
+    async def test_format_contents_async_resource_link_read_failure_falls_back(self):
         service = MCPService()
-        service._run_async = lambda coro: asyncio.run(coro)
         resource_link = ResourceLink(
             type="resource_link",
             uri="file:///tmp/fail.txt",
             name="fail.txt",
-            mimeType="text/plain",
+            mime_type="text/plain",
         )
         session = FakeResourceSession(error=RuntimeError("read failed"))
 
-        formatted = service._format_contents([resource_link], session)
+        formatted = await service._format_contents_async([resource_link], session)
 
         assert session.read_resource_calls == ["file:///tmp/fail.txt"]
         assert formatted[0]["type"] == "text"
         assert "read failed" in formatted[0]["text"]
+
+
+class TestMCPSessionLifecycle:
+    def _stdio_config(self):
+        return MCPServerConfig(
+            name="server1",
+            command="python",
+            args=["server.py"],
+            enabledForAgents=["Engineer"],
+        )
+
+    def _stub_stdio_build(self, monkeypatch, transport, session):
+        monkeypatch.setattr(
+            "AgentCrew.modules.mcpclient.service.stdio_client",
+            lambda *args, **kwargs: transport,
+        )
+        monkeypatch.setattr(
+            "AgentCrew.modules.mcpclient.service.ClientSession",
+            lambda *args, **kwargs: session,
+        )
+
+    @pytest.mark.asyncio
+    async def test_success_path_closes_resources_exactly_once(self, monkeypatch):
+        service = MCPService()
+        transport = FakeTransportCtx()
+        session = FakeSession()
+        self._stub_stdio_build(monkeypatch, transport, session)
+
+        created_session, scope = await service._create_session(self._stdio_config())
+
+        assert created_session is session
+        assert session.entered == 1
+        assert transport.entered == 1
+        assert session.initialize_calls == 1
+
+        await service._close_session(created_session, scope)
+        await service._close_session(created_session, scope)
+
+        assert session.exited == 1
+        assert transport.exited == 1
+
+    @pytest.mark.asyncio
+    async def test_initialization_failure_propagates_cleans_up_no_leaked_tasks(
+        self, monkeypatch
+    ):
+        service = MCPService()
+        transport = FakeTransportCtx()
+        session = FakeSession(initialize_error=RuntimeError("init failed"))
+        self._stub_stdio_build(monkeypatch, transport, session)
+        monkeypatch.setattr(asyncio, "sleep", _noop_sleep)
+
+        with pytest.raises(RuntimeError, match="init failed"):
+            await service._create_session(self._stdio_config())
+
+        assert session.entered == 1
+        assert session.exited == 1
+        assert transport.entered == 1
+        assert transport.exited == 1
+        pending = [
+            task for task in asyncio.all_tasks() if task is not asyncio.current_task()
+        ]
+        assert pending == []
+
+    @pytest.mark.asyncio
+    async def test_teardown_failure_does_not_mask_primary_error(self, monkeypatch):
+        """Regression: an OAuth registration failure used to surface as an AnyIO
+        cancel-scope RuntimeError from teardown and leave A2A callers awaiting
+        indefinitely. The primary error must propagate and cleanup must finish.
+        """
+        service = MCPService()
+        transport = FakeTransportCtx(
+            exit_error=RuntimeError(
+                "Attempted to exit cancel scope in a different task than it was entered in"
+            )
+        )
+        session = FakeSession(initialize_error=RuntimeError("registration failed: 307"))
+        self._stub_stdio_build(monkeypatch, transport, session)
+        monkeypatch.setattr(asyncio, "sleep", _noop_sleep)
+
+        with pytest.raises(RuntimeError, match="registration failed: 307"):
+            await service._create_session(self._stdio_config())
+
+        assert session.exited == 1
+        assert transport.exited == 1
+        pending = [
+            task for task in asyncio.all_tasks() if task is not asyncio.current_task()
+        ]
+        assert pending == []
+
+    @pytest.mark.asyncio
+    async def test_cancellation_during_initialize_propagates_and_cleans_up(
+        self, monkeypatch
+    ):
+        service = MCPService()
+        transport = FakeTransportCtx()
+        session = FakeSession()
+        session.initialize_hang = True
+        self._stub_stdio_build(monkeypatch, transport, session)
+
+        async def scenario():
+            task = asyncio.create_task(service._create_session(self._stdio_config()))
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        await scenario()
+
+        assert session.exited == 1
+        assert transport.exited == 1
+
+    @pytest.mark.asyncio
+    async def test_call_tool_stateless_converts_mcp_error_to_error_result(
+        self, monkeypatch
+    ):
+        service = MCPService()
+        session = FakeSession(
+            call_tool_error=MCPError(-32001, "Request 'tools/call' timed out")
+        )
+        scope = RecordingScope()
+        service._create_session = _stub_create_session(session, scope)
+
+        result = await service.call_tool_stateless(self._stdio_config(), "tool1", {})
+
+        assert result["status"] == "error"
+        assert "timed out" in result["content"]
+        assert scope.closed == 1
+
+    @pytest.mark.asyncio
+    async def test_streamable_session_builds_httpx2_client_and_closes_it(
+        self,
+        monkeypatch,
+    ):
+        service = MCPService()
+        transport = FakeTransportCtx()
+        session = FakeSession()
+        monkeypatch.setattr(
+            "AgentCrew.modules.mcpclient.service.streamable_http_client",
+            lambda *args, **kwargs: transport,
+        )
+        monkeypatch.setattr(
+            "AgentCrew.modules.mcpclient.service.ClientSession",
+            lambda *args, **kwargs: session,
+        )
+        service._build_token_storage = lambda server_config: FakeTokenStorage()
+        server_config = MCPServerConfig(
+            name="remote",
+            command="",
+            args=[],
+            enabledForAgents=["Engineer"],
+            streaming_server=True,
+            url="https://mcp.example.com/mcp",
+        )
+
+        created_session, scope = await service._create_session(server_config)
+
+        assert created_session is session
+        assert isinstance(scope.http_client, httpx2.AsyncClient)
+        assert not scope.http_client.is_closed
+        http_client = scope.http_client
+
+        await service._close_session(created_session, scope)
+
+        assert http_client.is_closed
+        assert scope.http_client is None
+        assert session.exited == 1
+        assert transport.exited == 1
+
+
+class TestScopeTeardownCancellation:
+    """Cancellation-safe teardown: every acquired resource closes in strict
+    reverse order even when an exit raises CancelledError, ownership fields
+    are cleared, primary errors are never masked, and repeated close stays
+    idempotent after a failed/cancelled exit."""
+
+    def _stdio_config(self):
+        return MCPServerConfig(
+            name="server1",
+            command="python",
+            args=["server.py"],
+            enabledForAgents=["Engineer"],
+        )
+
+    async def _enter_all(self, scope, session, transport, http_client):
+        await scope.enter_http_client(http_client)
+        await scope.enter_transport(transport)
+        await scope.enter_session(session)
+
+    @pytest.mark.asyncio
+    async def test_session_exit_cancel_still_closes_transport_and_http_client(self):
+        scope = _MCPSessionScope("server1")
+        session = FakeSession()
+        session.exit_cancel = True
+        transport = FakeTransportCtx()
+        http_client = FakeHttpClient()
+        await self._enter_all(scope, session, transport, http_client)
+
+        with pytest.raises(asyncio.CancelledError):
+            await scope.aclose()
+
+        assert session.exited == 1
+        assert transport.exited == 1
+        assert http_client.closed == 1
+        assert scope.session is None
+        assert scope.transport_ctx is None
+        assert scope.http_client is None
+
+    @pytest.mark.asyncio
+    async def test_transport_exit_cancel_still_closes_http_client(self):
+        scope = _MCPSessionScope("server1")
+        session = FakeSession()
+        transport = FakeTransportCtx(exit_cancel=True)
+        http_client = FakeHttpClient()
+        await self._enter_all(scope, session, transport, http_client)
+
+        with pytest.raises(asyncio.CancelledError):
+            await scope.aclose()
+
+        assert session.exited == 1
+        assert transport.exited == 1
+        assert http_client.closed == 1
+        assert scope.session is None
+        assert scope.transport_ctx is None
+        assert scope.http_client is None
+
+    @pytest.mark.asyncio
+    async def test_aclose_with_primary_error_swallows_teardown_cancellation(self):
+        scope = _MCPSessionScope("server1")
+        session = FakeSession()
+        session.exit_cancel = True
+        transport = FakeTransportCtx(exit_cancel=True)
+        http_client = FakeHttpClient()
+        await self._enter_all(scope, session, transport, http_client)
+
+        await scope.aclose(primary_error=RuntimeError("registration failed: 307"))
+
+        assert session.exited == 1
+        assert transport.exited == 1
+        assert http_client.closed == 1
+        assert scope.session is None
+        assert scope.transport_ctx is None
+        assert scope.http_client is None
+
+    @pytest.mark.asyncio
+    async def test_aclose_idempotent_after_cancelled_exit(self):
+        scope = _MCPSessionScope("server1")
+        session = FakeSession()
+        session.exit_cancel = True
+        transport = FakeTransportCtx()
+        http_client = FakeHttpClient()
+        await self._enter_all(scope, session, transport, http_client)
+
+        with pytest.raises(asyncio.CancelledError):
+            await scope.aclose()
+        await scope.aclose()
+
+        assert session.exited == 1
+        assert transport.exited == 1
+        assert http_client.closed == 1
+        assert scope.session is None
+        assert scope.transport_ctx is None
+        assert scope.http_client is None
+
+    @pytest.mark.asyncio
+    async def test_primary_oauth_error_not_masked_by_teardown_cancellation(
+        self, monkeypatch
+    ):
+        """Historical regression: an OAuth registration failure followed by a
+        cancelled teardown must surface the primary error, never CancelledError,
+        with full cleanup and no leaked tasks."""
+        service = MCPService()
+        transport = FakeTransportCtx(exit_cancel=True)
+        session = FakeSession(initialize_error=RuntimeError("registration failed: 307"))
+        monkeypatch.setattr(
+            "AgentCrew.modules.mcpclient.service.stdio_client",
+            lambda *args, **kwargs: transport,
+        )
+        monkeypatch.setattr(
+            "AgentCrew.modules.mcpclient.service.ClientSession",
+            lambda *args, **kwargs: session,
+        )
+        monkeypatch.setattr(asyncio, "sleep", _noop_sleep)
+
+        with pytest.raises(RuntimeError, match="registration failed: 307"):
+            await service._create_session(self._stdio_config())
+
+        assert session.exited == 1
+        assert transport.exited == 1
+        pending = [
+            task for task in asyncio.all_tasks() if task is not asyncio.current_task()
+        ]
+        assert pending == []
+
+    @pytest.mark.asyncio
+    async def test_external_cancellation_propagates_after_full_cleanup(
+        self, monkeypatch
+    ):
+        """Externally initiated cancellation during a tool call still
+        propagates after the finally-path cleanup completes."""
+        service = MCPService()
+        transport = FakeTransportCtx()
+        session = FakeSession()
+        session.call_tool_hang = True
+        monkeypatch.setattr(
+            "AgentCrew.modules.mcpclient.service.stdio_client",
+            lambda *args, **kwargs: transport,
+        )
+        monkeypatch.setattr(
+            "AgentCrew.modules.mcpclient.service.ClientSession",
+            lambda *args, **kwargs: session,
+        )
+
+        async def scenario():
+            task = asyncio.create_task(
+                service.call_tool_stateless(self._stdio_config(), "tool1", {})
+            )
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        await scenario()
+
+        assert session.exited == 1
+        assert transport.exited == 1
+
+    @pytest.mark.asyncio
+    async def test_close_session_does_not_mask_primary_error_in_finally_path(self):
+        """A teardown CancelledError must not mask the primary tool error when
+        closing from a finally block."""
+        service = MCPService()
+        session = FakeSession(call_tool_error=RuntimeError("tool failed"))
+        transport = FakeTransportCtx(exit_cancel=True)
+        scope = _MCPSessionScope("server1")
+        await scope.enter_session(session)
+        await scope.enter_transport(transport)
+
+        async def fake_create(server_config):
+            return session, scope
+
+        service._create_session = fake_create
+
+        result = await service.call_tool_stateless(self._stdio_config(), "tool1", {})
+
+        assert result["status"] == "error"
+        assert "tool failed" in result["content"]
+        assert session.exited == 1
+        assert transport.exited == 1
+        assert scope.session is None
+        assert scope.transport_ctx is None
+
+    @pytest.mark.asyncio
+    async def test_tool_handler_failure_terminates_within_bound_no_pending_tasks(
+        self,
+    ):
+        """Bounded regression: an MCP auth/transport failure must not leave the
+        A2A-facing tool execution awaiting indefinitely, and a teardown failure
+        must not mask the primary error (historical: OAuthRegistrationError
+        followed by AnyIO cancel-scope RuntimeError and a hanging A2A task)."""
+        service = MCPService()
+        session = FakeSession(call_tool_error=RuntimeError("registration failed: 307"))
+        transport = FakeTransportCtx(
+            exit_error=RuntimeError(
+                "Attempted to exit cancel scope in a different task than it was entered in"
+            )
+        )
+        scope = _MCPSessionScope("server1")
+        await scope.enter_session(session)
+        await scope.enter_transport(transport)
+
+        async def fake_create(server_config):
+            return session, scope
+
+        service._create_session = fake_create
+        handler = service._create_stateless_tool_handler(
+            self._stdio_config(), "tool1"
+        )()
+
+        result = await asyncio.wait_for(handler(x=1), timeout=5)
+
+        assert result == [
+            {
+                "type": "text",
+                "text": "Error calling MCP tool 'tool1': registration failed: 307",
+            }
+        ]
+        assert session.exited == 1
+        assert transport.exited == 1
+        pending = [
+            task for task in asyncio.all_tasks() if task is not asyncio.current_task()
+        ]
+        assert pending == []
+
+    @pytest.mark.asyncio
+    async def test_tool_handler_teardown_cancellation_still_terminates(self):
+        """A CancelledError from teardown after a handled tool error terminates
+        within the bound with full cleanup and no leaked tasks (no hang)."""
+        service = MCPService()
+        session = FakeSession(call_tool_error=RuntimeError("tool failed"))
+        transport = FakeTransportCtx(exit_cancel=True)
+        scope = _MCPSessionScope("server1")
+        await scope.enter_session(session)
+        await scope.enter_transport(transport)
+
+        async def fake_create(server_config):
+            return session, scope
+
+        service._create_session = fake_create
+        handler = service._create_stateless_tool_handler(
+            self._stdio_config(), "tool1"
+        )()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(handler(x=1), timeout=5)
+
+        assert session.exited == 1
+        assert transport.exited == 1
+        pending = [
+            task for task in asyncio.all_tasks() if task is not asyncio.current_task()
+        ]
+        assert pending == []

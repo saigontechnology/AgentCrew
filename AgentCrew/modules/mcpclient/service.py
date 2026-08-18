@@ -4,6 +4,7 @@ import asyncio
 import base64
 import os
 import random
+import sys
 import tempfile
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
@@ -41,6 +42,90 @@ if TYPE_CHECKING:
 
 # Initialize the logger
 mcp_log_io = FileLogIO("mcpclient_agentcrew")
+
+
+class _MCPSessionScope:
+    """Owns the resources of one temporary MCP connection.
+
+    Entering opens resources in order (http client -> transport -> session);
+    :meth:`aclose` closes them in reverse order (session -> transport ->
+    http client), exactly once. Cleanup failures are logged and never mask a
+    primary error, and cleanup still runs on cancellation.
+    """
+
+    __slots__ = ("http_client", "server_name", "session", "transport_ctx")
+
+    def __init__(self, server_name: str):
+        self.server_name = server_name
+        self.http_client = None
+        self.transport_ctx = None
+        self.session: ClientSession | None = None
+
+    async def enter_http_client(self, http_client) -> None:
+        """Enter the supplied HTTP client (httpx2.AsyncClient for Streamable HTTP)."""
+        await http_client.__aenter__()
+        self.http_client = http_client
+
+    async def enter_transport(self, transport_ctx):
+        """Enter the transport context and return its (read_stream, write_stream)."""
+        streams = await transport_ctx.__aenter__()
+        self.transport_ctx = transport_ctx
+        return streams
+
+    async def enter_session(self, session: ClientSession) -> None:
+        """Enter the ClientSession."""
+        await session.__aenter__()
+        self.session = session
+
+    async def aclose(self, primary_error: BaseException | None = None) -> None:
+        """Close session, transport, and http client in strict reverse order.
+
+        Every acquired resource is closed exactly once, even when an exit
+        raises; ownership fields are cleared in ``finally`` blocks. Teardown
+        failures are logged and never mask an already-propagating primary
+        operation/auth/cancellation error. When no primary error is
+        propagating, a CancelledError observed during teardown is re-raised
+        after all exits complete so original task cancellation still
+        propagates (historical regression: an OAuth registration failure was
+        followed by an AnyIO cancel-scope cleanup failure that left A2A
+        callers awaiting indefinitely).
+        """
+        teardown_cancel: asyncio.CancelledError | None = None
+        if self.session is not None:
+            try:
+                await self.session.__aexit__(None, None, None)
+            except asyncio.CancelledError as e:
+                teardown_cancel = teardown_cancel or e
+            except Exception as e:
+                logger.warning(
+                    f"MCPService: Error closing session for '{self.server_name}': {e}"
+                )
+            finally:
+                self.session = None
+        if self.transport_ctx is not None:
+            try:
+                await self.transport_ctx.__aexit__(None, None, None)
+            except asyncio.CancelledError as e:
+                teardown_cancel = teardown_cancel or e
+            except Exception as e:
+                logger.warning(
+                    f"MCPService: Error closing transport for '{self.server_name}': {e}"
+                )
+            finally:
+                self.transport_ctx = None
+        if self.http_client is not None:
+            try:
+                await self.http_client.aclose()
+            except asyncio.CancelledError as e:
+                teardown_cancel = teardown_cancel or e
+            except Exception as e:
+                logger.warning(
+                    f"MCPService: Error closing HTTP client for '{self.server_name}': {e}"
+                )
+            finally:
+                self.http_client = None
+        if teardown_cancel is not None and primary_error is None:
+            raise teardown_cancel
 
 
 class MCPService:
@@ -113,8 +198,9 @@ class MCPService:
         the same event loop wait for the lock, then find a valid token and
         skip OAuth entirely.
 
-        Returns ``(session, ctx)`` where ``ctx`` is the transport context
-        manager. The caller must call :meth:`_close_session` when done.
+        Returns ``(session, scope)`` where ``scope`` is the transport scope
+        owning the http client, transport context, and session. The caller
+        must call :meth:`_close_session` when done.
         """
         if server_config.streaming_server:
             lock = self._get_oauth_lock(server_config.name)
@@ -124,85 +210,96 @@ class MCPService:
 
     async def _create_session_impl(
         self, server_config: MCPServerConfig
-    ) -> tuple[ClientSession, Any]:
-        """Internal session creation (called under the per-server per-loop OAuth lock for streaming servers)."""
-        if server_config.streaming_server:
-            headers = server_config.headers or {}
-            token_storage = self._build_token_storage(server_config)
-            client_info = await token_storage.get_client_info()
-            if client_info and client_info.redirect_uris:
-                port = client_info.redirect_uris[0].port
-            else:
-                port = random.randint(14100, 14200)
-            oauth_resolver = OAuthClientResolver(port=port)
+    ) -> tuple[ClientSession, _MCPSessionScope]:
+        """Internal session creation (called under the per-server per-loop OAuth lock for streaming servers).
 
-            if server_config.url.endswith("/sse"):
-                ctx = sse_client(
-                    server_config.url,
-                    headers=headers,
-                    auth=oauth_resolver.get_oauth_client_provider(
-                        server_config.url, token_storage
-                    ),
-                    sse_read_timeout=60 * 60 * 24,
-                )
-            else:
-                from httpx import AsyncClient, Timeout
+        Returns ``(session, scope)`` where ``scope`` owns the http client,
+        transport context, and session. On error or cancellation the scope is
+        closed before the exception propagates.
+        """
+        scope = _MCPSessionScope(server_config.name)
+        try:
+            if server_config.streaming_server:
+                headers = server_config.headers or {}
+                token_storage = self._build_token_storage(server_config)
+                client_info = await token_storage.get_client_info()
+                if client_info and client_info.redirect_uris:
+                    port = client_info.redirect_uris[0].port
+                else:
+                    port = random.randint(14100, 14200)
+                oauth_resolver = OAuthClientResolver(port=port)
 
-                ctx = streamable_http_client(
-                    server_config.url,
-                    http_client=AsyncClient(
+                if server_config.url.endswith("/sse"):
+                    ctx = sse_client(
+                        server_config.url,
+                        headers=headers,
+                        auth=oauth_resolver.get_oauth_client_provider(
+                            server_config.url, token_storage
+                        ),
+                        sse_read_timeout=60 * 60 * 24,
+                    )
+                else:
+                    from httpx2 import AsyncClient, Timeout
+
+                    http_client = AsyncClient(
                         headers=headers,
                         auth=oauth_resolver.get_oauth_client_provider(
                             server_config.url, token_storage
                         ),
                         timeout=Timeout(60, read=60 * 60 * 24),
-                    ),
+                        follow_redirects=True,
+                    )
+                    await scope.enter_http_client(http_client)
+                    ctx = streamable_http_client(
+                        server_config.url, http_client=http_client
+                    )
+            else:
+                server_params = StdioServerParameters(
+                    command=server_config.command,
+                    args=server_config.args,
+                    env=server_config.env,
                 )
-        else:
-            server_params = StdioServerParameters(
-                command=server_config.command,
-                args=server_config.args,
-                env=server_config.env,
-            )
-            ctx = stdio_client(server_params, errlog=mcp_log_io)
+                ctx = stdio_client(server_params, errlog=mcp_log_io)
 
-        stream_context = await ctx.__aenter__()
-        read_stream, write_stream = stream_context[0], stream_context[1]
-        session = ClientSession(read_stream, write_stream)
-        try:
-            await session.__aenter__()
-        except Exception:
-            await ctx.__aexit__(None, None, None)
+            streams = await scope.enter_transport(ctx)
+            read_stream, write_stream = streams[0], streams[1]
+            session = ClientSession(read_stream, write_stream)
+            await scope.enter_session(session)
+
+            retried = 0
+            while retried < 3:
+                try:
+                    await session.initialize()
+                    break
+                except Exception:
+                    retried += 1
+                    if retried >= 3:
+                        raise
+                    logger.warning(
+                        f"MCPService: Retrying connection to '{server_config.name}' "
+                        f"(attempt {retried + 1}/3)"
+                    )
+                    await asyncio.sleep(retried * 2)
+
+            logger.info(
+                f"MCPService: Connected to '{server_config.name}' using protocol "
+                f"'{session.protocol_version}'"
+            )
+            return session, scope
+        except BaseException as primary_error:
+            await scope.aclose(primary_error=primary_error)
             raise
 
-        retried = 0
-        while retried < 3:
-            try:
-                await session.initialize()
-                return session, ctx
-            except Exception:
-                retried += 1
-                if retried >= 3:
-                    await session.__aexit__(None, None, None)
-                    await ctx.__aexit__(None, None, None)
-                    raise
-                logger.warning(
-                    f"MCPService: Retrying connection to '{server_config.name}' "
-                    f"(attempt {retried + 1}/3)"
-                )
-                await asyncio.sleep(retried * 2)
-        return session, ctx
-
     async def _close_session(self, session: ClientSession, ctx: Any) -> None:
-        """Close a temporary session and its transport context."""
-        try:
-            await session.__aexit__(None, None, None)
-        except Exception as e:
-            logger.warning(f"MCPService: Error closing session: {e}")
-        try:
-            await ctx.__aexit__(None, None, None)
-        except Exception as e:
-            logger.warning(f"MCPService: Error closing transport: {e}")
+        """Close a temporary session and its transport scope (reverse order, exactly once).
+
+        ``ctx`` is the :class:`_MCPSessionScope` returned by
+        :meth:`_create_session`; it owns the session, transport context, and
+        http client. Teardown failures are logged and never mask an
+        already-propagating primary error; task cancellation still propagates
+        after cleanup completes.
+        """
+        await ctx.aclose(primary_error=sys.exc_info()[1])
 
     async def discover_server_tools(
         self, server_config: MCPServerConfig, agent_name: str
@@ -420,7 +517,7 @@ class MCPService:
                 params=PaginatedRequestParams(cursor=cursor)
             )
             resources.extend(response.resources)
-            cursor = response.nextCursor
+            cursor = response.next_cursor
             if not cursor:
                 return resources
         return resources
@@ -431,8 +528,8 @@ class MCPService:
             data["title"] = resource.title
         if resource.description:
             data["description"] = resource.description
-        if resource.mimeType:
-            data["mimeType"] = resource.mimeType
+        if resource.mime_type:
+            data["mimeType"] = resource.mime_type
         return data
 
     def _get_resource_tool_definition(self, server_name: str) -> dict[str, Any]:
@@ -470,8 +567,6 @@ class MCPService:
 
         def handler_factory(service_instance=None):
             async def get_resource(uri: str) -> list[dict[str, Any]]:
-                from pydantic import AnyUrl
-
                 resource_uri = uri.strip() if uri else ""
                 if not resource_uri:
                     raise ValueError("Resource URI is required")
@@ -497,10 +592,10 @@ class MCPService:
 
                 resource_link = ResourceLink(
                     type="resource_link",
-                    uri=AnyUrl(resource_uri),
+                    uri=resource_uri,
                     name=resource.get("name", resource_uri),
                     description=resource.get("description"),
-                    mimeType=resource.get("mimeType"),
+                    mime_type=resource.get("mimeType"),
                 )
 
                 session = None
@@ -636,7 +731,7 @@ class MCPService:
 
         merged_inputSchema_string = json.dumps(
             replace_refs(
-                tool.inputSchema,
+                tool.input_schema,
                 merge_props=True,
                 jsonschema=True,
             ),
@@ -673,7 +768,7 @@ class MCPService:
                 {
                     "name": f"{server_id}.{tool.name}",
                     "description": tool.description,
-                    "input_schema": tool.inputSchema,
+                    "input_schema": tool.input_schema,
                 }
                 for tool in self.tools_cache[server_id].values()
             ]
@@ -737,7 +832,9 @@ class MCPService:
                     }
                 )
             elif isinstance(c, ImageContent):
-                data_uri = optimize_image_data_uri(f"data:{c.mimeType};base64,{c.data}")
+                data_uri = optimize_image_data_uri(
+                    f"data:{c.mime_type};base64,{c.data}"
+                )
                 result.append(
                     {
                         "type": "image_url",
@@ -847,8 +944,8 @@ class MCPService:
         resource_content: TextResourceContents | BlobResourceContents,
     ) -> str:
         return (
-            getattr(resource_content, "mimeType", None)
-            or getattr(resource_link, "mimeType", None)
+            getattr(resource_content, "mime_type", None)
+            or getattr(resource_link, "mime_type", None)
             or "unknown"
         )
 
@@ -876,7 +973,7 @@ class MCPService:
     ) -> dict[str, Any]:
         name = getattr(resource_link, "name", "resource")
         uri = str(getattr(resource_link, "uri", ""))
-        mime_type = getattr(resource_link, "mimeType", None) or "unknown"
+        mime_type = getattr(resource_link, "mime_type", None) or "unknown"
         return {
             "type": "text",
             "text": (
