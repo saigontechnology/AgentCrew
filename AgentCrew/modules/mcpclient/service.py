@@ -351,14 +351,25 @@ class MCPService:
             return []
 
     async def register_tools_for_agent(
-        self, server_config: MCPServerConfig, agent_name: str
+        self,
+        server_config: MCPServerConfig,
+        agent_name: str,
+        *,
+        require_active: bool = False,
     ) -> None:
         """Discover tools and register definitions + lazy handlers on the agent.
 
         Uses cached tool definitions when available to avoid repeated MCP
         discovery calls on re-activation. Tracks loading state in
-        ``agent.mcps_loading`` so callers can defer tool registration until
-        discovery completes.
+        ``agent.mcps_loading`` (try/finally cleanup preserved).
+
+        With ``require_active=True`` (used by background discovery), registry
+        mutation is skipped when the agent is no longer active, so a stale
+        background completion can never repopulate a deactivated agent.
+        ``mcp_resources``/MCP ``tool_definitions`` mutations and the loading
+        marker are guarded by the agent's ``_mcp_registry_lock``, which
+        serializes them against activation/deactivation registry clearing;
+        network discovery itself never holds the lock.
         """
         combined_server_id = self._get_server_id_format(server_config.name, agent_name)
 
@@ -370,7 +381,10 @@ class MCPService:
         is_cached = server_config.name in self.tools_cache
 
         if not is_cached:
-            agent.mcps_loading.append(combined_server_id)
+            with agent._mcp_registry_lock:
+                if require_active and not agent.is_active:
+                    return  # stale discovery after deactivation
+                agent.mcps_loading.append(combined_server_id)
 
         try:
             if is_cached:
@@ -392,36 +406,43 @@ class MCPService:
                 tools, server_config.includeTools, server_config.name
             )
 
-            if self.server_resources.get(server_config.name):
-                agent.mcp_resources[server_config.name] = self.server_resources[
-                    server_config.name
-                ]
-                self._register_get_resource_tool(
-                    agent, combined_server_id, server_config.name
+            with agent._mcp_registry_lock:
+                if require_active and not agent.is_active:
+                    return  # agent deactivated during discovery — no mutation
+
+                if self.server_resources.get(server_config.name):
+                    agent.mcp_resources[server_config.name] = self.server_resources[
+                        server_config.name
+                    ]
+                    self._register_get_resource_tool(
+                        agent, combined_server_id, server_config.name
+                    )
+
+                for tool in filtered_tools:
+
+                    def tool_definition_factory(
+                        tool_info=tool, srv_name=server_config.name
+                    ):
+                        def get_definition():
+                            return self._format_tool_definition(tool_info, srv_name)
+
+                        return get_definition
+
+                    handler_factory = self._create_stateless_tool_handler(
+                        server_config, tool.name
+                    )
+                    agent.register_tool(
+                        tool_definition_factory(), handler_factory, self
+                    )
+
+                logger.info(
+                    f"MCPService: Registered {len(filtered_tools)} tools for "
+                    f"'{server_config.name}' on agent '{agent_name}'"
                 )
-
-            for tool in filtered_tools:
-
-                def tool_definition_factory(
-                    tool_info=tool, srv_name=server_config.name
-                ):
-                    def get_definition():
-                        return self._format_tool_definition(tool_info, srv_name)
-
-                    return get_definition
-
-                handler_factory = self._create_stateless_tool_handler(
-                    server_config, tool.name
-                )
-                agent.register_tool(tool_definition_factory(), handler_factory, self)
-
-            logger.info(
-                f"MCPService: Registered {len(filtered_tools)} tools for "
-                f"'{server_config.name}' on agent '{agent_name}'"
-            )
         finally:
-            if combined_server_id in agent.mcps_loading:
-                agent.mcps_loading.remove(combined_server_id)
+            with agent._mcp_registry_lock:
+                if combined_server_id in agent.mcps_loading:
+                    agent.mcps_loading.remove(combined_server_id)
 
     def _create_stateless_tool_handler(
         self, server_config: MCPServerConfig, tool_name: str

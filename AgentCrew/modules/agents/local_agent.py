@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
+import threading
+from concurrent.futures import Future
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -27,6 +29,9 @@ def normalize_voice_enabled(value) -> Literal["enabled", "disabled"]:
 
 class LocalAgent(BaseAgent):
     """Base class for all specialized agents."""
+
+    #: Bounded wait for background MCP discovery before the first LLM request.
+    MCP_DISCOVERY_WAIT_SECONDS: float = 30.0
 
     def __init__(
         self,
@@ -75,7 +80,8 @@ class LocalAgent(BaseAgent):
         )  # Set of tool names that are registered with the LLM
         self._defer_tool_registration = False
         self.mcps_loading = []
-        self._mcp_discovery_task: asyncio.Task | None = None
+        self._mcp_discovery_future: Future | None = None
+        self._mcp_registry_lock = threading.RLock()
 
         from AgentCrew.modules.agents.manager import AgentMode
 
@@ -191,30 +197,49 @@ class LocalAgent(BaseAgent):
         if self.is_active:
             return True  # Already active
 
-        self.register_tools()
+        # Commit active state before starting background discovery so a fast
+        # cached completion is not rejected by the active-agent check. The
+        # agent-scoped lock serializes registry mutations with background MCP
+        # registration.
+        with self._mcp_registry_lock:
+            self.is_active = True
+            self.register_tools()
+        # Sync built-in tools to the LLM immediately so the agent is usable
+        # before MCP discovery finishes; MCP tools are final-synced later.
+        self._register_tools_with_llm()
 
-        # Start MCP discovery in background (non-blocking) to reduce activation time
-        from AgentCrew.modules.mcpclient import MCPSessionManager
+        try:
+            system_prompt = (
+                f"<Name>{self.name}</Name>\n"
+                f"<Description>{self.description}</Description>\n"
+                f"<Instructions>\n{self.get_system_prompt()}\n</Instructions>"
+            )
+            if self.custom_system_prompt:
+                system_prompt = f"{system_prompt}\n\n{self.custom_system_prompt}"
+            if self.tool_prompts:
+                system_prompt = f"{system_prompt}\n\n{'\n\n'.join(self.tool_prompts)}"
 
-        mcp_manager = MCPSessionManager.get_instance()
-        if mcp_manager.initialized:
-            mcp_manager.discover_mcps_for_agent_background(self.name)
+            self.llm.set_system_prompt(self._parse_system_prompt(system_prompt))
+            self.llm.temperature = (
+                self.temperature if self.temperature is not None else 0.4
+            )
+            self._defer_tool_registration = True
 
-        system_prompt = (
-            f"<Name>{self.name}</Name>\n"
-            f"<Description>{self.description}</Description>\n"
-            f"<Instructions>\n{self.get_system_prompt()}\n</Instructions>"
-        )
-        if self.custom_system_prompt:
-            system_prompt = f"{system_prompt}\n\n{self.custom_system_prompt}"
-        if self.tool_prompts:
-            system_prompt = f"{system_prompt}\n\n{'\n\n'.join(self.tool_prompts)}"
+            # Start MCP discovery in background (non-blocking) to reduce activation time
+            from AgentCrew.modules.mcpclient import MCPSessionManager
 
-        self.llm.set_system_prompt(self._parse_system_prompt(system_prompt))
-        self.llm.temperature = self.temperature if self.temperature is not None else 0.4
-        self._defer_tool_registration = True
-        self.is_active = True
-        return True
+            mcp_manager = MCPSessionManager.get_instance()
+            if mcp_manager.initialized:
+                self._mcp_discovery_future = (
+                    mcp_manager.discover_mcps_for_agent_background(self.name)
+                )
+            return True
+        except Exception:
+            # Restore a consistent inactive state if a later activation step
+            # raises, so background workers cannot mutate a broken agent and a
+            # retry starts from a clean registry.
+            self._clear_local_state()
+            raise
 
     def _clear_local_state(self):
         """Clear agent's local activation state without performing MCP deregistration.
@@ -223,12 +248,14 @@ class LocalAgent(BaseAgent):
         so that state mutation logic is not duplicated.
         """
         self._clear_tools_from_llm()
-        self.tool_definitions = {}
-        self.tool_prompts = []
-        self.mcp_resources = {}
-        self.is_active = False
-        self.mcps_loading = []
-        self._defer_tool_registration = False
+        with self._mcp_registry_lock:
+            self.tool_definitions = {}
+            self.tool_prompts = []
+            self.mcp_resources = {}
+            self.is_active = False
+            self.mcps_loading = []
+            self._defer_tool_registration = False
+        self._mcp_discovery_future = None
 
     def deactivate(self):
         """
@@ -281,12 +308,14 @@ class LocalAgent(BaseAgent):
         """
         Async variant of :meth:`activate`.
 
-        Replicates the sync activation steps but runs MCP discovery natively
-        on the current event loop as a non-blocking background task instead
-        of spawning a thread with ``asyncio.run()``. Async callers
-        (transfer, delegate, ACP, chat commands, A2A turn executor/agent
-        manager) should use this method to keep MCP work on their own event
-        loop and avoid cross-event-loop asyncio primitives.
+        Replicates the sync activation steps and starts durable
+        manager-owned background MCP discovery (daemon thread with its own
+        event loop). Built-in tools are synced to the LLM immediately so the
+        agent is usable before discovery finishes; MCP tools are final-synced
+        on the first message via :meth:`_sync_mcp_tools_after_discovery`.
+        Async callers (transfer, delegate, ACP, chat commands, A2A turn
+        executor/agent manager) use this method; the discovery work itself
+        never depends on the caller's event loop.
 
         Returns:
             True if activation was successful, False otherwise
@@ -297,45 +326,52 @@ class LocalAgent(BaseAgent):
         if self.is_active:
             return True  # Already active
 
-        self.register_tools()
+        # Commit active state before starting background discovery so a fast
+        # cached completion is not rejected by the active-agent check. The
+        # agent-scoped lock serializes registry mutations with background MCP
+        # registration.
+        with self._mcp_registry_lock:
+            self.is_active = True
+            self.register_tools()
+        # Sync built-in tools to the LLM immediately so the agent is usable
+        # before MCP discovery finishes; MCP tools are final-synced later.
+        self._register_tools_with_llm()
 
-        # Run MCP discovery on the current loop as a non-blocking background
-        # task. The task reference is held so it cannot be garbage collected;
-        # exceptions are logged inside the wrapper coroutine.
-        from AgentCrew.modules.mcpclient import MCPSessionManager
-
-        mcp_manager = MCPSessionManager.get_instance()
-        if mcp_manager.initialized:
-            self._mcp_discovery_task = asyncio.create_task(
-                self._run_mcp_discovery(mcp_manager)
-            )
-
-        system_prompt = (
-            f"<Name>{self.name}</Name>\n"
-            f"<Description>{self.description}</Description>\n"
-            f"<Instructions>\n{self.get_system_prompt()}\n</Instructions>"
-        )
-        if self.custom_system_prompt:
-            system_prompt = f"{system_prompt}\n\n{self.custom_system_prompt}"
-        if self.tool_prompts:
-            system_prompt = f"{system_prompt}\n\n{'\n\n'.join(self.tool_prompts)}"
-
-        self.llm.set_system_prompt(self._parse_system_prompt(system_prompt))
-        self.llm.temperature = self.temperature if self.temperature is not None else 0.4
-        self._defer_tool_registration = True
-        self.is_active = True
-        return True
-
-    async def _run_mcp_discovery(self, mcp_manager) -> None:
-        """Run MCP discovery for this agent on the current event loop.
-
-        Wraps the manager discovery call so failures are logged instead of
-        surfacing as unhandled background task exceptions.
-        """
         try:
-            await mcp_manager.discover_mcps_for_agent(self.name)
+            system_prompt = (
+                f"<Name>{self.name}</Name>\n"
+                f"<Description>{self.description}</Description>\n"
+                f"<Instructions>\n{self.get_system_prompt()}\n</Instructions>"
+            )
+            if self.custom_system_prompt:
+                system_prompt = f"{system_prompt}\n\n{self.custom_system_prompt}"
+            if self.tool_prompts:
+                system_prompt = f"{system_prompt}\n\n{'\n\n'.join(self.tool_prompts)}"
+
+            self.llm.set_system_prompt(self._parse_system_prompt(system_prompt))
+            self.llm.temperature = (
+                self.temperature if self.temperature is not None else 0.4
+            )
+            self._defer_tool_registration = True
+
+            # Start durable manager-owned background discovery (daemon thread
+            # with its own event loop) instead of an asyncio.Task bound to the
+            # caller's temporary loop, which CLI/GUI close after each command
+            # and which would cancel the discovery work.
+            from AgentCrew.modules.mcpclient import MCPSessionManager
+
+            mcp_manager = MCPSessionManager.get_instance()
+            if mcp_manager.initialized:
+                self._mcp_discovery_future = (
+                    mcp_manager.discover_mcps_for_agent_background(self.name)
+                )
+            return True
         except Exception:
-            logger.exception(f"LocalAgent: MCP discovery failed for '{self.name}'")
+            # Restore a consistent inactive state if a later activation step
+            # raises, so background workers cannot mutate a broken agent and a
+            # retry starts from a clean registry.
+            self._clear_local_state()
+            raise
 
     def _register_tools_with_llm(self):
         """Register all of this agent's tools with the LLM service."""
@@ -856,6 +892,39 @@ class LocalAgent(BaseAgent):
         if not self._defer_tool_registration:
             self._register_tools_with_llm()
 
+    async def _sync_mcp_tools_after_discovery(self) -> None:
+        """Final-sync tools after background MCP discovery (bounded, fail-open).
+
+        Built-in tools are already synced during activation; this only gates
+        the final synchronization that also includes MCP definitions. The
+        wait is shielded so a first-message timeout never cancels the
+        underlying manager-owned discovery; on timeout preprocessing
+        continues with the already-synced built-in tools and the deferred
+        flag stays set so the next message retries. Discovery failure also
+        unblocks preprocessing and performs one final synchronization before
+        clearing the deferred/loading state.
+        """
+        future = self._mcp_discovery_future
+        if future is not None and not future.done():
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(asyncio.wrap_future(future)),
+                    timeout=self.MCP_DISCOVERY_WAIT_SECONDS,
+                )
+            except TimeoutError:
+                logger.warning(
+                    f"LocalAgent: MCP discovery still loading for '{self.name}' "
+                    f"after {self.MCP_DISCOVERY_WAIT_SECONDS}s; continuing with "
+                    f"built-in tools"
+                )
+                return
+            except Exception as e:
+                logger.warning(
+                    f"LocalAgent: MCP discovery failed for '{self.name}': {e}"
+                )
+        self._register_tools_with_llm()
+        self._defer_tool_registration = False
+
     async def pre_process_message(
         self,
         messages: list[dict[str, Any]],
@@ -872,10 +941,7 @@ class LocalAgent(BaseAgent):
         self._refresh_agent_skills()
 
         if self._defer_tool_registration:
-            while len(self.mcps_loading) > 0:
-                await asyncio.sleep(0.2)
-            self._register_tools_with_llm()
-            self._defer_tool_registration = False
+            await self._sync_mcp_tools_after_discovery()
 
         from AgentCrew.modules.events.hook_payloads import (
             ContextBuildContext,

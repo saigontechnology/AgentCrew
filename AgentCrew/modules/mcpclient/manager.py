@@ -1,3 +1,6 @@
+import threading
+from concurrent.futures import Future
+
 from loguru import logger
 
 from .config import MCPConfigManager
@@ -32,6 +35,8 @@ class MCPSessionManager:
         self.mcp_service = MCPService()
         self.mcp_service._config_manager = self.config_manager
         self.initialized = False
+        self._discovery_futures: dict[str, Future] = {}
+        self._discovery_lock = threading.Lock()
 
     def initialize(self) -> None:
         """Initialize the MCP session manager (no thread/loop needed)."""
@@ -76,7 +81,7 @@ class MCPSessionManager:
             for target_agent_name in target_agents:
                 try:
                     await self.mcp_service.register_tools_for_agent(
-                        config, target_agent_name
+                        config, target_agent_name, require_active=True
                     )
                 except Exception as e:
                     logger.error(
@@ -88,34 +93,80 @@ class MCPSessionManager:
             "MCPSessionManager: Finished discovering MCPs for all enabled servers."
         )
 
-    def discover_mcps_for_agent_background(self, agent_name: str) -> None:
-        """Start MCP discovery in a background thread (non-blocking).
+    def discover_mcps_for_agent_background(self, agent_name: str) -> Future:
+        """Start durable background MCP discovery for an agent (non-blocking).
 
-        ``register_tools_for_agent`` internally checks ``tools_cache`` and
-        skips MCP connections when cached definitions are available, so
-        re-activation is fast even though the thread always starts.
+        Discovery runs on a daemon thread with its own event loop so it
+        survives the temporary ``asyncio.run()`` loops used by CLI/GUI
+        commands (an ``asyncio.Task`` created on those loops would be
+        cancelled when the loop closes). ``register_tools_for_agent``
+        internally checks ``tools_cache`` and skips MCP connections when
+        cached definitions are available, so re-activation is fast even
+        though a new worker starts.
+
+        Repeated calls while discovery for the same agent is still running
+        return the same future (deduplicated). The future is always settled:
+        ``None`` on success, the discovery exception on failure.
 
         Args:
             agent_name: Name of the agent to discover MCPs for
+
+        Returns:
+            A :class:`concurrent.futures.Future` that resolves when
+            discovery finishes or fails.
         """
+        with self._discovery_lock:
+            existing = self._discovery_futures.get(agent_name)
+            if existing is not None and not existing.done():
+                return existing
+            future: Future = Future()
+            self._discovery_futures[agent_name] = future
+
         if not self.initialized:
-            return
+            self._settle_discovery(agent_name, future)
+            return future
 
         self.config_manager.load_config()
         enabled_servers = self.config_manager.get_enabled_servers(agent_name)
 
         if not enabled_servers:
-            return
-
-        import threading
+            self._settle_discovery(agent_name, future)
+            return future
 
         def _run_discovery():
             import asyncio
 
-            asyncio.run(self.discover_mcps_for_agent(agent_name))
+            try:
+                asyncio.run(self.discover_mcps_for_agent(agent_name))
+            except Exception as e:
+                logger.error(
+                    f"MCPSessionManager: Background discovery failed for agent "
+                    f"'{agent_name}': {e}"
+                )
+                future.set_exception(e)
+            finally:
+                self._settle_discovery(agent_name, future)
 
-        thread = threading.Thread(target=_run_discovery, daemon=True)
+        thread = threading.Thread(
+            target=_run_discovery,
+            name=f"mcp-discovery-{agent_name}",
+            daemon=True,
+        )
         thread.start()
+        return future
+
+    def _settle_discovery(self, agent_name: str, future: Future) -> None:
+        """Settle a discovery future with success and drop manager tracking.
+
+        Called from the background worker's ``finally`` block (after any
+        exception was already recorded) and from the no-op paths (manager
+        not initialized or no enabled servers).
+        """
+        with self._discovery_lock:
+            if self._discovery_futures.get(agent_name) is future:
+                del self._discovery_futures[agent_name]
+        if not future.done():
+            future.set_result(None)
 
     async def deregister_tools_for_agent(self, agent_name: str | None = None) -> None:
         """Deregister MCP tools for an agent (no server shutdown needed)."""

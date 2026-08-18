@@ -632,6 +632,14 @@ AgentCrew connects to MCP servers using the MCP Python SDK (`mcp==2.0.0` in this
 connections negotiate the legacy MCP protocol for compatibility with existing
 MCP servers.
 
+MCP discovery runs in the background after an agent is activated, so switching
+agents never blocks on MCP network calls. Built-in tools are available
+immediately; MCP tools are synchronized as soon as discovery finishes. The
+first message after a switch waits up to 30 seconds (bounded) for MCP
+discovery before continuing with built-in tools only — a timeout never cancels
+the underlying discovery, and a later message retries the MCP tool
+synchronization.
+
 ## Adaptive Behaviors (persistents/adaptive.json)
 
 Agents learn patterns from interactions and store them as behaviors. All
