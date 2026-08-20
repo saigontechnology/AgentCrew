@@ -8,6 +8,10 @@ from loguru import logger
 
 from AgentCrew.modules.llm.base import BaseLLMService
 from AgentCrew.modules.llm.model_registry import ModelRegistry
+from AgentCrew.modules.llm.model_selection import (
+    ModelSelection,
+    ModelSelectionSource,
+)
 
 if TYPE_CHECKING:
     from AgentCrew.modules.llm.types import Model
@@ -389,3 +393,52 @@ class ServiceManager:
 
         if model.default_reasoning is not None:
             service.reasoning_effort = model.default_reasoning
+
+    def get_service_for_selection(
+        self,
+        selection: ModelSelection,
+        *,
+        standalone: bool = False,
+    ) -> BaseLLMService:
+        """Bind a model selection to a service instance.
+
+        Registered models use their resolved service family; unregistered
+        explicit/environment models fall back to the provider service with the
+        raw model id; otherwise the provider default is used. When
+        ``standalone`` is set an uncached service is created (A2A).
+        """
+        registry = ModelRegistry.get_instance()
+        provider = selection.provider
+        model_id = selection.model_id
+
+        if model_id:
+            model = registry.get_model(model_id)
+            if model:
+                registry.set_current_model(model_id)
+                if standalone:
+                    service = self.initialize_standalone_service_for_model(model)
+                else:
+                    service = self.get_service_for_model(model)
+                self.apply_model_defaults(service, model)
+                return service
+            if selection.source in (
+                ModelSelectionSource.RUNTIME_ARGS,
+                ModelSelectionSource.ENVIRONMENT,
+            ):
+                if standalone:
+                    service = self.initialize_standalone_service(provider)
+                else:
+                    service = self.get_service_for_provider(provider)
+                service.model = selection.relative_model_id
+                return service
+
+        if standalone:
+            return self.initialize_standalone_service(provider)
+        models = registry.get_models_by_provider(provider)
+        if models:
+            default_model = next((m for m in models if m.default), models[0])
+            registry.set_current_model(f"{default_model.provider}/{default_model.id}")
+            service = self.get_service_for_model(default_model)
+            self.apply_model_defaults(service, default_model)
+            return service
+        return self.get_service(provider)

@@ -109,6 +109,35 @@ class AgentsFileConfig:
         return result
 
 
+def _reload_model_selection(agent, agent_cfg):
+    """Choose the LLM service and selection for a hot-reloaded agent.
+
+    An active force selection (CLI args or ``/model``) keeps the agent's
+    current service and selection so a config reload does not silently
+    demote it. Otherwise the agent config ``model_id`` is re-applied.
+
+    Returns ``(new_llm_service, model_selection)``.
+    """
+    from AgentCrew.modules.agents import AgentManager
+    from AgentCrew.modules.llm.model_selection import (
+        ModelSelection,
+        ModelSelectionSource,
+    )
+
+    selection = getattr(agent, "model_selection", None)
+    if selection is not None and selection.is_forced:
+        return None, selection
+    new_llm_svc = AgentManager.resolve_llm_service_from_config(agent_cfg)
+    if new_llm_svc:
+        return (
+            new_llm_svc,
+            ModelSelection.from_model_id(
+                agent_cfg.get("model_id"), ModelSelectionSource.AGENT_CONFIG
+            ),
+        )
+    return None, None
+
+
 class AgentsConfig:
     """Manages agents.toml — CRUD, hot-reload, export, and import."""
 
@@ -206,12 +235,12 @@ class AgentsConfig:
                     else "disabled"
                 )
                 existing_agent.voice_id = agent_cfg.get("voice_id", None)
-                new_llm_svc = AgentManager.resolve_llm_service_from_config(agent_cfg)
+                new_llm_svc, model_selection = _reload_model_selection(
+                    existing_agent, agent_cfg
+                )
                 if new_llm_svc:
                     existing_agent.update_llm_service(new_llm_svc)
-                    existing_agent.pinned_model_id = agent_cfg.get("model_id")
-                else:
-                    existing_agent.pinned_model_id = None
+                existing_agent.model_selection = model_selection
             else:
                 clone_agent = agent_manager.get_current_agent()
                 if not isinstance(clone_agent, LocalAgent):
@@ -230,7 +259,9 @@ class AgentsConfig:
 
                 reload_llm_service = clone_agent.llm
 
-                new_llm_svc = AgentManager.resolve_llm_service_from_config(agent_cfg)
+                new_llm_svc, model_selection = _reload_model_selection(
+                    clone_agent, agent_cfg
+                )
                 if new_llm_svc:
                     reload_llm_service = new_llm_svc
 
@@ -245,8 +276,7 @@ class AgentsConfig:
                     voice_id=voice_id,
                 )
                 new_agent.set_system_prompt(system_prompt)
-                if new_llm_svc:
-                    new_agent.pinned_model_id = agent_cfg.get("model_id")
+                new_agent.model_selection = model_selection
                 agent_manager.register_agent(new_agent)
 
         new_agent_names = [a["name"] for a in new_agents_config]
@@ -304,12 +334,12 @@ class AgentsConfig:
                     else "disabled"
                 )
                 existing_agent.voice_id = agent_cfg.get("voice_id", None)
-                new_llm_svc = AgentManager.resolve_llm_service_from_config(agent_cfg)
+                new_llm_svc, model_selection = _reload_model_selection(
+                    existing_agent, agent_cfg
+                )
                 if new_llm_svc:
                     await existing_agent.update_llm_service_async(new_llm_svc)
-                    existing_agent.pinned_model_id = agent_cfg.get("model_id")
-                else:
-                    existing_agent.pinned_model_id = None
+                existing_agent.model_selection = model_selection
             else:
                 clone_agent = agent_manager.get_current_agent()
                 if not isinstance(clone_agent, LocalAgent):
@@ -328,7 +358,9 @@ class AgentsConfig:
 
                 reload_llm_service = clone_agent.llm
 
-                new_llm_svc = AgentManager.resolve_llm_service_from_config(agent_cfg)
+                new_llm_svc, model_selection = _reload_model_selection(
+                    clone_agent, agent_cfg
+                )
                 if new_llm_svc:
                     reload_llm_service = new_llm_svc
 
@@ -343,8 +375,7 @@ class AgentsConfig:
                     voice_id=voice_id,
                 )
                 new_agent.set_system_prompt(system_prompt)
-                if new_llm_svc:
-                    new_agent.pinned_model_id = agent_cfg.get("model_id")
+                new_agent.model_selection = model_selection
                 agent_manager.register_agent(new_agent)
 
         new_agent_names = [a["name"] for a in new_agents_config]

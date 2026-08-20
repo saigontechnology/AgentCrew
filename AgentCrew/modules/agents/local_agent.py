@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from AgentCrew.modules.llm import BaseLLMService
+    from AgentCrew.modules.llm.model_selection import ModelSelection
 
 
 def normalize_voice_enabled(value) -> Literal["enabled", "disabled"]:
@@ -66,7 +67,7 @@ class LocalAgent(BaseAgent):
         self.tool_prompts = []
         self.mcp_resources: dict[str, list[dict[str, Any]]] = {}
         self.is_remoting_mode: bool = is_remoting_mode
-        self.pinned_model_id: str | None = None
+        self.model_selection: ModelSelection | None = None
         self.token_usage = TokenUsage()
         self.conversation_usage = ConversationUsage()
         self.voice_enabled: Literal["enabled", "disabled"] = normalize_voice_enabled(
@@ -650,6 +651,11 @@ class LocalAgent(BaseAgent):
 
     def get_model(self) -> str:
         return f"{self.llm.provider_name}/{self.llm.model}" if self.llm else ""
+
+    @property
+    def is_pinned(self) -> bool:
+        """True when the agent keeps its service on global updates."""
+        return bool(self.model_selection and self.model_selection.is_pinned)
 
     def update_llm_service(self, new_llm_service: BaseLLMService) -> bool:
         """

@@ -9,7 +9,7 @@ from loguru import logger
 
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
-from AgentCrew.modules.llm.service_manager import ServiceManager
+from AgentCrew.modules.llm.model_selection import RuntimeModelInput
 from AgentCrew.setup import ApplicationSetup
 
 
@@ -43,24 +43,26 @@ class AgentCrewApplication:
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
-            if provider is None:
-                provider = self.setup.detect_provider()
-                if provider is None:
-                    raise ValueError(
-                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, CROFAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
-                    )
-
-            if not model_id:
-                model_id = self.setup.detect_model_id()
+            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
+            if runtime_model.provider is None:
+                raise ValueError(
+                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, CROFAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
+                )
 
             services = self.setup.setup_services(
-                provider, memory_llm, with_voice=with_voice, model_id=model_id
+                runtime_model,
+                memory_llm=memory_llm,
+                with_voice=with_voice,
             )
 
             if mcp_config:
                 os.environ["MCP_CONFIG_PATH"] = mcp_config
 
-            self.setup.setup_agents(services, agent_config)
+            self.setup.setup_agents(
+                services,
+                agent_config,
+                runtime_model=runtime_model,
+            )
             self.setup.restore_last_agent()
 
             # Initialize plugins (non-blocking — errors logged, not fatal)
@@ -111,28 +113,30 @@ class AgentCrewApplication:
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
-            if provider is None:
-                provider = self.setup.detect_provider()
-                if provider is None:
-                    from AgentCrew.modules.gui.widgets.config_window import ConfigWindow
+            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
+            if runtime_model.provider is None:
+                from AgentCrew.modules.gui.widgets.config_window import ConfigWindow
 
-                    app = QApplication(sys.argv)
-                    config_window = ConfigWindow()
-                    config_window.tab_widget.setCurrentIndex(3)
-                    config_window.show()
-                    sys.exit(app.exec())
-
-            if not model_id:
-                model_id = self.setup.detect_model_id()
+                app = QApplication(sys.argv)
+                config_window = ConfigWindow()
+                config_window.tab_widget.setCurrentIndex(3)
+                config_window.show()
+                sys.exit(app.exec())
 
             services = self.setup.setup_services(
-                provider, memory_llm, with_voice=with_voice, model_id=model_id
+                runtime_model,
+                memory_llm=memory_llm,
+                with_voice=with_voice,
             )
 
             if mcp_config:
                 os.environ["MCP_CONFIG_PATH"] = mcp_config
 
-            self.setup.setup_agents(services, agent_config)
+            self.setup.setup_agents(
+                services,
+                agent_config,
+                runtime_model=runtime_model,
+            )
             self.setup.restore_last_agent()
 
             # Initialize plugins in GUI mode (lazy — errors logged, not fatal)
@@ -201,19 +205,17 @@ class AgentCrewApplication:
             if not base_url:
                 base_url = f"http://{host}:{port}"
 
-            if provider is None:
-                provider = self.setup.detect_provider()
-                if provider is None:
-                    raise ValueError(
-                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, CROFAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
-                    )
-
-            if not model_id:
-                model_id = self.setup.detect_model_id()
+            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
+            if runtime_model.provider is None:
+                raise ValueError(
+                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, CROFAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
+                )
 
             need_memory = bool(memory_path)
             services = self.setup.setup_services(
-                provider, memory_llm, need_memory=need_memory, model_id=model_id
+                runtime_model,
+                memory_llm=memory_llm,
+                need_memory=need_memory,
             )
 
             if mcp_config:
@@ -221,7 +223,12 @@ class AgentCrewApplication:
 
             os.environ["AGENTCREW_DISABLE_GUI"] = "true"
 
-            self.setup.setup_agents(services, agent_config, provider, model_id)
+            self.setup.setup_agents(
+                services,
+                agent_config,
+                use_standalone_provider=runtime_model.provider,
+                runtime_model=runtime_model,
+            )
 
             if self.agent_manager is None:
                 raise ValueError("Agent manager is not initialized")
@@ -266,19 +273,21 @@ class AgentCrewApplication:
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
-            if provider is None:
-                provider = self.setup.detect_provider()
-                if provider is None:
-                    provider = "opencode_go"
-                    logger.error(
-                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, CROFAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
-                    )
-
-            if not model_id:
-                model_id = self.setup.detect_model_id()
+            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
+            if runtime_model.provider is None:
+                runtime_model = RuntimeModelInput(
+                    provider="opencode_go",
+                    explicit_provider=False,
+                    explicit_model_id=runtime_model.explicit_model_id,
+                    detected_model_id=runtime_model.detected_model_id,
+                )
+                logger.error(
+                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, CROFAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
+                )
 
             services = self.setup.setup_services(
-                provider, memory_llm, model_id=model_id
+                runtime_model,
+                memory_llm=memory_llm,
             )
 
             if mcp_config:
@@ -286,7 +295,11 @@ class AgentCrewApplication:
 
             os.environ["AGENTCREW_DISABLE_GUI"] = "true"
 
-            self.setup.setup_agents(services, agent_config)
+            self.setup.setup_agents(
+                services,
+                agent_config,
+                runtime_model=runtime_model,
+            )
 
             if self.agent_manager is None:
                 raise ValueError("Agent manager is not initialized")
@@ -389,32 +402,24 @@ class AgentCrewApplication:
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
-            if provider is None:
-                provider = self.setup.detect_provider()
-                if provider is None:
-                    raise ValueError(
-                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, CROFAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
-                    )
-
-            if not model_id:
-                model_id = self.setup.detect_model_id()
+            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
+            if runtime_model.provider is None:
+                raise ValueError(
+                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, CROFAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
+                )
 
             need_memory = bool(memory_path)
 
             services = self.setup.setup_services(
-                provider,
-                memory_llm,
+                runtime_model,
+                memory_llm=memory_llm,
                 need_memory=need_memory,
-                model_id=model_id,
             )
 
             if mcp_config:
                 os.environ["MCP_CONFIG_PATH"] = mcp_config
 
             os.environ["AGENTCREW_DISABLE_GUI"] = "true"
-
-            llm_manager = ServiceManager.get_instance()
-            registry = ModelRegistry.get_instance()
 
             if self.agent_manager is None:
                 raise ValueError("Agent manager is not initialized")
@@ -423,7 +428,11 @@ class AgentCrewApplication:
             self.agent_manager.one_turn_process = True
 
             if agent:
-                self.setup.setup_agents(services, agent_config)
+                self.setup.setup_agents(
+                    services,
+                    agent_config,
+                    runtime_model=runtime_model,
+                )
                 current_agent = self.agent_manager.get_local_agent(agent)
             else:
                 llm_service = services["llm"]
@@ -438,16 +447,6 @@ class AgentCrewApplication:
                 current_agent.set_system_prompt("you are a helpful AI assistant.")
                 self.agent_manager.register_agent(current_agent)
 
-            if model_id:
-                model = registry.get_model(f"{provider}/{model_id}")
-                if model:
-                    llm_service = llm_manager.get_service_for_model(model)
-                    llm_manager.apply_model_defaults(llm_service, model)
-                else:
-                    llm_service = llm_manager.get_service_for_provider(provider)
-                    llm_service.model = model_id
-                self.agent_manager.update_llm_service(llm_service)
-
             if isinstance(current_agent, LocalAgent) and current_agent.llm:
                 schema_dict = None
                 if output_schema:
@@ -455,7 +454,7 @@ class AgentCrewApplication:
                         output_schema
                     )
                     if "structured_output" in ModelRegistry.get_model_capabilities(
-                        f"{provider}/{model_id}"
+                        f"{runtime_model.provider}/{runtime_model.model_id}"
                     ):
                         current_agent.llm.structured_output = schema_dict
                     else:

@@ -19,6 +19,12 @@ from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
 from AgentCrew.modules.events import PluginManager
 from AgentCrew.modules.llm.model_registry import ModelRegistry
+from AgentCrew.modules.llm.model_selection import (
+    ModelSelection,
+    ModelSelectionSource,
+    RuntimeModelInput,
+    resolve_model_selection,
+)
 from AgentCrew.modules.llm.service_manager import ServiceManager
 
 PROVIDER_LIST = [
@@ -268,55 +274,76 @@ class ApplicationSetup:
     def detect_model_id(self) -> str | None:
         return os.getenv("AGENTCREW_MODEL_ID")
 
+    def resolve_runtime_model(
+        self, provider: str | None, model_id: str | None
+    ) -> RuntimeModelInput:
+        """Fill in missing provider/model values via detection.
+
+        Captures explicitness before detection so auto-detected values
+        (environment, persisted last-used) never masquerade as explicit
+        runtime arguments in the precedence chain.
+        """
+        explicit_provider = provider is not None
+        explicit_model = model_id is not None
+        if provider is None:
+            provider = self.detect_provider()
+        detected_model_id = None
+        if not model_id:
+            detected_model_id = self.detect_model_id()
+        return RuntimeModelInput(
+            provider=provider,
+            explicit_provider=explicit_provider,
+            explicit_model_id=model_id if explicit_model else None,
+            detected_model_id=detected_model_id,
+        )
+
     def setup_services(
         self,
-        provider: str,
+        runtime: RuntimeModelInput,
         memory_llm: str | None = None,
         need_memory: bool = True,
         with_voice: bool = False,
-        model_id: str | None = None,
     ) -> dict[str, Any]:
         registry = ModelRegistry.get_instance()
         llm_manager = ServiceManager.get_instance()
 
-        llm_service = None
+        provider = runtime.provider
+        if provider is None:
+            raise ValueError("Provider must be resolved before setting up services")
 
         try:
             last_full_qualified_model = GlobalConfig().get_last_used_model()
             last_provider = GlobalConfig().get_last_used_provider()
-
-            if last_full_qualified_model and last_provider:
-                should_restore = False
-                if provider == last_provider:
-                    should_restore = True
-
-                last_model_class = registry.get_model(last_full_qualified_model)
-                if should_restore and last_model_class:
-                    llm_service = llm_manager.get_service_for_model(last_model_class)
-                    llm_manager.apply_model_defaults(llm_service, last_model_class)
         except Exception as e:
             logger.warning(f"Could not restore last used model: {e}")
             click.echo(f"\u26a0\ufe0f  Could not restore last used model: {e}")
+            last_full_qualified_model = None
+            last_provider = None
+
+        selection = resolve_model_selection(
+            runtime,
+            agent_model_id=None,
+            last_used_model=last_full_qualified_model,
+            last_used_provider=last_provider,
+        )
+        if selection.source is ModelSelectionSource.LAST_USED:
+            try:
+                llm_service = llm_manager.get_service_for_selection(selection)
+            except Exception as e:
+                logger.warning(f"Could not restore last used model: {e}")
+                click.echo(f"\u26a0\ufe0f  Could not restore last used model: {e}")
+                llm_service = None
+        else:
+            llm_service = llm_manager.get_service_for_selection(selection)
 
         if llm_service is None:
-            models = registry.get_models_by_provider(provider)
-            if models:
-                default_model = next((m for m in models if m.default), models[0])
-                registry.set_current_model(
-                    f"{default_model.provider}/{default_model.id}"
+            llm_service = llm_manager.get_service_for_selection(
+                ModelSelection(
+                    provider=provider,
+                    model_id=None,
+                    source=ModelSelectionSource.DEFAULT,
                 )
-                llm_service = llm_manager.get_service_for_model(default_model)
-                llm_manager.set_model_for_llm(default_model)
-            else:
-                llm_service = llm_manager.get_service_for_provider(provider)
-
-        if model_id:
-            model = registry.get_model(f"{provider}/{model_id}")
-            if model:
-                registry.set_current_model(f"{provider}/{model_id}")
-                llm_manager.set_model_for_llm(model)
-            else:
-                llm_service.model = model_id
+            )
 
         memory_service = None
         context_service = None
@@ -329,9 +356,8 @@ class ApplicationSetup:
             memory_provider = memory_llm or provider
             memory_llm_svc = llm_manager.initialize_standalone_service(memory_provider)
 
-            # Set default model for memory service if using custom provider or explicit model_id
-            if model_id:
-                model = registry.get_model(f"{provider}/{model_id}")
+            if runtime.model_id:
+                model = registry.get_model(f"{provider}/{runtime.model_id}")
                 if model:
                     memory_llm_svc.model = model.id
                     logger.info(f"Set default model '{model.id}' for memory service")
@@ -369,9 +395,8 @@ class ApplicationSetup:
 
             code_analysis_llm = llm_manager.initialize_standalone_service(provider)
 
-            # Set default model for code analysis service if using custom provider or explicit model_id
-            if model_id:
-                model = registry.get_model(f"{provider}/{model_id}")
+            if runtime.model_id:
+                model = registry.get_model(f"{provider}/{runtime.model_id}")
                 if model:
                     code_analysis_llm.model = model.id
                     logger.info(
@@ -506,15 +531,28 @@ class ApplicationSetup:
         self,
         services: dict[str, Any],
         config_uri: str | None = None,
-        standalone_provider: str | None = None,
-        model_id: str | None = None,
+        use_standalone_provider: str | None = None,
+        runtime_model: RuntimeModelInput | None = None,
     ) -> AgentManager:
         if self.agent_manager is None:
             raise ValueError("Agent manager is not initialized")
         llm_manager = ServiceManager.get_instance()
-        registry = ModelRegistry.get_instance()
 
         default_llm_service = services["llm"]
+
+        if runtime_model is None:
+            raise ValueError("Runtime model input is required to set up agents")
+        provider = runtime_model.provider
+        if provider is None:
+            raise ValueError("Provider must be resolved before setting up agents")
+
+        try:
+            last_used_model = GlobalConfig().get_last_used_model()
+            last_used_provider = GlobalConfig().get_last_used_provider()
+        except Exception as e:
+            logger.warning(f"Could not read last used model: {e}")
+            last_used_model = None
+            last_used_provider = None
 
         if config_uri:
             config_uri = os.path.expanduser(config_uri)
@@ -531,7 +569,7 @@ class ApplicationSetup:
         except FileNotFoundError:
             pass
 
-        if not agent_definitions and not standalone_provider:
+        if not agent_definitions and not use_standalone_provider:
             from AgentCrew.modules.onboarding import OnboardingService
 
             onboarding = OnboardingService(services["llm"], services=services)
@@ -561,6 +599,13 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
             click.echo(f"Created default agent configuration at {config_uri}")
             agent_definitions = AgentManager.load_agents_from_config(config_uri)
 
+        base_selection = resolve_model_selection(
+            runtime_model,
+            agent_model_id=None,
+            last_used_model=last_used_model,
+            last_used_provider=last_used_provider,
+        )
+
         standalone_llm_service = None
         for agent_def in agent_definitions:
             if agent_def.get("base_url", ""):
@@ -580,47 +625,28 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
                     )
                     continue
             else:
-                if standalone_provider:
-                    if model_id:
-                        model = registry.get_model(f"{standalone_provider}/{model_id}")
-                        if model:
-                            standalone_llm_service = (
-                                llm_manager.initialize_standalone_service_for_model(
-                                    model
-                                )
-                            )
-                            llm_manager.apply_model_defaults(
-                                standalone_llm_service, model
-                            )
-                        else:
-                            standalone_llm_service = (
-                                llm_manager.initialize_standalone_service(
-                                    standalone_provider
-                                )
-                            )
-                            standalone_llm_service.model = model_id
-                    else:
-                        standalone_llm_service = (
-                            llm_manager.initialize_standalone_service(
-                                standalone_provider
-                            )
-                        )
+                if use_standalone_provider:
+                    standalone_llm_service = llm_manager.get_service_for_selection(
+                        base_selection, standalone=True
+                    )
 
-                agent_model_id = agent_def.get("model_id")
-                agent_dedicated_llm = None
-                resolved_llm = (
-                    AgentManager.resolve_llm_service_from_config(agent_def)
-                    if agent_model_id
-                    else None
+                selection = resolve_model_selection(
+                    runtime_model,
+                    agent_model_id=agent_def.get("model_id"),
+                    last_used_model=last_used_model,
+                    last_used_provider=last_used_provider,
                 )
-                if resolved_llm:
-                    agent_dedicated_llm = resolved_llm
+                agent_llm = standalone_llm_service or default_llm_service
+                if selection.source is ModelSelectionSource.AGENT_CONFIG:
+                    agent_llm = AgentManager.resolve_llm_service_from_config(agent_def)
+                    if agent_llm is None:
+                        agent_llm = standalone_llm_service or default_llm_service
+                        selection = base_selection
+
                 agent = LocalAgent(
                     name=agent_def["name"],
                     description=agent_def["description"],
-                    llm_service=agent_dedicated_llm
-                    or standalone_llm_service
-                    or default_llm_service,
+                    llm_service=agent_llm,
                     services=services,
                     tools=agent_def["tools"],
                     temperature=agent_def.get("temperature", None),
@@ -633,9 +659,8 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
                     voice_id=agent_def.get("voice_id", None),
                 )
                 agent.set_system_prompt(agent_def["system_prompt"])
-                if resolved_llm:
-                    agent.pinned_model_id = agent_model_id
-                if standalone_provider:
+                agent.model_selection = selection
+                if use_standalone_provider:
                     agent.set_custom_system_prompt(
                         self.agent_manager.get_remote_system_prompt()
                     )
@@ -646,7 +671,7 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
 
         mcp_register()
 
-        if standalone_provider:
+        if use_standalone_provider:
             for agent in self.agent_manager.agents.values():
                 agent.activate()
 

@@ -493,7 +493,7 @@ class AgentManager:
         for agent in self.agents.values():
             if agent is self.current_agent:
                 continue
-            if isinstance(agent, LocalAgent) and not agent.pinned_model_id:
+            if isinstance(agent, LocalAgent) and not agent.is_pinned:
                 agent.update_llm_service(llm_service)
         # Update current agent once, regardless of pinning
         if isinstance(self.current_agent, LocalAgent):
@@ -512,7 +512,7 @@ class AgentManager:
         for agent in self.agents.values():
             if agent is self.current_agent:
                 continue
-            if isinstance(agent, LocalAgent) and not agent.pinned_model_id:
+            if isinstance(agent, LocalAgent) and not agent.is_pinned:
                 await agent.update_llm_service_async(llm_service)
         if isinstance(self.current_agent, LocalAgent):
             await self.current_agent.update_llm_service_async(llm_service)

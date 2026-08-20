@@ -658,11 +658,8 @@ def create_agent_command(
     setup = ApplicationSetup(ConfigManagement())
     setup.load_api_keys_from_config()
 
-    if not model_id:
-        model_id = setup.detect_model_id()
-
-    detected_provider = provider or setup.detect_provider()
-    if not detected_provider:
+    runtime_model = setup.resolve_runtime_model(provider, model_id)
+    if not runtime_model.provider:
         click.echo(
             "No LLM provider configured. Please set an API key or use --provider.",
             err=True,
@@ -670,7 +667,7 @@ def create_agent_command(
         raise SystemExit(1)
 
     services = setup.setup_services(
-        detected_provider, model_id=model_id, need_memory=False, with_voice=False
+        runtime_model, need_memory=False, with_voice=False
     )
     onboarding = OnboardingService(services["llm"], services=services)
     success = onboarding.create_agent(name=name, description=description)
