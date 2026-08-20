@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
     from AgentCrew.modules.llm import BaseLLMService
     from AgentCrew.modules.llm.model_selection import ModelSelection
+    from AgentCrew.modules.llm.reasoning_selection import ReasoningSelection
 
 
 def normalize_voice_enabled(value) -> Literal["enabled", "disabled"]:
@@ -68,6 +69,7 @@ class LocalAgent(BaseAgent):
         self.mcp_resources: dict[str, list[dict[str, Any]]] = {}
         self.is_remoting_mode: bool = is_remoting_mode
         self.model_selection: ModelSelection | None = None
+        self.reasoning_selection: ReasoningSelection | None = None
         self.token_usage = TokenUsage()
         self.conversation_usage = ConversationUsage()
         self.voice_enabled: Literal["enabled", "disabled"] = normalize_voice_enabled(
@@ -89,10 +91,16 @@ class LocalAgent(BaseAgent):
         self._colaboration_mode = AgentMode.NONE
 
         from .context_manager import AgentContextManager
+        from .llm_lifecycle import AgentLLMLifecycle
+        from .memory_coordinator import AgentMemoryCoordinator
+        from .message_formatter import AgentMessageFormatter
         from .tool_registrar import AgentToolRegistrar
 
         self._tool_registrar = AgentToolRegistrar(self)
         self._context_manager = AgentContextManager(self)
+        self._llm_lifecycle = AgentLLMLifecycle(self)
+        self._memory_coordinator = AgentMemoryCoordinator(self)
+        self._message_formatter = AgentMessageFormatter(self)
 
     @property
     def input_tokens_usage(self) -> int:
@@ -120,12 +128,6 @@ class LocalAgent(BaseAgent):
             cached_tokens=self.token_usage.cached_tokens,
             cache_creation_tokens=self.token_usage.cache_creation_tokens,
         )
-
-    def _extract_tool_name(self, tool_def: Any) -> str:
-        """Extract tool name from definition regardless of format."""
-        from AgentCrew.modules.tools.utils import extract_tool_name
-
-        return extract_tool_name(tool_def)
 
     def append_message(self, messages: dict | list[dict]):
         copy_messages = copy.deepcopy(messages)
@@ -207,7 +209,7 @@ class LocalAgent(BaseAgent):
             self.register_tools()
         # Sync built-in tools to the LLM immediately so the agent is usable
         # before MCP discovery finishes; MCP tools are final-synced later.
-        self._register_tools_with_llm()
+        self._tool_registrar.sync_to_llm()
 
         try:
             system_prompt = (
@@ -248,7 +250,7 @@ class LocalAgent(BaseAgent):
         Shared helper between :meth:`deactivate` and :meth:`deactivate_async`
         so that state mutation logic is not duplicated.
         """
-        self._clear_tools_from_llm()
+        self.clear_tools_from_llm()
         with self._mcp_registry_lock:
             self.tool_definitions = {}
             self.tool_prompts = []
@@ -336,7 +338,7 @@ class LocalAgent(BaseAgent):
             self.register_tools()
         # Sync built-in tools to the LLM immediately so the agent is usable
         # before MCP discovery finishes; MCP tools are final-synced later.
-        self._register_tools_with_llm()
+        self._tool_registrar.sync_to_llm()
 
         try:
             system_prompt = (
@@ -374,20 +376,9 @@ class LocalAgent(BaseAgent):
             self._clear_local_state()
             raise
 
-    def _register_tools_with_llm(self):
-        """Register all of this agent's tools with the LLM service."""
-        self._tool_registrar.sync_to_llm()
-
-    def _clear_tools_from_llm(self):
+    def clear_tools_from_llm(self):
         """Clear all tools from the LLM service."""
         self._tool_registrar._clear_from_llm()
-
-    def get_tool_definition(self, tool_name: str) -> dict[str, Any] | None:
-        """Resolve the full tool definition dict for *tool_name*.
-
-        Delegates to :meth:`AgentToolRegistrar.get_tool_definition`.
-        """
-        return self._tool_registrar.get_tool_definition(tool_name)
 
     def validate_tool_use(self, tool_use: dict[str, Any]) -> str | None:
         """Validate a *tool_use* against its registered schema.
@@ -407,7 +398,7 @@ class LocalAgent(BaseAgent):
         tool_name = tool_use.get("name", "")
 
         # --- Unknown tool --------------------------------------------------
-        tool_def = self.get_tool_definition(tool_name)
+        tool_def = self._tool_registrar.get_tool_definition(tool_name)
         if tool_def is None:
             return format_unknown_tool_error_text(tool_name)
 
@@ -422,7 +413,7 @@ class LocalAgent(BaseAgent):
         return format_validation_error_text(tool_name, result.issues)
 
     def resync_tools_to_llm(self):
-        self._register_tools_with_llm()
+        self._tool_registrar.sync_to_llm()
 
     @property
     def clean_history(self):
@@ -434,109 +425,11 @@ class LocalAgent(BaseAgent):
     def is_streaming(self) -> bool:
         return self.llm.is_stream if self.llm else False
 
-    def _format_tool_result(
-        self,
-        tool_use: dict,
-        tool_result: Any,
-        is_error: bool = False,
-        is_rejected: bool = False,
-    ) -> dict[str, Any]:
-        """
-        Format a tool result for OpenAI API.
-
-        Args:
-            tool_use: The tool use details
-            tool_result: The result from the tool execution
-            is_error: Whether the result is an error
-
-        Returns:
-            A formatted message for tool response
-        """
-        # OpenAI format for tool responses
-        message = {
-            "role": "tool",
-            "agent": self.name,
-            "tool_call_id": tool_use["id"],
-            "tool_name": tool_use["name"],
-            "content": tool_result,
-        }
-
-        # Add error indication if needed
-        if is_error:
-            message["content"] = f"ERROR: {message['content']!s}"
-        if is_rejected:
-            message["content"] = f"DENIED: {message['content']!s}"
-            message["is_rejected"] = True
-
-        return message
-
-    def _format_assistant_message(
-        self,
-        assistant_response: str,
-        thinking_data: tuple[str, str] | None = None,
-        tool_uses: list[dict] | None = None,
-    ) -> dict[str, Any]:
-        """
-        Format the assistant's response into the appropriate message format for the LLM provider.
-
-        Args:
-            assistant_response (str): The text response from the assistant
-            tool_use (dict, optional): Tool use information if a tool was used
-
-        Returns:
-            dict[str, Any]: A properly formatted message to append to the messages list
-        """
-        assistant_message = {
-            "agent": self.name,
-            "role": "assistant",
-            "content": [{"type": "text", "text": assistant_response}],
-        }
-        if thinking_data:
-            thinking_content, thinking_signature = thinking_data
-            thinking_block = {"type": "thinking", "thinking": thinking_content}
-            # Add signature if available
-            if thinking_signature:
-                thinking_block["signature"] = thinking_signature
-            assistant_message["content"].insert(0, thinking_block)
-        valid_tool_uses = [
-            tool_use
-            for tool_use in (tool_uses or [])
-            if tool_use.get("id") and tool_use.get("name")
-        ]
-        if valid_tool_uses:
-            assistant_message["tool_calls"] = [
-                {
-                    "id": tool_use["id"],
-                    "name": tool_use["name"],
-                    "arguments": tool_use["input"],
-                    "type": tool_use.get("type", "tool_call"),
-                }
-                for tool_use in valid_tool_uses
-            ]
-        return assistant_message
-
     def format_message(
         self, message_type: MessageType, message_data: dict[str, Any]
     ) -> dict[str, Any] | None:
-        if message_type == MessageType.Assistant:
-            return self._format_assistant_message(
-                message_data.get("message", ""),
-                message_data.get("thinking", None),
-                message_data.get("tool_uses", None),
-            )
-        elif message_type == MessageType.ToolResult:
-            return self._format_tool_result(
-                message_data.get("tool_use", {}),
-                message_data.get("tool_result", ""),
-                message_data.get("is_error", False),
-                message_data.get("is_rejected", False),
-            )
-        elif message_type == MessageType.FileContent:
-            return (
-                self.llm.process_file_for_message(message_data.get("file_uri", ""))
-                if self.llm
-                else message_data
-            )
+        """Route message formatting through the collaborator."""
+        return self._message_formatter.format_message(message_type, message_data)
 
     def configure_think(self, think_setting):
         if self.llm:
@@ -657,6 +550,35 @@ class LocalAgent(BaseAgent):
         """True when the agent keeps its service on global updates."""
         return bool(self.model_selection and self.model_selection.is_pinned)
 
+    def release_llm(self) -> None:
+        """Release this agent's owned LLM service when safe.
+
+        Detaches the agent's reference to its LLM, then closes the service
+        exactly once when it is a dedicated service that is not cached by
+        ServiceManager and not referenced by any remaining agent. Used when
+        the agent is deregistered (e.g. config reload removes an agent) so
+        dedicated clients are not orphaned. Sync/async scheduling is handled
+        by ``ServiceManager.close_service``.
+        """
+        self._llm_lifecycle.release_llm()
+
+    def ensure_reasoning_isolated(self) -> None:
+        """Ensure this agent owns a dedicated LLM before reasoning is mutated.
+
+        Swaps a shared service for a dedicated uncached clone when necessary,
+        preserving lifecycle (tools/system prompt) via deactivate/activate.
+        """
+        self._llm_lifecycle.ensure_reasoning_isolated()
+
+    def reapply_reasoning(self) -> None:
+        """Isolate this agent's LLM, then recompute reasoning.
+
+        Used after a model/service switch or config reload: the agent first
+        ensures it owns a dedicated service, then applies its effective
+        reasoning so no other agent sharing the previous service is affected.
+        """
+        self._llm_lifecycle.reapply_reasoning()
+
     def update_llm_service(self, new_llm_service: BaseLLMService) -> bool:
         """
         Update the LLM service used by this agent.
@@ -667,20 +589,7 @@ class LocalAgent(BaseAgent):
         Returns:
             True if the update was successful, False otherwise
         """
-        was_active = self.is_active
-
-        # Deactivate with the current LLM if active
-        if was_active:
-            self.deactivate()
-
-        # Update the LLM service
-        self.llm = new_llm_service
-
-        # Reactivate with the new LLM if it was active before
-        if was_active:
-            self.activate()
-
-        return True
+        return self._llm_lifecycle.update_llm_service(new_llm_service)
 
     async def update_llm_service_async(self, new_llm_service: BaseLLMService) -> bool:
         """
@@ -696,147 +605,15 @@ class LocalAgent(BaseAgent):
         Returns:
             True if the update was successful, False otherwise
         """
-        was_active = self.is_active
+        return await self._llm_lifecycle.update_llm_service_async(new_llm_service)
 
-        if was_active:
-            await self.deactivate_async()
+    def extract_last_user_message_for_memory(self, messages: list[dict]) -> str:
+        """Return the last non-empty user text for memory storage.
 
-        self.llm = new_llm_service
-
-        if was_active:
-            await self.activate_async()
-
-        return True
-
-    def _get_directory_structure(self) -> str:
-        return self._context_manager._get_directory_structure()
-
-    def _enhance_agent_context_messages(
-        self, final_messages: list[dict[str, Any]]
-    ) -> None:
-        self._context_manager.enhance_messages(final_messages)
-
-    def _filter_invalid_tool_uses(
-        self, tool_uses: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        filtered_tool_uses = []
-        for tool_use in tool_uses:
-            if isinstance(tool_use.get("name"), str) and bool(
-                tool_use.get("name", "").strip()
-            ):
-                filtered_tool_uses.append(tool_use)
-            elif tool_use.get("id") or tool_use.get("args_json"):
-                logger.warning(
-                    "Dropping malformed parsed tool call without a usable name"
-                )
-        return filtered_tool_uses
-
-    def _clean_shrinkable_tool_result(
-        self, final_messages: list[dict[str, Any]]
-    ) -> None:
-        self._context_manager.shrink_tool_results(final_messages)
-
-    def _extract_last_user_message_for_memory(self, messages: list[dict]) -> str:
-        for message in reversed(messages):
-            if not isinstance(message, dict) or message.get("role") != "user":
-                continue
-            content = message.get("content", [])
-            if isinstance(content, str):
-                normalized = content.strip()
-                if normalized:
-                    return normalized
-                continue
-            text_parts: list[str] = []
-            for part in content:
-                if isinstance(part, str):
-                    normalized = part.strip()
-                    if normalized:
-                        text_parts.append(normalized)
-                elif isinstance(part, dict) and part.get("type") == "text":
-                    normalized = str(part.get("text", "")).strip()
-                    if normalized:
-                        text_parts.append(normalized)
-            if text_parts:
-                return " ".join(text_parts)
-        return ""
-
-    def _extract_assistant_messages_for_memory(
-        self, messages: list[dict], current_response: str = ""
-    ) -> list[str]:
-        assistant_messages: list[str] = []
-        last_user_idx = -1
-        # Map tool_call_id -> ask question for pairing across parallel calls
-        ask_questions_by_id: dict[str, str] = {}
-
-        for index, message in enumerate(messages):
-            if isinstance(message, dict) and message.get("role") == "user":
-                last_user_idx = index
-
-        for message in messages[last_user_idx + 1 :]:
-            if not isinstance(message, dict):
-                continue
-            role = message.get("role")
-            if role == "assistant":
-                content = message.get("content", "")
-                if isinstance(content, str):
-                    normalized = content.strip()
-                    if normalized:
-                        assistant_messages.append(normalized)
-
-                # Index ask tool questions by their tool call id
-                for tc in message.get("tool_calls") or []:
-                    if isinstance(tc, dict) and tc.get("name") == "ask":
-                        tc_id = tc.get("id")
-                        if not tc_id:
-                            continue
-                        arguments = tc.get("arguments", {})
-                        if isinstance(arguments, dict):
-                            q = arguments.get("question", "")
-                        elif isinstance(arguments, str):
-                            import json
-
-                            try:
-                                q = json.loads(arguments).get("question", "")
-                            except json.JSONDecodeError:
-                                q = ""
-                        else:
-                            q = ""
-                        if q:
-                            ask_questions_by_id[tc_id] = q
-
-            elif role == "tool":
-                # Capture tool rejection reasons (user feedback)
-                if message.get("is_rejected"):
-                    content = message.get("content", "")
-                    if isinstance(content, str) and content.strip():
-                        assistant_messages.append(
-                            f"[Tool rejected: {message.get('tool_name', 'unknown')}] "
-                            f"{content.strip()}"
-                        )
-                # Capture ask tool answers paired with the question by tool_call_id
-                elif message.get("tool_name") == "ask":
-                    content = message.get("content", "")
-                    if isinstance(content, str) and content.strip():
-                        tc_id = message.get("tool_call_id")
-                        question = (
-                            ask_questions_by_id.pop(tc_id, None) if tc_id else None
-                        )
-                        if question:
-                            assistant_messages.append(
-                                f"[User answered: {content.strip()} | Question was: {question}]"
-                            )
-                        else:
-                            assistant_messages.append(
-                                f"[User answered: {content.strip()}]"
-                            )
-
-        normalized_current_response = current_response.strip()
-        if normalized_current_response and (
-            not assistant_messages
-            or assistant_messages[-1] != normalized_current_response
-        ):
-            assistant_messages.append(normalized_current_response)
-        return assistant_messages
+        Supports string content, list string parts, and ``{type:
+        "text", text: ...}`` parts.
+        """
+        return self._memory_coordinator.extract_last_user_message_for_memory(messages)
 
     def store_memory_if_available(
         self,
@@ -845,23 +622,14 @@ class LocalAgent(BaseAgent):
         current_response: str,
         session_id: str | None = None,
     ) -> None:
-        from AgentCrew.modules.memory.base_service import BaseMemoryService
+        """Store conversation memory when a memory service is available.
 
-        memory_service = self.services.get("memory")
-        if not memory_service or not isinstance(memory_service, BaseMemoryService):
-            return
-        assistant_messages = self._extract_assistant_messages_for_memory(
-            messages, current_response
+        Failures are logged and swallowed so memory problems never break the
+        current turn.
+        """
+        self._memory_coordinator.store_memory_if_available(
+            user_message, messages, current_response, session_id
         )
-        try:
-            memory_service.store_conversation(
-                user_message,
-                assistant_messages,
-                self.name,
-                session_id=session_id,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to store conversation in memory: {e}")
 
     def _refresh_agent_skills(self) -> None:
         """Refresh skills from disk and update LLM tool definitions if needed.
@@ -896,7 +664,7 @@ class LocalAgent(BaseAgent):
 
         # Re-sync to LLM only when already past deferred sync
         if not self._defer_tool_registration:
-            self._register_tools_with_llm()
+            self._tool_registrar.sync_to_llm()
 
     async def _sync_mcp_tools_after_discovery(self) -> None:
         """Final-sync tools after background MCP discovery (bounded, fail-open).
@@ -928,7 +696,7 @@ class LocalAgent(BaseAgent):
                 logger.warning(
                     f"LocalAgent: MCP discovery failed for '{self.name}': {e}"
                 )
-        self._register_tools_with_llm()
+        self._tool_registrar.sync_to_llm()
         self._defer_tool_registration = False
 
     async def pre_process_message(
@@ -980,9 +748,9 @@ class LocalAgent(BaseAgent):
             self.llm.set_system_prompt(_before_sp)
         # ─────────────────────────────────────────────────────────────
 
-        self._clean_shrinkable_tool_result(messages)
+        self._context_manager.shrink_tool_results(messages)
         enhancing_messages = messages[:]
-        self._enhance_agent_context_messages(enhancing_messages)
+        self._context_manager.enhance_messages(enhancing_messages)
         from AgentCrew.modules.utils import VisionPreprocessingUtils
 
         # ── context.build after hook ─────────────────────────────────
@@ -1119,7 +887,7 @@ class LocalAgent(BaseAgent):
             self.token_usage = _token_usage
             if callback:
                 callback(
-                    self._filter_invalid_tool_uses(_tool_uses),
+                    self._message_formatter.filter_invalid_tool_uses(_tool_uses),
                     _token_usage,
                 )
             else:

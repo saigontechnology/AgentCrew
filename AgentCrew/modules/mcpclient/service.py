@@ -703,7 +703,7 @@ class MCPService:
             return
 
         if local_agent.is_active:
-            local_agent._clear_tools_from_llm()
+            local_agent.clear_tools_from_llm()
 
         for tool_name in tool_names_to_remove:
             local_agent.tool_definitions.pop(tool_name, None)

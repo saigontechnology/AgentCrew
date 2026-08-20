@@ -70,6 +70,12 @@ class LocalAgentEditor(QWidget):
         self._populate_model_id_combo()
         local_form_layout.addRow("Model ID:", self.model_id_combo)
 
+        self.reason_effort_combo = QComboBox()
+        self.reason_effort_combo.addItem("(use model default)", None)
+        for level in ("none", "minimal", "low", "medium", "high", "xhigh"):
+            self.reason_effort_combo.addItem(level, level)
+        local_form_layout.addRow("Reason Effort:", self.reason_effort_combo)
+
         self.enabled_checkbox = QCheckBox("Enabled")
         self.enabled_checkbox.setChecked(True)
         local_form_layout.addRow("", self.enabled_checkbox)
@@ -145,6 +151,7 @@ class LocalAgentEditor(QWidget):
         self.description_input.textChanged.connect(self._on_field_changed)
         self.temperature_input.textChanged.connect(self._on_field_changed)
         self.model_id_combo.currentTextChanged.connect(self._on_field_changed)
+        self.reason_effort_combo.currentIndexChanged.connect(self._on_field_changed)
         self.system_prompt_input.markdown_changed.connect(self._on_field_changed)
         self.enabled_checkbox.stateChanged.connect(self._on_field_changed)
         self.voice_enabled_checkbox.stateChanged.connect(self._on_field_changed)
@@ -177,6 +184,7 @@ class LocalAgentEditor(QWidget):
         self.description_input.setEnabled(enabled)
         self.temperature_input.setEnabled(enabled)
         self.model_id_combo.setEnabled(enabled)
+        self.reason_effort_combo.setEnabled(enabled)
         self.system_prompt_input.setEnabled(enabled)
         self.enabled_checkbox.setEnabled(enabled)
         for checkbox in self.tool_checkboxes.values():
@@ -190,6 +198,7 @@ class LocalAgentEditor(QWidget):
         self.description_input.clear()
         self.temperature_input.clear()
         self.model_id_combo.setCurrentText("")
+        self.reason_effort_combo.setCurrentIndex(0)
         self.system_prompt_input.clear()
         self.enabled_checkbox.setChecked(True)
         self.voice_enabled_checkbox.setChecked(False)
@@ -204,6 +213,11 @@ class LocalAgentEditor(QWidget):
         self.description_input.setText(agent_data.get("description", ""))
         self.temperature_input.setText(str(agent_data.get("temperature", "0.5")))
         self.model_id_combo.setCurrentText(agent_data.get("model_id", ""))
+        reason_effort = agent_data.get("reason_effort")
+        if reason_effort in ("none", "minimal", "low", "medium", "high", "xhigh"):
+            self.reason_effort_combo.setCurrentText(reason_effort)
+        else:
+            self.reason_effort_combo.setCurrentIndex(0)
         self.enabled_checkbox.setChecked(agent_data.get("enabled", True))
 
         voice_state = agent_data.get("voice_enabled", "disabled")
@@ -242,5 +256,6 @@ class LocalAgentEditor(QWidget):
             "voice_enabled": voice_state,
             "voice_id": self.voice_id_input.text().strip(),
             "model_id": self.model_id_combo.currentText().strip() or None,
+            "reason_effort": self.reason_effort_combo.currentData(),
             "agent_type": "local",
         }

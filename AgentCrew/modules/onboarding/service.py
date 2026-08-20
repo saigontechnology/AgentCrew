@@ -197,6 +197,9 @@ TOML block must always start with [[agents]].
 Agent object must contains these mandatory fields: `name`, `description`, `tools`, `system_prompt`, `temperature`,
 tools fields is an array that can be any value from ['memory', 'clipboard', 'code_analysis', 'web_search', 'browser', 'file_editing', 'command_execution']
 
+Optional field `reason_effort` may be included with one of: none, minimal, low, medium, high.
+Optional field `model_id` may be included as a fully-qualified `provider/model` id.
+
 """
 
 

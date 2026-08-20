@@ -217,6 +217,59 @@ Return ONLY the processed content without explanations about your extraction pro
 WEB CONTENT: {content}
 """
 
+BEHAVIOR_EXTRACTION_PROMPT = """
+You are a behavior extraction system for agent "{agent_name}".
+Current date: {current_date}
+
+Analyze the following conversation turn and extract any potential adaptive behaviors — reusable patterns, user preferences, communication style cues, or successful task approaches that should be consistently applied in future interactions.
+
+<CONVERSATION_TURN>
+<USER>
+{user_message}
+</USER>
+<ASSISTANT>
+{assistant_response}
+</ASSISTANT>
+</CONVERSATION_TURN>
+
+{existing_behaviors}
+
+Extraction Guidelines:
+- A behavior candidate is a "when [condition], do [actions]" rule that the agent should follow in future conversations.
+- Look for: user preferences (communication style, output format, tool usage), successful problem-solving patterns, repeated workflows, corrections the user made, or explicit instructions.
+- Do NOT extract one-time facts, project-specific trivia, or conversation summaries — only reusable behavioral rules.
+- If a candidate overlaps with an existing behavior listed above, reuse the same ID to update it rather than creating a new one.
+- If no behaviors can be extracted, output an empty <BEHAVIOR_CANDIDATES></BEHAVIOR_CANDIDATES> block.
+
+Confidence Scoring (1-10):
+- 9-10: User explicitly stated a preference or instruction (e.g., "always use uv", "don't add comments").
+- 8: Strong implicit signal — user corrected the agent, expressed satisfaction with a specific approach, or a clear repeated pattern emerged.
+- 6-7: Moderate signal — a plausible preference but not strongly confirmed.
+- 1-5: Weak or speculative — not enough evidence to justify a persistent behavior.
+
+Scope:
+- "global": Applies to all conversations regardless of project.
+- "project": Applies only to the current project context (e.g., project-specific conventions, tooling choices).
+
+ID Convention:
+- Use structured IDs: category_context (e.g., communication_style_technical, task_execution_code_review, personalization_output_format).
+
+Output format — output ONLY this XML, no other text:
+<BEHAVIOR_CANDIDATES>
+  <CANDIDATE>
+    <ID>category_context</ID>
+    <CONDITION>triggering condition description</CONDITION>
+    <ACTIONS>
+      <ACTION>first action step</ACTION>
+      <ACTION>second action step</ACTION>
+    </ACTIONS>
+    <SCOPE>global|project</SCOPE>
+    <CONFIDENCE>1-10</CONFIDENCE>
+  </CANDIDATE>
+  ...
+</BEHAVIOR_CANDIDATES>
+"""
+
 SCHEMA_ENFORCEMENT_PROMPT = """
 <OUTPUT_SCHEMA_ENFORCEMENT>
 <Instruction>

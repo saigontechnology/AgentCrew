@@ -770,7 +770,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 )
                 history.append(assistant_message)
 
-            user_msg = agent._extract_last_user_message_for_memory(history)
+            user_msg = agent.extract_last_user_message_for_memory(history)
             agent.store_memory_if_available(
                 user_msg,
                 history,

@@ -30,7 +30,10 @@ class Model(BaseModel):
         ]
     ]
     default: bool = False
-    default_reasoning: Literal["none", "minimal", "low", "medium", "high"] | None = None
+    default_reasoning: (
+        Literal["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+        | None
+    ) = None
     force_sample_params: SampleParam | None = None
     max_context_token: int = 80_000
     input_token_price_1m: float = 0.0

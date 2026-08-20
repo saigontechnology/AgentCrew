@@ -88,7 +88,16 @@ def _last_runtime(state):
 def test_explicit_provider_and_model_flow_to_setup_services(cli_env, runner):
     result = runner.invoke(
         create_agent_command,
-        ["--provider", "openai", "--model-id", "gpt-5", "--name", "A", "--description", "B"],
+        [
+            "--provider",
+            "openai",
+            "--model-id",
+            "gpt-5",
+            "--name",
+            "A",
+            "--description",
+            "B",
+        ],
     )
     assert result.exit_code == 0
     runtime_model = _last_runtime(cli_env)
@@ -103,9 +112,7 @@ def test_explicit_provider_and_model_flow_to_setup_services(cli_env, runner):
 
 
 def test_detected_values_are_not_elevated_to_arguments(cli_env, runner):
-    result = runner.invoke(
-        create_agent_command, ["--name", "A", "--description", "B"]
-    )
+    result = runner.invoke(create_agent_command, ["--name", "A", "--description", "B"])
     assert result.exit_code == 0
     runtime_model = _last_runtime(cli_env)
     assert isinstance(runtime_model, RuntimeModelInput)

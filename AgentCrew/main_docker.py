@@ -100,6 +100,7 @@ def chat(
     memory_llm,
     memory_path,
     model_id,
+    reason_effort,
     trusted_project_plugins,
 ):
     """Start an interactive chat session with LLM"""
@@ -109,7 +110,14 @@ def chat(
         os.environ["MEMORYDB_PATH"] = memory_path
 
     app = AgentCrewApplication(trusted_project_plugins)
-    app.run_console(provider, agent_config, mcp_config, memory_llm, model_id=model_id)
+    app.run_console(
+        provider,
+        agent_config,
+        mcp_config,
+        memory_llm,
+        model_id=model_id,
+        reason_effort=reason_effort,
+    )
 
 
 @cli.command()
@@ -140,6 +148,7 @@ def a2a_server(
     memory_llm,
     memory_path,
     model_id,
+    reason_effort,
     api_key,
     store_type,
     store_option,
@@ -171,6 +180,7 @@ def a2a_server(
         memory_path=memory_path,
         store_type=store_type,
         store_options=store_options if store_options else None,
+        reason_effort=reason_effort,
     )
 
 
@@ -188,6 +198,7 @@ def acp_agent(
     memory_llm,
     memory_path,
     model_id,
+    reason_effort,
     trusted_project_plugins,
 ):
     """Start an ACP stdio agent exposing a local AgentCrew agent"""
@@ -204,6 +215,7 @@ def acp_agent(
         mcp_config=mcp_config,
         memory_llm=memory_llm,
         agent=agent,
+        reason_effort=reason_effort,
     )
 
 
@@ -236,6 +248,7 @@ def job(
     agent,
     provider,
     model_id,
+    reason_effort,
     agent_config,
     mcp_config,
     memory_llm,
@@ -266,6 +279,7 @@ def job(
             memory_path=memory_path,
             output_schema=output_schema,
             token_usage_file=token_usage_file,
+            reason_effort=reason_effort,
         )
         click.echo(response)
     except Exception as e:

@@ -136,12 +136,16 @@ class AgentManager:
         self.agents[agent.name] = agent
 
     def deregister_agent(self, agent_name: str):
-        """
-        Register an agent with the manager.
+        """Remove an agent, releasing its owned LLM service when safe.
 
-        Args:
-            agent: The agent to register
+        LocalAgent instances release their dedicated LLM (exactly once, when
+        not cached by ServiceManager and not referenced by a remaining agent)
+        before removal so config reload does not orphan uncached clients.
+        RemoteAgent and other agent types are unaffected.
         """
+        agent = self.agents[agent_name]
+        if isinstance(agent, LocalAgent):
+            agent.release_llm()
         del self.agents[agent_name]
 
     def select_agent(self, agent_name: str) -> bool:
@@ -481,12 +485,14 @@ class AgentManager:
 
         return {"success": True, "transfer": transfer_record}
 
-    def update_llm_service(self, llm_service):
+    def update_llm_service(self, llm_service, model_selection=None):
         """
         Update the LLM service for all agents.
 
         Args:
             llm_service: The new LLM service to use
+            model_selection: Optional model selection to assign to every
+                updated agent (e.g. ``USER_SWITCH`` after a ``/model`` switch).
         """
 
         # Update non-current unpinned agents once
@@ -495,11 +501,15 @@ class AgentManager:
                 continue
             if isinstance(agent, LocalAgent) and not agent.is_pinned:
                 agent.update_llm_service(llm_service)
+                if model_selection is not None:
+                    agent.model_selection = model_selection
         # Update current agent once, regardless of pinning
         if isinstance(self.current_agent, LocalAgent):
             self.current_agent.update_llm_service(llm_service)
+            if model_selection is not None:
+                self.current_agent.model_selection = model_selection
 
-    async def update_llm_service_async(self, llm_service):
+    async def update_llm_service_async(self, llm_service, model_selection=None):
         """
         Async variant of :meth:`update_llm_service`.
 
@@ -508,14 +518,20 @@ class AgentManager:
 
         Args:
             llm_service: The new LLM service to use
+            model_selection: Optional model selection to assign to every
+                updated agent (e.g. ``USER_SWITCH`` after a ``/model`` switch).
         """
         for agent in self.agents.values():
             if agent is self.current_agent:
                 continue
             if isinstance(agent, LocalAgent) and not agent.is_pinned:
                 await agent.update_llm_service_async(llm_service)
+                if model_selection is not None:
+                    agent.model_selection = model_selection
         if isinstance(self.current_agent, LocalAgent):
             await self.current_agent.update_llm_service_async(llm_service)
+            if model_selection is not None:
+                self.current_agent.model_selection = model_selection
 
     @staticmethod
     def resolve_llm_service_from_config(agent_cfg):

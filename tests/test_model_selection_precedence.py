@@ -52,6 +52,7 @@ class _StubLLM:
     def __init__(self, model: str = "", provider_name: str = "stub"):
         self.model = model
         self.provider_name = provider_name
+        self.close_calls = 0
 
     def set_system_prompt(self, prompt):
         pass
@@ -67,6 +68,9 @@ class _StubLLM:
 
     def set_think(self, val):
         return True
+
+    def close(self):
+        self.close_calls += 1
 
     temperature = 0.4
 
@@ -192,6 +196,17 @@ class _FakeLlmManager:
     def initialize_standalone_service_for_model(self, model):
         return _StubLLM(model=model.id, provider_name=model.provider)
 
+    def clone_service(self, service):
+        model_id = f"{service.provider_name}/{service.model}"
+        model = self.registry.get_model(model_id)
+        if model:
+            new_service = self.initialize_standalone_service_for_model(model)
+            self.apply_model_defaults(new_service, model)
+            return new_service
+        new_service = self.initialize_standalone_service(service.provider_name)
+        new_service.model = service.model
+        return new_service
+
     def get_service_for_selection(self, selection, *, standalone=False):
         registry = self.registry
         provider = selection.provider
@@ -219,7 +234,12 @@ class _FakeLlmManager:
                 return service
 
         if standalone:
-            return self.initialize_standalone_service(provider)
+            service = self.initialize_standalone_service(provider)
+            models = registry.get_models_by_provider(provider)
+            if models:
+                default_model = next((m for m in models if m.default), models[0])
+                self.apply_model_defaults(service, default_model)
+            return service
         models = registry.get_models_by_provider(provider)
         if models:
             default_model = next((m for m in models if m.default), models[0])
@@ -228,6 +248,21 @@ class _FakeLlmManager:
             self.apply_model_defaults(service, default_model)
             return service
         return _StubLLM(provider_name=provider)
+
+    def close_service(self, service):
+        if service is None:
+            return
+        if service in self.services.values():
+            return
+        close = getattr(service, "close", None)
+        if close is not None:
+            try:
+                close()
+            except Exception:  # noqa: S110 - mirrors real ServiceManager
+                pass
+
+    async def drain_pending_closes(self):
+        return None
 
 
 class _Recorder:
@@ -741,7 +776,9 @@ class TestSetupAgentsPrecedence:
             manager.agents["coder"].model_selection.source
             is ModelSelectionSource.AGENT_CONFIG
         )
-        assert manager.agents["plain"].llm is llm_manager.services["copilot_response"]
+        assert (
+            manager.agents["plain"].llm is not llm_manager.services["copilot_response"]
+        )
         assert manager.agents["plain"].llm.model == "copilot-response-gpt-5"
         assert (
             manager.agents["plain"].model_selection.source
@@ -885,10 +922,13 @@ class TestModelCommandForceSwitch:
         await ModelCommands(handler).handle_model("/model openai/gpt-5")
 
         new_service = llm_manager.services["openai"]
-        assert agent_a.llm is new_service
+        assert agent_a.llm is not new_service
+        assert agent_a.llm.model == "gpt-5"
         assert agent_a.model_selection.source is ModelSelectionSource.USER_SWITCH
         assert agent_a.model_selection.model_id == "openai/gpt-5"
-        assert agent_b.llm is new_service
+        assert agent_b.llm is not new_service
+        assert agent_b.llm is not agent_a.llm
+        assert agent_b.llm.model == "gpt-5"
         assert agent_c.llm is svc_c
         assert agent_c.model_selection.source is ModelSelectionSource.AGENT_CONFIG
         assert saved == {"model": "openai/gpt-5", "provider": "openai"}
@@ -914,7 +954,8 @@ class TestModelCommandForceSwitch:
         )
         await ModelCommands(handler).handle_model("/model openai/gpt-5")
         switched_service = llm_manager.services["openai"]
-        assert agent_a.llm is switched_service
+        assert agent_a.llm is not switched_service
+        assert agent_a.llm.model == "gpt-5"
 
         monkeypatch.setattr(
             AgentManager,
@@ -933,7 +974,8 @@ class TestModelCommandForceSwitch:
         )
         AgentsConfig().reload()
 
-        assert agent_a.llm is switched_service
+        assert agent_a.llm is not switched_service
+        assert agent_a.llm.model == "gpt-5"
         assert agent_a.model_selection.source is ModelSelectionSource.USER_SWITCH
         assert agent_a.model_selection.model_id == "openai/gpt-5"
 
@@ -951,15 +993,15 @@ class TestReloadModelSelection:
             source=ModelSelectionSource.USER_SWITCH,
         )
         agent = SimpleNamespace(model_selection=forced_selection)
-        new_svc, selection = _reload_model_selection(
+        new_svc, selection, _reasoning = _reload_model_selection(
             agent, {"name": "a", "model_id": "claude/opus"}
         )
         assert new_svc is None
         assert selection is forced_selection
 
     def test_config_reapplied_without_force(self, app_setup):
-        agent = SimpleNamespace(model_selection=None)
-        new_svc, selection = _reload_model_selection(
+        agent = SimpleNamespace(model_selection=None, reasoning_selection=None)
+        new_svc, selection, _reasoning = _reload_model_selection(
             agent, {"name": "a", "model_id": "openai/gpt-4o"}
         )
         assert new_svc is not None
@@ -968,8 +1010,8 @@ class TestReloadModelSelection:
         assert selection.model_id == "openai/gpt-4o"
 
     def test_no_config_model_no_force(self):
-        agent = SimpleNamespace(model_selection=None)
-        new_svc, selection = _reload_model_selection(agent, {"name": "a"})
+        agent = SimpleNamespace(model_selection=None, reasoning_selection=None)
+        new_svc, selection, _reasoning = _reload_model_selection(agent, {"name": "a"})
         assert new_svc is None
         assert selection is None
 

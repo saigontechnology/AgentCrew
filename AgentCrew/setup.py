@@ -25,6 +25,13 @@ from AgentCrew.modules.llm.model_selection import (
     RuntimeModelInput,
     resolve_model_selection,
 )
+from AgentCrew.modules.llm.reasoning_selection import (
+    REASONING_LEVELS,
+    apply_reasoning_to_service,
+    default_reasoning_for_service,
+    resolve_reasoning_selection,
+    validate_reason_effort,
+)
 from AgentCrew.modules.llm.service_manager import ServiceManager
 
 PROVIDER_LIST = [
@@ -86,6 +93,12 @@ def common_options(func):
         default=False,
         help="Enable project plugins from .agentcrew/plugins/ (disabled by default)",
     )
+    @click.option(
+        "--reason-effort",
+        type=click.Choice(list(REASONING_LEVELS)),
+        default=None,
+        help="Reasoning effort level (none, minimal, low, medium, high)",
+    )
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         return func(*args, **kwargs)
@@ -144,12 +157,44 @@ class ApplicationSetup:
             self._plugins_initialized = False
 
     async def shutdown(self) -> None:
-        """Release application-owned plugin and remote-agent resources."""
+        """Release application-owned plugin, remote-agent, and dedicated LLM resources."""
         try:
             await self.shutdown_plugins()
         finally:
             if self.agent_manager is not None:
-                await self.agent_manager.close_all_remote_agents()
+                try:
+                    await self.agent_manager.close_all_remote_agents()
+                finally:
+                    await self._close_dedicated_llm_services()
+            else:
+                from AgentCrew.modules.llm.service_manager import ServiceManager
+
+                await ServiceManager.get_instance().drain_pending_closes()
+
+    async def _close_dedicated_llm_services(self) -> None:
+        """Close all dedicated LocalAgent LLM services, deduplicated by identity.
+
+        Individual close failures are logged by ServiceManager and do not stop
+        the remaining agents from being cleaned up. Cached ServiceManager
+        services are intentionally left open (the manager owns them).
+        """
+        from AgentCrew.modules.agents import LocalAgent
+        from AgentCrew.modules.llm.service_manager import ServiceManager
+
+        llm_manager = ServiceManager.get_instance()
+        seen: set[int] = set()
+        agents = getattr(self.agent_manager, "agents", None)
+        if agents:
+            for agent in agents.values():
+                if not isinstance(agent, LocalAgent) or agent.llm is None:
+                    continue
+                if id(agent.llm) in seen:
+                    continue
+                seen.add(id(agent.llm))
+                llm_manager.close_service(agent.llm)
+        # Drain any scheduled async close tasks so clients are released before
+        # the process exits.
+        await llm_manager.drain_pending_closes()
 
     def load_api_keys_from_config(self) -> None:
         config_file_path = os.getenv("AGENTCREW_CONFIG_PATH")
@@ -300,6 +345,7 @@ class ApplicationSetup:
     def setup_services(
         self,
         runtime: RuntimeModelInput,
+        reason_effort: str | None = None,
         memory_llm: str | None = None,
         need_memory: bool = True,
         with_voice: bool = False,
@@ -344,6 +390,16 @@ class ApplicationSetup:
                     source=ModelSelectionSource.DEFAULT,
                 )
             )
+
+        # Apply base reasoning: explicit CLI effort > selected model default.
+        # Lenient here (never blocks startup); per-agent reasoning is applied
+        # with explicit validation in setup_agents.
+        base_reasoning = resolve_reasoning_selection(
+            validate_reason_effort(reason_effort),
+            None,
+            default_reasoning_for_service(llm_service),
+        )
+        apply_reasoning_to_service(llm_service, base_reasoning.level, explicit=False)
 
         memory_service = None
         context_service = None
@@ -533,12 +589,11 @@ class ApplicationSetup:
         config_uri: str | None = None,
         use_standalone_provider: str | None = None,
         runtime_model: RuntimeModelInput | None = None,
+        reason_effort: str | None = None,
     ) -> AgentManager:
         if self.agent_manager is None:
             raise ValueError("Agent manager is not initialized")
         llm_manager = ServiceManager.get_instance()
-
-        default_llm_service = services["llm"]
 
         if runtime_model is None:
             raise ValueError("Runtime model input is required to set up agents")
@@ -606,7 +661,6 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
             last_used_provider=last_used_provider,
         )
 
-        standalone_llm_service = None
         for agent_def in agent_definitions:
             if agent_def.get("base_url", ""):
                 try:
@@ -625,23 +679,35 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
                     )
                     continue
             else:
-                if use_standalone_provider:
-                    standalone_llm_service = llm_manager.get_service_for_selection(
-                        base_selection, standalone=True
-                    )
-
                 selection = resolve_model_selection(
                     runtime_model,
                     agent_model_id=agent_def.get("model_id"),
                     last_used_model=last_used_model,
                     last_used_provider=last_used_provider,
                 )
-                agent_llm = standalone_llm_service or default_llm_service
+                # Every local agent owns a dedicated uncached LLM service so
+                # per-agent reasoning (CLI/config//think) never leaks to another
+                # agent sharing a cached service instance.
                 if selection.source is ModelSelectionSource.AGENT_CONFIG:
                     agent_llm = AgentManager.resolve_llm_service_from_config(agent_def)
                     if agent_llm is None:
-                        agent_llm = standalone_llm_service or default_llm_service
+                        agent_llm = llm_manager.get_service_for_selection(
+                            base_selection, standalone=True
+                        )
                         selection = base_selection
+                else:
+                    agent_llm = llm_manager.get_service_for_selection(
+                        selection, standalone=True
+                    )
+
+                reasoning = resolve_reasoning_selection(
+                    validate_reason_effort(reason_effort),
+                    validate_reason_effort(agent_def.get("reason_effort")),
+                    default_reasoning_for_service(agent_llm),
+                )
+                apply_reasoning_to_service(
+                    agent_llm, reasoning.level, explicit=reasoning.is_explicit
+                )
 
                 agent = LocalAgent(
                     name=agent_def["name"],
@@ -660,6 +726,7 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
                 )
                 agent.set_system_prompt(agent_def["system_prompt"])
                 agent.model_selection = selection
+                agent.reasoning_selection = reasoning
                 if use_standalone_provider:
                     agent.set_custom_system_prompt(
                         self.agent_manager.get_remote_system_prompt()

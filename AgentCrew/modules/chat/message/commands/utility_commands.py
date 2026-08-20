@@ -30,47 +30,92 @@ class UtilityCommands:
 
         Usage:
             /think          - Show current thinking budget
-            /think <budget> - Set thinking budget (0 to disable)
+            /think <level>  - Set reasoning effort (none, minimal, low, medium, high)
+            /think <budget> - Set legacy numeric thinking budget
         """
         parts = user_input.split()
 
         if len(parts) == 1:
-            current_budget = getattr(
-                self.message_handler.agent.llm, "thinking_budget", None
-            )
-            if current_budget is not None:
-                if current_budget == 0:
-                    self.message_handler.bus.emit_sync(
-                        AppEvents.SYSTEM_MESSAGE,
-                        message="Thinking mode is currently disabled.",
-                    )
-                else:
-                    self.message_handler.bus.emit_sync(
-                        AppEvents.SYSTEM_MESSAGE,
-                        message=f"Thinking budget is currently set to {current_budget} tokens.",
-                    )
-            else:
-                reasoning_effort = getattr(
-                    self.message_handler.agent.llm, "reasoning_effort", None
+            selection = getattr(self.message_handler.agent, "reasoning_selection", None)
+            if selection is not None and selection.level is not None:
+                self.message_handler.bus.emit_sync(
+                    AppEvents.SYSTEM_MESSAGE,
+                    message=f"Reasoning effort is currently set to: {selection.level}",
                 )
-                if reasoning_effort:
-                    self.message_handler.bus.emit_sync(
-                        AppEvents.SYSTEM_MESSAGE,
-                        message=f"Reasoning effort is currently set to: {reasoning_effort}",
-                    )
+            else:
+                current_budget = getattr(
+                    self.message_handler.agent.llm, "thinking_budget", None
+                )
+                if current_budget is not None:
+                    if current_budget == 0:
+                        self.message_handler.bus.emit_sync(
+                            AppEvents.SYSTEM_MESSAGE,
+                            message="Thinking mode is currently disabled.",
+                        )
+                    else:
+                        self.message_handler.bus.emit_sync(
+                            AppEvents.SYSTEM_MESSAGE,
+                            message=f"Thinking budget is currently set to {current_budget} tokens.",
+                        )
                 else:
-                    self.message_handler.bus.emit_sync(
-                        AppEvents.SYSTEM_MESSAGE,
-                        message="Thinking mode is not available for the current model.",
+                    reasoning_effort = getattr(
+                        self.message_handler.agent.llm, "reasoning_effort", None
                     )
+                    if reasoning_effort:
+                        self.message_handler.bus.emit_sync(
+                            AppEvents.SYSTEM_MESSAGE,
+                            message=f"Reasoning effort is currently set to: {reasoning_effort}",
+                        )
+                    else:
+                        self.message_handler.bus.emit_sync(
+                            AppEvents.SYSTEM_MESSAGE,
+                            message="Thinking mode is not available for the current model.",
+                        )
             self.message_handler.bus.emit_sync(
                 AppEvents.SYSTEM_MESSAGE,
-                message="Usage: /think <budget> (0 to disable)",
+                message="Usage: /think <level> (none, minimal, low, medium, high)",
             )
             return CommandResult(handled=True, clear_flag=True)
 
+        from AgentCrew.modules.llm.reasoning_selection import (
+            REASONING_LEVELS,
+            ReasoningSelection,
+            ReasoningSource,
+            apply_reasoning_to_service,
+        )
+
+        level = parts[1]
+        if level in REASONING_LEVELS:
+            # Isolate this agent's LLM before mutating reasoning so a shared
+            # cached service is never changed for another agent.
+            ensure_isolated = getattr(
+                self.message_handler.agent, "ensure_reasoning_isolated", None
+            )
+            if callable(ensure_isolated):
+                ensure_isolated()
+            try:
+                applied = apply_reasoning_to_service(
+                    self.message_handler.agent.llm, level, explicit=True
+                )
+            except ValueError as e:
+                self.message_handler.bus.emit_sync(AppEvents.ERROR, message=str(e))
+                return CommandResult(handled=True, clear_flag=True)
+            if applied:
+                self.message_handler.agent.reasoning_selection = ReasoningSelection(
+                    level, ReasoningSource.USER_SWITCH
+                )
+                self.message_handler.bus.emit_sync(
+                    AppEvents.THINK_BUDGET_SET, budget=level
+                )
+            else:
+                self.message_handler.bus.emit_sync(
+                    AppEvents.ERROR,
+                    message="Thinking mode is not supported for the current model.",
+                )
+            return CommandResult(handled=True, clear_flag=True)
+
         try:
-            budget = parts[1]
+            budget = int(level)
             self.message_handler.agent.configure_think(budget)
             self.message_handler.bus.emit_sync(
                 AppEvents.THINK_BUDGET_SET, budget=budget
@@ -78,7 +123,7 @@ class UtilityCommands:
         except ValueError:
             self.message_handler.bus.emit_sync(
                 AppEvents.ERROR,
-                message="Invalid budget value. Please provide a number.",
+                message="Invalid budget value. Please provide a number or a reasoning level (none, minimal, low, medium, high).",
             )
         return CommandResult(handled=True, clear_flag=True)
 

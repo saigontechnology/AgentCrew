@@ -61,23 +61,19 @@ class ModelCommands:
 
                 new_llm_service = llm_manager.get_service_for_model(model)
 
-                await self.message_handler.agent_manager.update_llm_service_async(
-                    new_llm_service
-                )
-
-                from AgentCrew.modules.agents.local_agent import LocalAgent
                 from AgentCrew.modules.llm.model_selection import (
                     ModelSelection,
                     ModelSelectionSource,
                 )
 
-                for agent in self.message_handler.agent_manager.agents.values():
-                    if isinstance(agent, LocalAgent) and agent.llm is new_llm_service:
-                        agent.model_selection = ModelSelection(
-                            provider=model.provider,
-                            model_id=model_id,
-                            source=ModelSelectionSource.USER_SWITCH,
-                        )
+                await self.message_handler.agent_manager.update_llm_service_async(
+                    new_llm_service,
+                    ModelSelection(
+                        provider=model.provider,
+                        model_id=model_id,
+                        source=ModelSelectionSource.USER_SWITCH,
+                    ),
+                )
 
                 try:
                     GlobalConfig().set_last_used_model(model_id, model.provider)

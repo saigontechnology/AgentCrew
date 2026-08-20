@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -37,6 +38,11 @@ class ServiceManager:
             )
 
         self.services: dict[str, BaseLLMService] = {}
+
+        # Pending async close tasks retained for draining at shutdown, and a
+        # dedup set so each owned dedicated service is closed exactly once.
+        self._pending_closes: set[asyncio.Task] = set()
+        self._closed_services: set[BaseLLMService] = set()
 
         # Lazy import factories keyed by service implementation name.
         # A single vendor (e.g. openai) may expose multiple service families.
@@ -394,6 +400,25 @@ class ServiceManager:
         if model.default_reasoning is not None:
             service.reasoning_effort = model.default_reasoning
 
+    def clone_service(self, service: BaseLLMService) -> BaseLLMService:
+        """Create a dedicated uncached service matching ``service``'s current model.
+
+        Used to isolate per-agent reasoning so one agent's ``/think`` or config
+        effort never mutates a service shared with another agent. Registered
+        models resolve through their declared service family; raw/unregistered
+        models fall back to the provider service with the raw model id.
+        """
+        provider = service.provider_name
+        model_id = f"{provider}/{service.model}"
+        model = ModelRegistry.get_instance().get_model(model_id)
+        if model is not None:
+            new_service = self.initialize_standalone_service_for_model(model)
+            self.apply_model_defaults(new_service, model)
+            return new_service
+        new_service = self.initialize_standalone_service(provider)
+        new_service.model = service.model
+        return new_service
+
     def get_service_for_selection(
         self,
         selection: ModelSelection,
@@ -429,11 +454,17 @@ class ServiceManager:
                     service = self.initialize_standalone_service(provider)
                 else:
                     service = self.get_service_for_provider(provider)
-                service.model = selection.relative_model_id
+                if selection.relative_model_id:
+                    service.model = selection.relative_model_id
                 return service
 
         if standalone:
-            return self.initialize_standalone_service(provider)
+            service = self.initialize_standalone_service(provider)
+            models = registry.get_models_by_provider(provider)
+            if models:
+                default_model = next((m for m in models if m.default), models[0])
+                self.apply_model_defaults(service, default_model)
+            return service
         models = registry.get_models_by_provider(provider)
         if models:
             default_model = next((m for m in models if m.default), models[0])
@@ -442,3 +473,55 @@ class ServiceManager:
             self.apply_model_defaults(service, default_model)
             return service
         return self.get_service(provider)
+
+    def close_service(self, service: BaseLLMService | None) -> None:
+        """Close an owned dedicated LLM service exactly once.
+
+        Safe from sync and async contexts: with a running event loop the close
+        is scheduled and tracked for draining at shutdown; otherwise it runs
+        inline. Never closes ServiceManager-cached services or services that
+        were already closed.
+        """
+        if service is None:
+            return
+        if service in self.services.values():
+            return  # cached — ServiceManager owns it
+        if service in self._closed_services:
+            return  # already closed
+        self._closed_services.add(service)
+        close = getattr(service, "close", None)
+        if close is None:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._close_sync(service)
+        else:
+            task = asyncio.create_task(self._close_async(service))
+            self._pending_closes.add(task)
+            task.add_done_callback(self._pending_closes.discard)
+
+    def _close_sync(self, service: BaseLLMService) -> None:
+        """Close a service inline when no event loop is running."""
+        try:
+            asyncio.run(service.close())
+        except Exception as e:
+            logger.warning(f"Failed to close LLM service {service!r}: {e}")
+
+    async def _close_async(self, service: BaseLLMService) -> None:
+        """Close a service as a tracked task on the running loop."""
+        try:
+            await service.close()
+        except Exception as e:
+            logger.warning(f"Failed to close LLM service {service!r}: {e}")
+
+    async def drain_pending_closes(self) -> None:
+        """Await and clear all scheduled close tasks (called at shutdown)."""
+        pending = list(self._pending_closes)
+        self._pending_closes.clear()
+        if not pending:
+            return
+        results = await asyncio.gather(*pending, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.warning(f"LLM service close failed during drain: {result}")

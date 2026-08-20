@@ -7,20 +7,15 @@ from loguru import logger
 
 from AgentCrew.modules.acp.session_state import AcpSessionState
 from AgentCrew.modules.agents import LocalAgent
+from AgentCrew.modules.llm.reasoning_selection import (
+    REASONING_LEVELS,
+    adapt_reason_effort,
+)
 
 if TYPE_CHECKING:
     from AgentCrew.modules.acp.mcp_orchestrator import McpOrchestrator
     from AgentCrew.modules.acp.tool_manager import AcpToolManager
     from AgentCrew.modules.agents import AgentManager
-
-ACP_THOUGHT_LEVELS = ("none", "minimal", "low", "medium", "high")
-ACP_ANTHROPIC_THOUGHT_BUDGETS = {
-    "none": "0",
-    "minimal": "1024",
-    "low": "2048",
-    "medium": "4096",
-    "high": "8192",
-}
 
 
 class ModelController:
@@ -176,7 +171,7 @@ class ModelController:
     async def switch_session_thought_level(
         self, state: AcpSessionState, thought_level: str
     ):
-        if thought_level not in ACP_THOUGHT_LEVELS:
+        if thought_level not in REASONING_LEVELS:
             raise RequestError.invalid_params(
                 {
                     "configId": "thought_level",
@@ -220,7 +215,7 @@ class ModelController:
     ) -> str:
         if not self.model_supports_thinking(model_id):
             return "none"
-        if thought_level in ACP_THOUGHT_LEVELS:
+        if thought_level in REASONING_LEVELS:
             return thought_level
         return self.default_thought_level_for_model(model_id)
 
@@ -232,7 +227,7 @@ class ModelController:
 
             model = ModelRegistry.get_instance().get_model(model_id or "")
             default_reasoning = getattr(model, "default_reasoning", None)
-            if default_reasoning in ACP_THOUGHT_LEVELS:
+            if default_reasoning in REASONING_LEVELS:
                 return default_reasoning
         except Exception:
             logger.warning(
@@ -257,14 +252,9 @@ class ModelController:
     def thought_level_to_agent_value(
         self, agent: LocalAgent, thought_level: str
     ) -> str:
-        provider_name = getattr(agent.llm, "provider_name", "")
-        class_name = agent.llm.__class__.__name__.lower()
-        if (
-            provider_name in ("claude", "opencode_anthropic")
-            or "anthropic" in class_name
-        ):
-            return ACP_ANTHROPIC_THOUGHT_BUDGETS[thought_level]
-        return thought_level
+        if agent.llm is None:
+            return thought_level
+        return adapt_reason_effort(agent.llm, thought_level)
 
     def build_config_options(
         self,

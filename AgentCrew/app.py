@@ -35,6 +35,7 @@ class AgentCrewApplication:
         memory_llm: str | None = None,
         with_voice: bool = False,
         model_id: str | None = None,
+        reason_effort: str | None = None,
     ) -> None:
         import asyncio
 
@@ -53,6 +54,7 @@ class AgentCrewApplication:
                 runtime_model,
                 memory_llm=memory_llm,
                 with_voice=with_voice,
+                reason_effort=reason_effort,
             )
 
             if mcp_config:
@@ -62,6 +64,7 @@ class AgentCrewApplication:
                 services,
                 agent_config,
                 runtime_model=runtime_model,
+                reason_effort=reason_effort,
             )
             self.setup.restore_last_agent()
 
@@ -102,6 +105,7 @@ class AgentCrewApplication:
         memory_llm: str | None = None,
         with_voice: bool = False,
         model_id: str | None = None,
+        reason_effort: str | None = None,
     ) -> None:
         import asyncio
 
@@ -127,6 +131,7 @@ class AgentCrewApplication:
                 runtime_model,
                 memory_llm=memory_llm,
                 with_voice=with_voice,
+                reason_effort=reason_effort,
             )
 
             if mcp_config:
@@ -136,6 +141,7 @@ class AgentCrewApplication:
                 services,
                 agent_config,
                 runtime_model=runtime_model,
+                reason_effort=reason_effort,
             )
             self.setup.restore_last_agent()
 
@@ -197,6 +203,7 @@ class AgentCrewApplication:
         memory_path: str | None = None,
         store_type: str = "memory",
         store_options: dict | None = None,
+        reason_effort: str | None = None,
     ) -> None:
         from AgentCrew.modules.a2a.server import A2AServer
         from AgentCrew.modules.mcpclient import MCPSessionManager
@@ -216,6 +223,7 @@ class AgentCrewApplication:
                 runtime_model,
                 memory_llm=memory_llm,
                 need_memory=need_memory,
+                reason_effort=reason_effort,
             )
 
             if mcp_config:
@@ -228,6 +236,7 @@ class AgentCrewApplication:
                 agent_config,
                 use_standalone_provider=runtime_model.provider,
                 runtime_model=runtime_model,
+                reason_effort=reason_effort,
             )
 
             if self.agent_manager is None:
@@ -268,6 +277,7 @@ class AgentCrewApplication:
         mcp_config: str | None = None,
         memory_llm: str | None = None,
         agent: str | None = None,
+        reason_effort: str | None = None,
     ) -> None:
         from AgentCrew.modules.acp import run_acp_agent
         from AgentCrew.modules.mcpclient import MCPSessionManager
@@ -288,6 +298,7 @@ class AgentCrewApplication:
             services = self.setup.setup_services(
                 runtime_model,
                 memory_llm=memory_llm,
+                reason_effort=reason_effort,
             )
 
             if mcp_config:
@@ -299,6 +310,7 @@ class AgentCrewApplication:
                 services,
                 agent_config,
                 runtime_model=runtime_model,
+                reason_effort=reason_effort,
             )
 
             if self.agent_manager is None:
@@ -396,6 +408,7 @@ class AgentCrewApplication:
         memory_path: str | None = None,
         output_schema: str | None = None,
         token_usage_file: str | None = None,
+        reason_effort: str | None = None,
     ) -> str:
         from AgentCrew.modules.agents import LocalAgent, run_agent_loop
         from AgentCrew.modules.llm.model_registry import ModelRegistry
@@ -414,6 +427,7 @@ class AgentCrewApplication:
                 runtime_model,
                 memory_llm=memory_llm,
                 need_memory=need_memory,
+                reason_effort=reason_effort,
             )
 
             if mcp_config:
@@ -432,6 +446,7 @@ class AgentCrewApplication:
                     services,
                     agent_config,
                     runtime_model=runtime_model,
+                    reason_effort=reason_effort,
                 )
                 current_agent = self.agent_manager.get_local_agent(agent)
             else:

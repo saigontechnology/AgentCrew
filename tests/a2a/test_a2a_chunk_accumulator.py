@@ -78,7 +78,7 @@ class _FakeAgent:
     def format_message(self, message_type, data):
         return None
 
-    def _extract_last_user_message_for_memory(self, history):
+    def extract_last_user_message_for_memory(self, history):
         return ""
 
     def store_memory_if_available(self, *args, **kwargs):
@@ -311,7 +311,7 @@ class _FakeLocalAgent(LocalAgent):
     def calculate_usage_cost(self, *args, **kwargs):
         return 0.0
 
-    def _extract_last_user_message_for_memory(self, history):
+    def extract_last_user_message_for_memory(self, history):
         return ""
 
     def store_memory_if_available(self, *args, **kwargs):

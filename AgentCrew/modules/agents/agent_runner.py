@@ -66,7 +66,7 @@ async def run_agent_loop(
         if assistant_message:
             history.append(assistant_message)
 
-        user_message = agent._extract_last_user_message_for_memory(history)
+        user_message = agent.extract_last_user_message_for_memory(history)
         agent.store_memory_if_available(user_message, history, current_response)
         # Prevent agent loop exit with empty response
         if current_response.strip() == "":
@@ -91,7 +91,7 @@ async def run_agent_loop(
         if assistant_message:
             history.append(assistant_message)
 
-        user_message = agent._extract_last_user_message_for_memory(history)
+        user_message = agent.extract_last_user_message_for_memory(history)
         agent.store_memory_if_available(user_message, history, current_response)
         return current_response, token_usage
 

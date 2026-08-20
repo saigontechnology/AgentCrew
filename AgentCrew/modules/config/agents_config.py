@@ -21,6 +21,7 @@ class LocalAgentConfig:
     voice_enabled: str = "disabled"
     voice_id: str | None = None
     model_id: str | None = None
+    reason_effort: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LocalAgentConfig":
@@ -34,6 +35,7 @@ class LocalAgentConfig:
             voice_enabled=data.get("voice_enabled", "disabled"),
             voice_id=data.get("voice_id"),
             model_id=data.get("model_id"),
+            reason_effort=data.get("reason_effort"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,6 +54,8 @@ class LocalAgentConfig:
             result["voice_id"] = self.voice_id
         if self.model_id is not None:
             result["model_id"] = self.model_id
+        if self.reason_effort is not None:
+            result["reason_effort"] = self.reason_effort
         return result
 
 
@@ -116,26 +120,44 @@ def _reload_model_selection(agent, agent_cfg):
     current service and selection so a config reload does not silently
     demote it. Otherwise the agent config ``model_id`` is re-applied.
 
-    Returns ``(new_llm_service, model_selection)``.
+    Returns ``(new_llm_service, model_selection, reasoning_selection)``.
     """
     from AgentCrew.modules.agents import AgentManager
     from AgentCrew.modules.llm.model_selection import (
         ModelSelection,
         ModelSelectionSource,
     )
+    from AgentCrew.modules.llm.reasoning_selection import (
+        ReasoningSelection,
+        ReasoningSource,
+    )
 
     selection = getattr(agent, "model_selection", None)
     if selection is not None and selection.is_forced:
-        return None, selection
+        reasoning = getattr(agent, "reasoning_selection", None)
+        return None, selection, reasoning
     new_llm_svc = AgentManager.resolve_llm_service_from_config(agent_cfg)
     if new_llm_svc:
-        return (
-            new_llm_svc,
-            ModelSelection.from_model_id(
-                agent_cfg.get("model_id"), ModelSelectionSource.AGENT_CONFIG
-            ),
+        model_selection = ModelSelection.from_model_id(
+            agent_cfg.get("model_id"), ModelSelectionSource.AGENT_CONFIG
         )
-    return None, None
+    else:
+        model_selection = None
+
+    reasoning = getattr(agent, "reasoning_selection", None)
+    if reasoning is not None and reasoning.is_forced:
+        reasoning_selection = reasoning
+    else:
+        config_effort = agent_cfg.get("reason_effort")
+        if config_effort:
+            reasoning_selection = ReasoningSelection(
+                config_effort, ReasoningSource.AGENT_CONFIG
+            )
+        else:
+            reasoning_selection = ReasoningSelection(
+                None, ReasoningSource.MODEL_DEFAULT
+            )
+    return new_llm_svc, model_selection, reasoning_selection
 
 
 class AgentsConfig:
@@ -235,12 +257,15 @@ class AgentsConfig:
                     else "disabled"
                 )
                 existing_agent.voice_id = agent_cfg.get("voice_id", None)
-                new_llm_svc, model_selection = _reload_model_selection(
-                    existing_agent, agent_cfg
+                new_llm_svc, model_selection, reasoning_selection = (
+                    _reload_model_selection(existing_agent, agent_cfg)
                 )
+                existing_agent.model_selection = model_selection
+                existing_agent.reasoning_selection = reasoning_selection
                 if new_llm_svc:
                     existing_agent.update_llm_service(new_llm_svc)
-                existing_agent.model_selection = model_selection
+                else:
+                    existing_agent.reapply_reasoning()
             else:
                 clone_agent = agent_manager.get_current_agent()
                 if not isinstance(clone_agent, LocalAgent):
@@ -259,8 +284,8 @@ class AgentsConfig:
 
                 reload_llm_service = clone_agent.llm
 
-                new_llm_svc, model_selection = _reload_model_selection(
-                    clone_agent, agent_cfg
+                new_llm_svc, model_selection, reasoning_selection = (
+                    _reload_model_selection(clone_agent, agent_cfg)
                 )
                 if new_llm_svc:
                     reload_llm_service = new_llm_svc
@@ -277,6 +302,8 @@ class AgentsConfig:
                 )
                 new_agent.set_system_prompt(system_prompt)
                 new_agent.model_selection = model_selection
+                new_agent.reasoning_selection = reasoning_selection
+                new_agent.reapply_reasoning()
                 agent_manager.register_agent(new_agent)
 
         new_agent_names = [a["name"] for a in new_agents_config]
@@ -334,12 +361,15 @@ class AgentsConfig:
                     else "disabled"
                 )
                 existing_agent.voice_id = agent_cfg.get("voice_id", None)
-                new_llm_svc, model_selection = _reload_model_selection(
-                    existing_agent, agent_cfg
+                new_llm_svc, model_selection, reasoning_selection = (
+                    _reload_model_selection(existing_agent, agent_cfg)
                 )
+                existing_agent.model_selection = model_selection
+                existing_agent.reasoning_selection = reasoning_selection
                 if new_llm_svc:
                     await existing_agent.update_llm_service_async(new_llm_svc)
-                existing_agent.model_selection = model_selection
+                else:
+                    existing_agent.reapply_reasoning()
             else:
                 clone_agent = agent_manager.get_current_agent()
                 if not isinstance(clone_agent, LocalAgent):
@@ -358,8 +388,8 @@ class AgentsConfig:
 
                 reload_llm_service = clone_agent.llm
 
-                new_llm_svc, model_selection = _reload_model_selection(
-                    clone_agent, agent_cfg
+                new_llm_svc, model_selection, reasoning_selection = (
+                    _reload_model_selection(clone_agent, agent_cfg)
                 )
                 if new_llm_svc:
                     reload_llm_service = new_llm_svc
@@ -376,6 +406,8 @@ class AgentsConfig:
                 )
                 new_agent.set_system_prompt(system_prompt)
                 new_agent.model_selection = model_selection
+                new_agent.reasoning_selection = reasoning_selection
+                new_agent.reapply_reasoning()
                 agent_manager.register_agent(new_agent)
 
         new_agent_names = [a["name"] for a in new_agents_config]
