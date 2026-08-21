@@ -1,24 +1,22 @@
+from __future__ import annotations
+
 import functools
 import json
 import os
 import time
 import webbrowser
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 import requests
 from loguru import logger
 
-from AgentCrew.modules.agents import AgentManager, LocalAgent, RemoteAgent
 from AgentCrew.modules.agents.example import (
     DEFAULT_DESCRIPTION,
     DEFAULT_NAME,
     DEFAULT_PROMPT,
 )
-from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
-from AgentCrew.modules.events import PluginManager
-from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.model_selection import (
     ModelSelection,
     ModelSelectionSource,
@@ -32,7 +30,10 @@ from AgentCrew.modules.llm.reasoning_selection import (
     resolve_reasoning_selection,
     validate_reason_effort,
 )
-from AgentCrew.modules.llm.service_manager import ServiceManager
+
+if TYPE_CHECKING:
+    from AgentCrew.modules.agents import AgentManager
+    from AgentCrew.modules.config import ConfigManagement
 
 PROVIDER_LIST = [
     "claude",
@@ -112,6 +113,9 @@ class ApplicationSetup:
         config_manager: ConfigManagement | None = None,
         trusted_project_plugins: bool | None = None,
     ):
+        from AgentCrew.modules.config import ConfigManagement
+        from AgentCrew.modules.events import PluginManager
+
         self.config_manager = config_manager or ConfigManagement()
         self.services: dict[str, Any] | None = None
         self.agent_manager: AgentManager | None = None
@@ -350,6 +354,9 @@ class ApplicationSetup:
         need_memory: bool = True,
         with_voice: bool = False,
     ) -> dict[str, Any]:
+        from AgentCrew.modules.llm.model_registry import ModelRegistry
+        from AgentCrew.modules.llm.service_manager import ServiceManager
+
         registry = ModelRegistry.get_instance()
         llm_manager = ServiceManager.get_instance()
 
@@ -560,6 +567,8 @@ class ApplicationSetup:
             "image_generation": image_generation_service,
         }
 
+        from AgentCrew.modules.agents.manager import AgentManager, AgentMode
+
         self.agent_manager = AgentManager.get_instance()
         self.services["agent_manager"] = self.agent_manager
 
@@ -570,8 +579,6 @@ class ApplicationSetup:
         self.agent_manager.shrink_excluded_list = global_config.get(
             "global_settings", {}
         ).get("shrink_excluded", [])
-
-        from AgentCrew.modules.agents.manager import AgentMode
 
         agent_mode_str = global_config.get("global_settings", {}).get(
             "agent_mode", "transfer"
@@ -591,6 +598,9 @@ class ApplicationSetup:
         runtime_model: RuntimeModelInput | None = None,
         reason_effort: str | None = None,
     ) -> AgentManager:
+        from AgentCrew.modules.agents import AgentManager, LocalAgent
+        from AgentCrew.modules.llm.service_manager import ServiceManager
+
         if self.agent_manager is None:
             raise ValueError("Agent manager is not initialized")
         llm_manager = ServiceManager.get_instance()
@@ -663,6 +673,8 @@ tools = ["memory", "browser", "web_search", "code_analysis"]
 
         for agent_def in agent_definitions:
             if agent_def.get("base_url", ""):
+                from AgentCrew.modules.agents.remote_agent import RemoteAgent
+
                 try:
                     agent = RemoteAgent(
                         agent_def["name"],

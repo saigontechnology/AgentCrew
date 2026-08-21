@@ -420,7 +420,7 @@ def chat(
         console = True
 
     # Wait for version check to complete (it ran in parallel with setup)
-    version_thread.join(timeout=5.0)
+    version_thread.join(timeout=2.0)
 
     # Show result before starting the console/GUI
     if _show_version_result(version_result):

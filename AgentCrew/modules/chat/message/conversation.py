@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from AgentCrew.modules.agents import LocalAgent, RemoteAgent
+from AgentCrew.modules.agents import LocalAgent
 from AgentCrew.modules.chat.history import ConversationTurn
 from AgentCrew.modules.events import AppEvents
 
@@ -49,9 +49,12 @@ class ConversationManager:
             self.message_handler.last_assisstant_response_idx = 0
             self.message_handler.current_user_input = None
             self.message_handler.current_user_input_idx = -1
-            if isinstance(self.message_handler.agent, RemoteAgent):
-                # Reset remote agent state
-                self.message_handler.agent.current_task_id = None
+            if not isinstance(self.message_handler.agent, LocalAgent):
+                from AgentCrew.modules.agents.remote_agent import RemoteAgent
+
+                if isinstance(self.message_handler.agent, RemoteAgent):
+                    # Reset remote agent state
+                    self.message_handler.agent.current_task_id = None
 
             # Notify UI about the new conversation
             self.message_handler.bus.emit_sync(
