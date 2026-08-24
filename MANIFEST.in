@@ -15,6 +15,7 @@ exclude tests/**/*
 
 # Include any other important files
 graft AgentCrew/modules
+recursive-include AgentCrew/modules/a2a/web *
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 recursive-exclude * .DS_Store

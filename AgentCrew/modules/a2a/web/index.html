@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentCrew A2A Chat</title>
+  <link rel="stylesheet" href="/_a2a-ui/styles.css">
+</head>
+<body>
+  <!-- API key modal (only shown when the server requires a key) -->
+  <div id="auth-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+    <div class="modal-backdrop" data-close-auth></div>
+    <div class="modal-card">
+      <h2 id="auth-title">Enter API Key</h2>
+      <p class="modal-note">This server requires an API key. The key is kept only in your browser session and is never stored.</p>
+      <form id="auth-form">
+        <label for="api-key-input">API Key</label>
+        <input type="password" id="api-key-input" autocomplete="off" spellcheck="false" required>
+        <div id="auth-error" class="error-text hidden" role="alert"></div>
+        <div class="modal-actions">
+          <button type="submit" class="primary" id="auth-submit">Connect</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete confirmation modal -->
+  <div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-backdrop" data-close-confirm></div>
+    <div class="modal-card">
+      <h2 id="confirm-title">Delete conversation?</h2>
+      <p id="confirm-text" class="modal-note">This conversation and its messages will be permanently deleted from this browser.</p>
+      <div class="modal-actions">
+        <button type="button" class="secondary" data-close-confirm>Cancel</button>
+        <button type="button" class="danger" id="confirm-delete-btn">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="app">
+    <aside id="sidebar" class="sidebar" aria-label="Conversations">
+      <div class="sidebar-header">
+        <button id="new-chat-btn" class="new-chat-btn" type="button">+ New chat</button>
+      </div>
+      <nav id="conversation-list" class="conversation-list" aria-label="Conversation list"></nav>
+      <div class="sidebar-footer">
+        <span id="server-status" class="server-status">Connecting…</span>
+        <button id="sidebar-close" class="icon-btn" type="button" aria-label="Close sidebar">×</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="chat-header">
+        <button id="sidebar-toggle" class="icon-btn" type="button" aria-label="Open sidebar" aria-expanded="false">☰</button>
+        <label for="agent-select" class="visually-hidden">Select agent</label>
+        <select id="agent-select" class="agent-select" aria-label="Select agent"></select>
+        <div id="agent-lock" class="agent-lock hidden" role="status"></div>
+        <span id="connection-status" class="connection-status" role="status"></span>
+      </header>
+
+      <section id="transcript" class="transcript" aria-live="polite"></section>
+
+      <footer class="composer">
+        <div id="file-preview" class="file-preview hidden"></div>
+        <div id="input-required-banner" class="banner hidden" role="status"></div>
+        <div id="drop-zone" class="drop-zone">
+          <textarea id="message-input" rows="1" placeholder="Message AgentCrew…" aria-label="Message"></textarea>
+          <div class="composer-actions">
+            <button id="attach-btn" class="icon-btn" type="button" aria-label="Attach files">📎</button>
+            <input type="file" id="file-input" multiple hidden>
+            <button id="send-btn" class="send-btn" type="button" aria-label="Send message">➤</button>
+          </div>
+        </div>
+        <div id="composer-hint" class="composer-hint"></div>
+      </footer>
+    </main>
+  </div>
+
+  <template id="message-template">
+    <article class="message">
+      <div class="message-role"></div>
+      <div class="message-body">
+        <div class="message-text"></div>
+        <div class="message-meta"></div>
+      </div>
+    </article>
+  </template>
+
+  <script type="module" src="/_a2a-ui/app.js"></script>
+</body>
+</html>

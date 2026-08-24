@@ -134,6 +134,9 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["./"]
 
+[tool.setuptools.package-data]
+"AgentCrew.modules.a2a" = ["web/*"]
+
 [dependency-groups]
 dev = [
   "pygments==2.20.0",

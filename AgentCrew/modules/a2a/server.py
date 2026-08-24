@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from a2a.server.agent_execution.active_task import TERMINAL_TASK_STATES
@@ -36,8 +37,9 @@ from loguru import logger
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.routing import BaseRoute, Mount, Route
+from starlette.staticfiles import StaticFiles
 
 from AgentCrew.modules.agents import AgentManager, LocalAgent
 
@@ -50,6 +52,12 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from a2a.server.events import Event
+
+
+# Embedded chat UI assets served under the reserved /_a2a-ui/ prefix.
+WEB_UI_DIR = Path(__file__).resolve().parent / "web"
+UI_CONFIG_PATH = "/_a2a-ui/config"
+UI_ASSETS_PREFIX = "/_a2a-ui"
 
 
 class AgentCrewRequestHandlerV2(DefaultRequestHandlerV2):
@@ -147,12 +155,27 @@ class A2AServer:
         self.app = self._create_app()
 
     def _create_app(self) -> Starlette:
-        """Create the Starlette application with per-agent SDK routes."""
+        """Create the Starlette application with per-agent SDK routes.
+
+        Public UI routes (root page, UI config, static assets) are registered
+        before the per-agent mounts so they stay reachable without auth and
+        never collide with dynamic agent names.
+        """
         logger.debug("Creating A2A v1 Starlette application")
 
         routes: list[BaseRoute] = [
-            Route("/agents", self._list_agents, methods=["GET"]),
+            Route("/", self._serve_ui, methods=["GET"]),
+            Route(UI_CONFIG_PATH, self._ui_config, methods=["GET"]),
         ]
+        if WEB_UI_DIR.is_dir():
+            routes.append(
+                Mount(
+                    UI_ASSETS_PREFIX,
+                    app=StaticFiles(directory=str(WEB_UI_DIR)),
+                    name="a2a_ui",
+                )
+            )
+        routes.append(Route("/agents", self._list_agents, methods=["GET"]))
 
         for agent_name in self.agent_manager.agents:
             logger.debug(f"Creating v1 routes for agent: {agent_name}")
@@ -273,6 +296,23 @@ class A2AServer:
         """List all available agents."""
         agents = self.agent_registry.list_agents()
         return JSONResponse([agent.model_dump(mode="json") for agent in agents])
+
+    async def _serve_ui(self, request: Request):
+        """Serve the embedded chat UI homepage."""
+        index = WEB_UI_DIR / "index.html"
+        if not index.is_file():
+            return HTMLResponse(
+                "<h1>AgentCrew A2A UI is not installed</h1>", status_code=404
+            )
+        return FileResponse(str(index))
+
+    async def _ui_config(self, request: Request):
+        """Public, non-secret UI configuration.
+
+        Returns only whether authentication is required. The configured API key
+        is never exposed or logged.
+        """
+        return JSONResponse({"authRequired": bool(self.api_key)})
 
     def start(self):
         """Start the A2A server.
