@@ -3,18 +3,13 @@ import sys
 
 import click
 
+from AgentCrew.modules.unraisable_hook import custom_unraisable_hook
 from AgentCrew.setup import common_options
 
 
 def _custom_unraisable_hook(unraisable):
-    """Suppress httpcore async cleanup exceptions when streams are cancelled."""
-    exc_type = unraisable.exc_type
-    exc_value = unraisable.exc_value
-    if exc_type and exc_type.__name__ == "AsyncLibraryNotFoundError":
-        return
-    if exc_value and "httpcore" in str(type(exc_value).__module__):
-        return
-    sys.__unraisablehook__(unraisable)
+    """Suppress known unraisable cleanup errors; delegate everything else."""
+    custom_unraisable_hook(unraisable)
 
 
 sys.unraisablehook = _custom_unraisable_hook
