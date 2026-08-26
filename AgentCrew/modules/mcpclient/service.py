@@ -16,6 +16,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import (
     BlobResourceContents,
+    CallToolResult,
     ImageContent,
     PaginatedRequestParams,
     Resource,
@@ -42,6 +43,35 @@ if TYPE_CHECKING:
 
 # Initialize the logger
 mcp_log_io = FileLogIO("mcpclient_agentcrew")
+
+
+class MCPToolError(Exception):
+    """MCP tool-call failure surfaced through AgentCrew's tool error path.
+
+    Raised when an MCP server reports ``CallToolResult.is_error=True`` or
+    returns an unsupported response type (e.g. ``InputRequiredResult``).
+    Carries the formatted MCP-provided content so the shared execution
+    layers can surface the server's message (including the generic 2.1
+    ``Error executing tool`` text) to the model.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        content: list[dict[str, Any]] | None = None,
+    ):
+        super().__init__(message)
+        self.content = content or []
+
+    def __str__(self) -> str:
+        if not self.content:
+            return super().__str__()
+        rendered = "\n".join(
+            block.get("text", "")
+            for block in self.content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ).strip()
+        return rendered or super().__str__()
 
 
 class _MCPSessionScope:
@@ -458,7 +488,18 @@ class MCPService:
                 try:
                     session, ctx = await self._create_session(server_config)
                     result = await session.call_tool(tool_name, params)
-                    return await self._format_contents_async(result.content, session)
+                    formatted, is_error = await self._normalize_call_tool_result(
+                        result, tool_name, server_config, session
+                    )
+                    if is_error:
+                        raise MCPToolError(
+                            f"MCP tool '{tool_name}' on '{server_config.name}' "
+                            "returned an error result",
+                            content=formatted,
+                        )
+                    return formatted
+                except MCPToolError:
+                    raise
                 except Exception as e:
                     logger.error(
                         f"MCPService: Stateless tool call failed for "
@@ -489,16 +530,46 @@ class MCPService:
             session, ctx = await self._create_session(server_config)
             try:
                 result = await session.call_tool(tool_name, tool_args)
+                formatted, is_error = await self._normalize_call_tool_result(
+                    result, tool_name, server_config, session
+                )
                 return {
-                    "content": await self._format_contents_async(
-                        result.content, session
-                    ),
-                    "status": "success",
+                    "content": formatted,
+                    "status": "error" if is_error else "success",
                 }
             finally:
                 await self._close_session(session, ctx)
         except Exception as e:
             return {"content": f"Error: {e!s}", "status": "error"}
+
+    async def _normalize_call_tool_result(
+        self,
+        result: Any,
+        tool_name: str,
+        server_config: MCPServerConfig,
+        session: ClientSession | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Normalize an MCP tool-call response into formatted content and an error flag.
+
+        Shared by the registered tool handler and the direct API so both
+        paths treat MCP results identically:
+
+        - formats ``result.content`` with the existing async content formatter;
+        - honors ``CallToolResult.is_error`` (server-side tool failure);
+        - rejects non-``CallToolResult`` responses (e.g. ``InputRequiredResult``)
+          with a clear :class:`MCPToolError` instead of crashing later on a
+          missing ``.content``.
+
+        Returns ``(formatted_content, is_error)``.
+        """
+        if not isinstance(result, CallToolResult):
+            raise MCPToolError(
+                f"Unsupported MCP tool response for '{tool_name}' on "
+                f"'{server_config.name}': {type(result).__name__}. "
+                "Input-required/elicitation results are not supported."
+            )
+        formatted = await self._format_contents_async(result.content, session)
+        return formatted, bool(result.is_error)
 
     async def get_prompt_stateless(
         self,

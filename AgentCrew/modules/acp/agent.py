@@ -104,12 +104,10 @@ class AgentCrewAcpAgent(Agent):
             )
         ]
 
-        if (
-            client_capabilities
-            and hasattr(client_capabilities, "_meta")
-            and client_capabilities._meta
-            and client_capabilities._meta.get("terminal-auth") is True
-        ):
+        client_meta = (
+            client_capabilities.field_meta if client_capabilities is not None else None
+        )
+        if client_meta and client_meta.get("terminal-auth") is True:
             auth_methods.append(
                 TerminalAuthMethod(
                     type="terminal",
@@ -176,7 +174,6 @@ class AgentCrewAcpAgent(Agent):
         return NewSessionResponse(
             session_id=session_id,
             modes=self._model_controller.build_modes(agent_name),
-            models=self._model_controller.build_models(model_id or ""),
             config_options=self._model_controller.build_config_options(
                 agent_name, state.model_id, state.thought_level
             ),
@@ -186,8 +183,8 @@ class AgentCrewAcpAgent(Agent):
         self,
         cwd: str,
         session_id: str,
-        additional_directories: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
+        additional_directories: list[str] | None = None,
         **kwargs,
     ):
         logger.debug(
@@ -249,7 +246,7 @@ class AgentCrewAcpAgent(Agent):
         self._session_locks.pop(session_id, None)
         return CloseSessionResponse()
 
-    async def set_session_mode(self, mode_id: str, session_id: str, **kwargs):
+    async def set_session_mode(self, session_id: str, mode_id: str, **kwargs):
         logger.debug(f"set session mode: {mode_id}, {session_id}, {kwargs}")
         from acp.schema import SetSessionModeResponse
 
@@ -265,14 +262,11 @@ class AgentCrewAcpAgent(Agent):
 
     async def list_sessions(
         self,
-        additional_directories: list[str] | None = None,
-        cursor: str | None = None,
         cwd: str | None = None,
+        cursor: str | None = None,
         **kwargs,
     ):
-        logger.debug(
-            f"list sessions: {cursor}, {cwd}, {additional_directories}, {kwargs}"
-        )
+        logger.debug(f"list sessions: {cursor}, {cwd}, {kwargs}")
         from acp.schema import ListSessionsResponse, SessionInfo
 
         normalized_cwd = os.path.abspath(os.path.expanduser(cwd)) if cwd else None
@@ -297,8 +291,8 @@ class AgentCrewAcpAgent(Agent):
 
     async def resume_session(
         self,
-        cwd: str,
         session_id: str,
+        cwd: str,
         additional_directories: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
         **kwargs,
@@ -344,8 +338,8 @@ class AgentCrewAcpAgent(Agent):
 
     async def fork_session(
         self,
-        cwd: str,
         session_id: str,
+        cwd: str,
         additional_directories: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
         **kwargs,
@@ -399,17 +393,6 @@ class AgentCrewAcpAgent(Agent):
             ),
         )
 
-    async def set_session_model(self, model_id: str, session_id: str, **kwargs):
-        logger.info(f"Set Session Model: {session_id}, {model_id}, {kwargs}")
-        from acp.schema import SetSessionModelResponse
-
-        state = self._sessions.get(session_id)
-        if state is None:
-            raise RequestError.resource_not_found(f"session:{session_id}")
-        await self._model_controller.switch_session_model(state, model_id)
-        await self._session_lifecycle._persist_session(session_id, state)
-        return SetSessionModelResponse()
-
     async def set_config_option(
         self,
         config_id: str,
@@ -453,8 +436,8 @@ class AgentCrewAcpAgent(Agent):
 
     async def prompt(
         self,
-        prompt: list[Any],
         session_id: str,
+        prompt: list[Any],
         message_id: str | None = None,
         **kwargs,
     ):
@@ -503,13 +486,11 @@ class AgentCrewAcpAgent(Agent):
             await self._turn_executor.run_turn(session_id, state, self._conn)
             return PromptResponse(
                 stop_reason="cancelled" if state.cancelled else "end_turn",
-                user_message_id=message_id,
             )
         except asyncio.CancelledError:
             state.cancelled = True
             return PromptResponse(
                 stop_reason="cancelled",
-                user_message_id=message_id,
             )
         except Exception as e:
             logger.exception("ACP prompt failed")
@@ -518,7 +499,6 @@ class AgentCrewAcpAgent(Agent):
             )
             return PromptResponse(
                 stop_reason="refusal",
-                user_message_id=message_id,
             )
         finally:
             _current_acp_session.reset(token)

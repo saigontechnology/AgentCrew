@@ -4,7 +4,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from acp import text_block, tool_content
-from acp.schema import PermissionOption, ToolCallUpdate
+from acp.schema import (
+    ContentToolCallContent,
+    FileEditToolCallContent,
+    PermissionOption,
+    TerminalToolCallContent,
+    ToolCallUpdate,
+)
 from loguru import logger
 
 from AgentCrew.modules.acp.tools.context import classify_tool_kind
@@ -67,7 +73,14 @@ class AcpPermissionBroker:
 
         title = self._build_title(tool_name, tool_input)
         kind = classify_tool_kind(tool_name)
-        content = [tool_content(text_block(str(tool_input)))] if tool_input else None
+        content: (
+            list[
+                ContentToolCallContent
+                | FileEditToolCallContent
+                | TerminalToolCallContent
+            ]
+            | None
+        ) = [tool_content(text_block(str(tool_input)))] if tool_input else None
 
         tool_call_update = ToolCallUpdate(
             tool_call_id=tool_id,

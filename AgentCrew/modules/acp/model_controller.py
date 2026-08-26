@@ -338,16 +338,21 @@ class ModelController:
         return config_options
 
     def build_models(self, current_model_id: str):
-        from acp.schema import ModelInfo, SessionModelState
+        from acp.schema import SessionConfigOptionSelect, SessionConfigSelectOption
 
         from AgentCrew.modules.llm.model_registry import ModelRegistry
 
         registry = ModelRegistry.get_instance()
-        return SessionModelState(
-            available_models=[
-                ModelInfo(model_id=id, name=m.name) for id, m in registry.models.items()
+        return SessionConfigOptionSelect(
+            id="agentcrew-model",
+            name="Model",
+            type="select",
+            category="model",
+            options=[
+                SessionConfigSelectOption(value=id, name=m.name)
+                for id, m in registry.models.items()
             ],
-            current_model_id=current_model_id,
+            current_value=current_model_id,
         )
 
     def build_modes(self, current_agent_name: str):

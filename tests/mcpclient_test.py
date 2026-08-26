@@ -11,6 +11,7 @@ from mcp.client.auth import AuthorizationCodeResult
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from mcp.types import (
     BlobResourceContents,
+    CallToolResult,
     ImageContent,
     ListPromptsResult,
     ListResourcesResult,
@@ -35,7 +36,11 @@ from AgentCrew.modules.mcpclient.config import (
     MCPOAuthOverrideConfig,
     MCPServerConfig,
 )
-from AgentCrew.modules.mcpclient.service import MCPService, _MCPSessionScope
+from AgentCrew.modules.mcpclient.service import (
+    MCPService,
+    MCPToolError,
+    _MCPSessionScope,
+)
 
 
 class FakeTokenStorage:
@@ -1044,6 +1049,132 @@ class TestMCPSessionLifecycle:
 
         assert result["status"] == "error"
         assert "timed out" in result["content"]
+        assert scope.closed == 1
+
+    @pytest.mark.asyncio
+    async def test_call_tool_stateless_maps_is_error_result_to_error_status(self):
+        """A returned CallToolResult(is_error=True) must map to a direct API
+        error status while preserving the MCP-provided content."""
+        service = MCPService()
+        session = FakeSession(
+            call_tool_result=CallToolResult(
+                content=[TextContent(type="text", text="Error executing tool")],
+                is_error=True,
+            )
+        )
+        scope = RecordingScope()
+        service._create_session = _stub_create_session(session, scope)
+
+        result = await service.call_tool_stateless(self._stdio_config(), "tool1", {})
+
+        assert result["status"] == "error"
+        assert result["content"] == [{"type": "text", "text": "Error executing tool"}]
+        assert scope.closed == 1
+
+    @pytest.mark.asyncio
+    async def test_call_tool_stateless_content_only_result_remains_successful(self):
+        """A v2.1-style content-only result (no structuredContent/outputSchema)
+        stays successful through the direct API."""
+        service = MCPService()
+        session = FakeSession(
+            call_tool_result=CallToolResult(
+                content=[TextContent(type="text", text="hello")],
+                is_error=False,
+            )
+        )
+        scope = RecordingScope()
+        service._create_session = _stub_create_session(session, scope)
+
+        result = await service.call_tool_stateless(self._stdio_config(), "tool1", {})
+
+        assert result["status"] == "success"
+        assert result["content"] == [{"type": "text", "text": "hello"}]
+        assert scope.closed == 1
+
+    @pytest.mark.asyncio
+    async def test_call_tool_stateless_rejects_unsupported_result_type(self):
+        """A non-CallToolResult response (e.g. InputRequiredResult) must fail
+        clearly instead of crashing later on a missing .content."""
+        service = MCPService()
+        session = FakeSession(
+            call_tool_result=SimpleNamespace(content=[], is_error=False)
+        )
+        scope = RecordingScope()
+        service._create_session = _stub_create_session(session, scope)
+
+        result = await service.call_tool_stateless(self._stdio_config(), "tool1", {})
+
+        assert result["status"] == "error"
+        assert "Unsupported MCP tool response" in result["content"]
+        assert scope.closed == 1
+
+    @pytest.mark.asyncio
+    async def test_tool_handler_propagates_mcp_error_result_as_failure(self):
+        """A registered MCP handler must propagate a returned is_error=True
+        result through AgentCrew's tool failure path (raise MCPToolError)
+        instead of returning ordinary successful text."""
+        service = MCPService()
+        session = FakeSession(
+            call_tool_result=CallToolResult(
+                content=[TextContent(type="text", text="Error executing tool")],
+                is_error=True,
+            )
+        )
+        scope = RecordingScope()
+        service._create_session = _stub_create_session(session, scope)
+        handler = service._create_stateless_tool_handler(
+            self._stdio_config(), "tool1"
+        )()
+
+        with pytest.raises(MCPToolError) as exc_info:
+            await handler(x=1)
+
+        assert "Error executing tool" in str(exc_info.value)
+        assert exc_info.value.content == [
+            {"type": "text", "text": "Error executing tool"}
+        ]
+        assert scope.closed == 1
+
+    @pytest.mark.asyncio
+    async def test_tool_handler_content_only_result_remains_successful(self):
+        """A v2.1-style content-only result stays successful through the
+        registered handler without relying on structuredContent/outputSchema."""
+        service = MCPService()
+        session = FakeSession(
+            call_tool_result=CallToolResult(
+                content=[TextContent(type="text", text="hello")],
+                is_error=False,
+            )
+        )
+        scope = RecordingScope()
+        service._create_session = _stub_create_session(session, scope)
+        handler = service._create_stateless_tool_handler(
+            self._stdio_config(), "tool1"
+        )()
+
+        result = await handler(x=1)
+
+        assert result == [{"type": "text", "text": "hello"}]
+        assert scope.closed == 1
+
+    @pytest.mark.asyncio
+    async def test_tool_handler_rejects_unsupported_result_type(self):
+        """A non-CallToolResult response must fail clearly through the
+        registered handler as well."""
+        service = MCPService()
+        session = FakeSession(
+            call_tool_result=SimpleNamespace(content=[], is_error=False)
+        )
+        scope = RecordingScope()
+        service._create_session = _stub_create_session(session, scope)
+        handler = service._create_stateless_tool_handler(
+            self._stdio_config(), "tool1"
+        )()
+
+        with pytest.raises(MCPToolError) as exc_info:
+            await handler(x=1)
+
+        assert "Unsupported MCP tool response" in str(exc_info.value)
         assert scope.closed == 1
 
     @pytest.mark.asyncio
