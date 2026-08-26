@@ -40,7 +40,7 @@ def get_code_analysis_tool_definition() -> dict[str, Any]:
         },
         "feature_scope": {
             "type": "string",
-            "description": "Optional focused noun phrase feature scope used to prioritize the most relevant files during repository analysis. Example: 'authentication', 'user management', 'product creation'.",
+            "description": "Optional concise noun phrase naming the single feature, module, subsystem, or domain area to analyze. Describe WHAT, not why or how. Keep it about 2-6 words; exact feature names are allowed. Do NOT include task intent, changes/migrations, implementation details, class/function inventories, test plans, or keyword lists.",
         },
         "deep_analysis": {
             "type": "boolean",
