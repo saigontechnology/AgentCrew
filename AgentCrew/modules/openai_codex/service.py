@@ -294,7 +294,7 @@ class OpenAICodexService(OpenAIResponseService):
                 "format": {
                     "name": "default",
                     "type": "json_schema",
-                    "json_schema": self.structured_output,
+                    "schema": self.structured_output,
                 }
             }
 
