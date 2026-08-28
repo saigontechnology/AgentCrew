@@ -362,9 +362,12 @@ You must analyze and plan out the steps then execute it with your available tool
                     )
                     _arg_parts = []
                     for _k, _v in _raw_args.items():
-                        _v_str = str(_v)
-                        if len(_v_str) > 50:
-                            _v_str = _v_str[:25] + "..." + _v_str[-25:]
+                        if isinstance(_v, dict) or isinstance(_v, list):
+                            _v_str = f"[an object with typed {type(_v).__name__}]"
+                        else:
+                            _v_str = str(_v)
+                            if len(_v_str) > 50:
+                                _v_str = _v_str[:25] + "..." + _v_str[-25:]
                         _arg_parts.append(f"{_k}={_v_str}")
                     _arg_preview = ", ".join(_arg_parts)
 

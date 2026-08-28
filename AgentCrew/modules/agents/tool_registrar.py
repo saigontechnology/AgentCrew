@@ -71,10 +71,14 @@ class AgentToolRegistrar:
                         register_clipboard(service, agent)
                     elif tool_name == "code_analysis":
                         from AgentCrew.modules.code_analysis.tool import (
+                            code_analysis_instruction_prompt,
+                        )
+                        from AgentCrew.modules.code_analysis.tool import (
                             register as register_code_analysis,
                         )
 
                         register_code_analysis(service, agent)
+                        agent.tool_prompts.append(code_analysis_instruction_prompt())
                     elif tool_name == "web_search":
                         from AgentCrew.modules.web_search.tool import (
                             register as register_web_search,
