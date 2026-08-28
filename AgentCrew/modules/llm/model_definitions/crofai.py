@@ -89,6 +89,18 @@ CROFAI_MODELS = [
         cached_token_price_1m=0.003,
     ),
     Model(
+        id="glm-5.3-flash",
+        provider="crofai",
+        name="GLM 5.3 Flash",
+        description="Z.AI GLM 5.3 Flash (Q8) on CrofAI.",
+        capabilities=["tool_use", "stream", "thinking", "structured_output"],
+        vision_model="gemma-4-31b-it",
+        max_context_token=500_000,
+        input_token_price_1m=0.07,
+        output_token_price_1m=0.22,
+        cached_token_price_1m=0.01,
+    ),
+    Model(
         id="glm-5.2",
         provider="crofai",
         name="GLM 5.2",

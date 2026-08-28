@@ -362,7 +362,7 @@ You must analyze and plan out the steps then execute it with your available tool
                     )
                     _arg_parts = []
                     for _k, _v in _raw_args.items():
-                        if isinstance(_v, dict) or isinstance(_v, list):
+                        if isinstance(_v, (dict, list)):
                             _v_str = f"[an object with typed {type(_v).__name__}]"
                         else:
                             _v_str = str(_v)
