@@ -1,15 +1,18 @@
 import pytest
 
+from AgentCrew.modules.agents.tool_registrar import AgentToolRegistrar
 from AgentCrew.modules.code_analysis.symbol_lookup_service import (
     SymbolLookupError,
     SymbolLookupService,
 )
 from AgentCrew.modules.code_analysis.tool import (
     _format_symbol_lookup_markdown,
+    code_analysis_instruction_prompt,
     get_find_definition_tool_definition,
     get_find_definition_tool_handler,
     get_find_references_tool_definition,
     get_find_references_tool_handler,
+    get_grep_text_tool_definition,
     register,
 )
 
@@ -233,3 +236,69 @@ def test_tool_definitions_and_registration_expose_both_tools():
     )
     assert "find_definition" in agent.tools
     assert "find_references" in agent.tools
+
+
+def test_code_analysis_instruction_prompt_provides_selection_guidance():
+    prompt = code_analysis_instruction_prompt()
+
+    for tool_name in (
+        "analyze_repo",
+        "find_definition",
+        "find_references",
+        "grep_text",
+        "read_file",
+    ):
+        assert tool_name in prompt
+    assert "fall back to `grep_text`" in prompt
+    assert "narrowest tool" in prompt
+    assert "do not use `analyze_repo` merely to locate a known symbol" in prompt
+
+
+def test_symbol_tool_descriptions_include_positive_selection_guidance():
+    definition_desc = get_find_definition_tool_definition()["function"]["description"]
+    references_desc = get_find_references_tool_definition()["function"]["description"]
+    grep_desc = get_grep_text_tool_definition()["function"]["description"]
+
+    assert "Prefer this over `grep_text`" in definition_desc
+    assert "not type-aware" in definition_desc
+    assert "Prefer this over `grep_text`" in references_desc
+    assert "not type-aware" in references_desc
+    assert "find_definition" in grep_desc
+    assert "find_references" in grep_desc
+
+
+def test_code_analysis_registration_appends_instruction_prompt():
+    class FakeAgent:
+        def __init__(self):
+            self.services = {"code_analysis": object()}
+            self.tools = ["code_analysis"]
+            self.tool_prompts = []
+            self.tool_definitions = {}
+            self.voice_enabled = "disabled"
+            self.llm = None
+            self.registered_tools = set()
+            self.is_remoting_mode = False
+
+        def register_tool(self, definition, handler, service_instance):
+            self.tool_definitions[definition()["function"]["name"]] = (
+                definition,
+                handler,
+                service_instance,
+            )
+
+    agent = FakeAgent()
+    AgentToolRegistrar(agent).register_tools()
+
+    assert {
+        "analyze_repo",
+        "read_file",
+        "find_files",
+        "grep_text",
+        "find_definition",
+        "find_references",
+    } <= set(agent.tool_definitions)
+    assert len(agent.tool_prompts) == 1
+    prompt = agent.tool_prompts[0]
+    assert "find_definition" in prompt
+    assert "find_references" in prompt
+    assert "fall back to `grep_text`" in prompt

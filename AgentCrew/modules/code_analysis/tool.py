@@ -11,6 +11,28 @@ from .service import CodeAnalysisService
 from .symbol_lookup_service import SymbolLookupService
 
 # ============================================================================
+# Tool Selection Prompt
+# ============================================================================
+
+
+def code_analysis_instruction_prompt() -> str:
+    """Concise code-analysis tool selection guidance for the system prompt."""
+    return """<CodeAnalysis_Tool_Instruction>
+  <Tool_Selection>
+    - Use `analyze_repo` for broad repository structure, architecture, and conventions.
+    - Use `find_definition` for the declaration of an exact known symbol.
+    - Use `find_references` for exact usages or refactor impact of a known symbol.
+    - Use `grep_text` for arbitrary text, regex, comments, strings, or partial names.
+    - Use `read_file` to inspect code located by the tools above.
+    - If a symbol lookup is empty or ambiguous, fall back to `grep_text`.
+  </Tool_Selection>
+  <Efficiency_Rules>
+    - Use the narrowest tool that answers the question; do not use `analyze_repo` merely to locate a known symbol.
+  </Efficiency_Rules>
+</CodeAnalysis_Tool_Instruction>"""
+
+
+# ============================================================================
 # Code Analysis Tool
 # ============================================================================
 
@@ -395,7 +417,11 @@ def get_grep_text_tool_definition() -> dict[str, Any]:
     Returns:
         dict containing the tool definition in provider-specific format
     """
-    description = "Searches for text patterns within files in specified file or directory paths using grep-like functionality. "
+    description = (
+        "Searches for text patterns within files in specified file or directory paths using grep-like functionality. "
+        "Use this for arbitrary text, comments, strings, or partial names. For an exact code identifier, "
+        "prefer `find_definition` or `find_references`."
+    )
 
     tool_arguments = {
         "pattern": {
@@ -608,9 +634,11 @@ def get_find_definition_tool_definition() -> dict[str, Any]:
             "name": "find_definition",
             "description": (
                 "Find candidate definitions of an exact symbol within a source file or "
-                "directory using Tree-sitter syntax. Results include paths, ranges, "
-                "symbol kinds, and snippets. This is not type-aware or import-aware, "
-                "so duplicate names can produce multiple candidates."
+                "directory using Tree-sitter syntax. Prefer this over `grep_text` when "
+                "you know the exact symbol name and need its declaration. Results "
+                "include paths, ranges, symbol kinds, and snippets. This is not "
+                "type-aware or import-aware, so duplicate names can produce multiple "
+                "candidates."
             ),
             "parameters": _get_symbol_lookup_parameters(),
         },
@@ -625,9 +653,11 @@ def get_find_references_tool_definition() -> dict[str, Any]:
             "name": "find_references",
             "description": (
                 "Find exact identifier usages within a source file or directory using "
-                "Tree-sitter syntax. Recognized declarations are excluded by default. "
-                "This is not type-aware or import-aware, so results are candidate "
-                "references when names are duplicated or languages are dynamic."
+                "Tree-sitter syntax. Prefer this over `grep_text` when you know the "
+                "exact identifier and need usages or change impact. Recognized "
+                "declarations are excluded by default. This is not type-aware or "
+                "import-aware, so results are candidate references when names are "
+                "duplicated or languages are dynamic."
             ),
             "parameters": _get_symbol_lookup_parameters(include_definitions=True),
         },
