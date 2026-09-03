@@ -44,7 +44,6 @@ dependencies = [
   "jsonref==1.1.0",
   "pychromedevtools==1.0.4",
   "html-to-markdown==2.30.0",
-  "pip-system-certs==5.3",
   "loguru==0.7.3",
   "jsonschema==4.26.0",
   "tomli-w==1.2.0",
