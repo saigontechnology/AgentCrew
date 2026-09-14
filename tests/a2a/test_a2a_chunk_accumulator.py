@@ -27,6 +27,7 @@ from AgentCrew.modules.a2a.agent_executor import (
     _TurnChunkBuffer,
 )
 from AgentCrew.modules.agents import LocalAgent
+from AgentCrew.modules.agents.agent_response_stream import AgentResponseStream
 from AgentCrew.modules.llm.token_usage import TokenUsage
 
 
@@ -69,16 +70,22 @@ class _FakeAgent:
         self._generators = list(generators)
         self._calls = 0
 
-    async def process_messages(self, history, callback=None, **kwargs):
-        gen = self._generators[self._calls](history, callback)
-        self._calls += 1
-        async for item in gen:
-            yield item
+    def process_messages(self, history, callback=None, **kwargs) -> AgentResponseStream:
+        def make_iterator(stream_state):
+            gen = self._generators[self._calls](history, callback)
+            self._calls += 1
+            return gen
 
-    def format_message(self, message_type, data):
+        return AgentResponseStream(
+            agent=self,
+            state_factory=lambda: None,
+            iterator_factory=make_iterator,
+        )
+
+    def format_message(self, message_type, message_data):
         return None
 
-    def extract_last_user_message_for_memory(self, history):
+    def extract_last_user_message_for_memory(self, messages):
         return ""
 
     def store_memory_if_available(self, *args, **kwargs):
@@ -292,7 +299,14 @@ class _FakeLocalAgent(LocalAgent):
         self.name = "fake"
         self._calls = 0
 
-    async def process_messages(self, history, callback=None, **kwargs):
+    def process_messages(self, messages=None, callback=None) -> AgentResponseStream:
+        return AgentResponseStream(
+            agent=self,
+            state_factory=lambda: None,
+            iterator_factory=lambda stream_state: self._stream_impl(messages, callback),
+        )
+
+    async def _stream_impl(self, history, callback):
         self._calls += 1
         if self._calls == 1:
             yield "pre", "before ", None
@@ -305,13 +319,13 @@ class _FakeLocalAgent(LocalAgent):
     def get_model(self):
         return "fake-model"
 
-    def format_message(self, message_type, data):
+    def format_message(self, message_type, message_data):
         return None
 
     def calculate_usage_cost(self, *args, **kwargs):
         return 0.0
 
-    def extract_last_user_message_for_memory(self, history):
+    def extract_last_user_message_for_memory(self, messages):
         return ""
 
     def store_memory_if_available(self, *args, **kwargs):

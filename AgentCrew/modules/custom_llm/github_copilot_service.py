@@ -278,6 +278,7 @@ class GithubCopilotService(CustomLLMService):
     def _convert_internal_format(self, messages: list[dict[str, Any]]):
         for msg in messages:
             msg.pop("agent", None)
+            msg.pop("_metadata", None)
 
             if msg.get("role") == "consolidated":
                 msg["role"] = "user"

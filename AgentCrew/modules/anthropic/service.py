@@ -70,7 +70,6 @@ class AnthropicService(BaseLLMService):
         async with self.client.messages.stream(
             model=model_id or self.model,
             thinking={"type": "disabled"},
-            temperature=temperature,
             max_tokens=3000,
             system=self.system_prompt,
             messages=(
@@ -262,7 +261,13 @@ class AnthropicService(BaseLLMService):
             claude_messages.append(claude_msg)
         return claude_messages
 
-    def process_stream_chunk(self, chunk, assistant_response, tool_uses):
+    def process_stream_chunk(
+        self,
+        chunk,
+        assistant_response: str,
+        tool_uses: list[dict],
+        stream_state: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from the Anthropic streaming response.
 

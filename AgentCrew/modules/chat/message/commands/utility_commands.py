@@ -101,9 +101,7 @@ class UtilityCommands:
                 self.message_handler.bus.emit_sync(AppEvents.ERROR, message=str(e))
                 return CommandResult(handled=True, clear_flag=True)
             if applied:
-                self.message_handler.agent.reasoning_selection = ReasoningSelection(
-                    level, ReasoningSource.USER_SWITCH
-                )
+                self.message_handler.agent.reasoning_selection = ReasoningSelection(level, ReasoningSource.USER_SWITCH)
                 self.message_handler.bus.emit_sync(
                     AppEvents.THINK_BUDGET_SET, budget=level
                 )
@@ -495,8 +493,6 @@ class UtilityCommands:
             /debug chat    - Show only chat/streamline messages
             /debug system  - Show the current LLM system prompt
         """
-        import copy
-
         parts = user_input.lower().split()
         filter_type = parts[1] if len(parts) > 1 else None
         valid_filters = ("agent", "chat", "system")
@@ -509,17 +505,31 @@ class UtilityCommands:
             return CommandResult(handled=True, clear_flag=True)
 
         if filter_type is None or filter_type == "agent":
+            from AgentCrew.modules.agents.message_metadata import (
+                redact_message_for_debug,
+            )
+
             self.message_handler.bus.emit_sync(
                 AppEvents.DEBUG_REQUESTED,
                 type="agent",
-                messages=copy.deepcopy(self.message_handler.agent.clean_history),
+                messages=[
+                    redact_message_for_debug(message)
+                    for message in self.message_handler.agent.clean_history
+                ],
             )
 
         if filter_type is None or filter_type == "chat":
+            from AgentCrew.modules.agents.message_metadata import (
+                redact_message_for_debug,
+            )
+
             self.message_handler.bus.emit_sync(
                 AppEvents.DEBUG_REQUESTED,
                 type="chat",
-                messages=copy.deepcopy(self.message_handler.streamline_messages),
+                messages=[
+                    redact_message_for_debug(message)
+                    for message in self.message_handler.streamline_messages
+                ],
             )
 
         if filter_type == "system" and self.message_handler.agent.llm:

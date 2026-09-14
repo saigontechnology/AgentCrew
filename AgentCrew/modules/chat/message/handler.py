@@ -11,6 +11,7 @@ from loguru import logger
 
 from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.agents.message_metadata import redact_message_for_debug
 from AgentCrew.modules.chat.history import ChatHistoryManager
 from AgentCrew.modules.chat.stream_session import StreamSession
 from AgentCrew.modules.events import AppEvents, EventBus, HookRegistry
@@ -410,6 +411,7 @@ class MessageHandler:
 
         # Create a reference to the streaming generator
         self.stream_generator = None
+        response_stream = None
         request_agent = self.agent
 
         def process_result(_tool_uses, _token_usage):
@@ -430,10 +432,9 @@ class MessageHandler:
                 )
 
         try:
-            self.stream_generator = request_agent.process_messages(
-                callback=process_result
-            )
-            stream_iter = self.stream_generator.__aiter__()
+            response_stream = request_agent.process_messages(callback=process_result)
+            self.stream_generator = response_stream
+            stream_iter = response_stream.__aiter__()
 
             async def get_next_stream_item():
                 if session.first_chunk_received:
@@ -468,22 +469,32 @@ class MessageHandler:
                 ) = next_item
                 if session.cancel_requested:
                     has_stop_interupted = True
+                    # Fold the current chunk into the accumulated thinking so
+                    # the persisted message carries the full summary.
+                    if thinking_chunk:
+                        think_text_chunk, signature = thinking_chunk
+                        if think_text_chunk:
+                            thinking_content += think_text_chunk
+                        if signature:
+                            thinking_signature += signature
                     await self.bus.emit(
                         AppEvents.STREAMING_STOPPED,
                         response=assistant_response,
                     )
                     session.finalize("canceled")
-                    await self.stream_generator.aclose()
+                    await response_stream.aclose()
                     if assistant_response.strip():
-                        self._messages_append(
-                            self.agent.format_message(
-                                MessageType.Assistant,
-                                {
-                                    "message": assistant_response,
-                                    "thinking": (thinking_chunk, None),
-                                },
+                        thinking_data = (
+                            (thinking_content, thinking_signature)
+                            if thinking_content
+                            else None
+                        )
+                        cancelled_assistant_message = (
+                            response_stream.format_assistant_message(
+                                assistant_response, thinking=thinking_data
                             )
                         )
+                        self._messages_append(cancelled_assistant_message)
                         await self.bus.emit(
                             AppEvents.RESPONSE_COMPLETED,
                             response=assistant_response,
@@ -556,7 +567,8 @@ class MessageHandler:
 
             if not session.finished.is_set():
                 session.finalize("completed")
-            self.stream_generator = None
+            if self.stream_generator is response_stream:
+                self.stream_generator = None
 
             # End thinking when break the response stream
             if not end_thinking and start_thinking:
@@ -579,20 +591,16 @@ class MessageHandler:
                 ]
                 # only append message if there are tool uses other than transfer
                 if len(tool_uses_without_transfer) > 0:
-                    assistant_message = self.agent.format_message(
-                        MessageType.Assistant,
-                        {
-                            "message": assistant_response,
-                            "thinking": thinking_data,
-                            "tool_uses": tool_uses_without_transfer,
-                        },
+                    assistant_message = response_stream.format_assistant_message(
+                        assistant_response,
+                        thinking=thinking_data,
+                        tool_uses=tool_uses_without_transfer,
                     )
                     self._messages_append(assistant_message)
                 # ignore if message is empty
                 elif assistant_response.strip():
-                    assistant_message = self.agent.format_message(
-                        MessageType.Assistant,
-                        {"message": assistant_response, "thinking": thinking_data},
+                    assistant_message = response_stream.format_assistant_message(
+                        assistant_response, thinking=thinking_data
                     )
                     self._messages_append(assistant_message)
                 await self.bus.emit(
@@ -641,15 +649,10 @@ class MessageHandler:
                     _empty_response_retry_count=_empty_response_retry_count + 1,
                 )
 
-            self._messages_append(
-                self.agent.format_message(
-                    MessageType.Assistant,
-                    {
-                        "message": assistant_response,
-                        "thinking": thinking_data,
-                    },
-                )
+            final_assistant_message = response_stream.format_assistant_message(
+                assistant_response, thinking=thinking_data
             )
+            self._messages_append(final_assistant_message)
             await self.bus.emit(
                 AppEvents.RESPONSE_COMPLETED,
                 response=assistant_response,
@@ -693,23 +696,33 @@ class MessageHandler:
 
         except asyncio.CancelledError:
             has_stop_interupted = True
-            if self.stream_generator:
+            if response_stream:
                 try:
-                    await self.stream_generator.aclose()
+                    await response_stream.aclose()
                 except Exception:
                     logger.warning("Failed to close stream generator")
             if not session.finished.is_set():
                 session.finalize("canceled")
 
             if assistant_response.strip():
-                self._messages_append(
-                    self.agent.format_message(
+                thinking_data = (
+                    (thinking_content, thinking_signature) if thinking_content else None
+                )
+                if response_stream is not None:
+                    cancelled_assistant_message = (
+                        response_stream.format_assistant_message(
+                            assistant_response, thinking=thinking_data
+                        )
+                    )
+                else:
+                    cancelled_assistant_message = self.agent.format_message(
                         MessageType.Assistant,
                         {
                             "message": assistant_response,
+                            "thinking": thinking_data,
                         },
                     )
-                )
+                self._messages_append(cancelled_assistant_message)
                 await self.bus.emit(
                     AppEvents.RESPONSE_COMPLETED,
                     response=assistant_response,
@@ -799,7 +812,9 @@ class MessageHandler:
             await self.bus.emit(
                 AppEvents.ERROR,
                 message=error_message,
-                messages=self.agent.history,
+                messages=[
+                    redact_message_for_debug(message) for message in self.agent.history
+                ],
             )
             if not session.finished.is_set():
                 session.finalize("failed")

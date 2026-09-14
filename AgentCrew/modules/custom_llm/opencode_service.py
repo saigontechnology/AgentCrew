@@ -29,7 +29,11 @@ class OpenCodeService(CustomLLMService):
         return str(content)
 
     def process_stream_chunk(
-        self, chunk, assistant_response: str, tool_uses: list[dict]
+        self,
+        chunk,
+        assistant_response: str,
+        tool_uses: list[dict],
+        stream_state: dict[str, Any] | None = None,
     ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         if "stream" in ModelRegistry.get_model_capabilities(
             f"{self._provider_name}/{self.model}"

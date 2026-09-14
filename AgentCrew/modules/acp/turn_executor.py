@@ -64,15 +64,13 @@ class TurnExecutor:
                 else:
                     token_usage = _token_usage
 
+        stream = agent.process_messages(state.history, callback=process_result)
         try:
             async for (
                 response_message,
                 chunk_text,
                 thinking_chunk,
-            ) in agent.process_messages(
-                state.history,
-                callback=process_result,
-            ):
+            ) in stream:
                 if state.cancelled:
                     return
                 if response_message:
@@ -93,13 +91,10 @@ class TurnExecutor:
                 (thinking_content, thinking_signature) if thinking_content else None
             )
 
-            assistant_message = agent.format_message(
-                MessageType.Assistant,
-                {
-                    "message": current_response,
-                    "thinking": thinking_data,
-                    "tool_uses": tool_uses,
-                },
+            assistant_message = stream.format_assistant_message(
+                current_response,
+                thinking=thinking_data,
+                tool_uses=tool_uses,
             )
             if assistant_message:
                 state.history.append(assistant_message)

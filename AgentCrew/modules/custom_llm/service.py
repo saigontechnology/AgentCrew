@@ -328,6 +328,7 @@ class CustomLLMService(OpenAIService):
         for raw_msg in messages:
             msg = dict(raw_msg)
             msg.pop("agent", None)
+            msg.pop("_metadata", None)
             role = msg.get("role", "")
 
             if role == "consolidated":
@@ -518,7 +519,11 @@ class CustomLLMService(OpenAIService):
             return AsyncIterator(response.choices)
 
     def process_stream_chunk(
-        self, chunk, assistant_response: str, tool_uses: list[dict]
+        self,
+        chunk,
+        assistant_response: str,
+        tool_uses: list[dict],
+        stream_state: dict[str, Any] | None = None,
     ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         if "stream" in ModelRegistry.get_model_capabilities(
             f"{self._provider_name}/{self.model}"

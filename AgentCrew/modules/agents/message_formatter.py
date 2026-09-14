@@ -83,7 +83,7 @@ class AgentMessageFormatter:
     def format_assistant_message(
         self,
         assistant_response: str,
-        thinking_data: tuple[str, str] | None = None,
+        thinking_data: tuple[str, str | None] | None = None,
         tool_uses: list[dict] | None = None,
     ) -> dict[str, Any]:
         """
@@ -92,7 +92,8 @@ class AgentMessageFormatter:
 
         Args:
             assistant_response (str): The text response from the assistant
-            thinking_data: Optional ``(content, signature)`` thinking block
+            thinking_data: Optional ``(content, signature)`` thinking block;
+                signature may be ``None``
             tool_uses: Optional tool uses to attach as ``tool_calls``
 
         Returns:

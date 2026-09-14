@@ -5,9 +5,10 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import Callable
     from typing import Any
 
+    from AgentCrew.modules.agents.agent_response_stream import AgentResponseStream
     from AgentCrew.modules.llm.base import BaseLLMService
 
 
@@ -104,18 +105,25 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    async def process_messages(
+    def process_messages(
         self,
         messages: list[dict[str, Any]] | None = None,
         callback: Callable | None = None,
-    ) -> AsyncGenerator:
+    ) -> AgentResponseStream:
         """
         Process messages using this agent.
 
+        Returns an :class:`AgentResponseStream` that owns its request-local
+        provider stream state. Callers iterate the stream, close it on
+        cancellation, and finalize assistant messages via
+        ``stream.format_assistant_message(...)``.
+
         Args:
             messages: The messages to process
+            callback: Optional ``(tool_uses, token_usage) -> None``
 
         Returns:
-            The processed messages with the agent's response
+            An ``AgentResponseStream`` yielding
+            ``(assistant_response, chunk_text, thinking_chunk)`` tuples.
         """
-        yield
+        raise NotImplementedError

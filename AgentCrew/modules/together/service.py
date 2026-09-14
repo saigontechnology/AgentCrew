@@ -69,6 +69,7 @@ class TogetherAIService(BaseLLMService):
         for raw_msg in messages:
             msg = dict(raw_msg)
             msg.pop("agent", None)
+            msg.pop("_metadata", None)
             role = msg.get("role", "")
             content = msg.get("content", "")
 
@@ -350,7 +351,11 @@ class TogetherAIService(BaseLLMService):
         return await self.client.chat.completions.create(**stream_params)
 
     def process_stream_chunk(
-        self, chunk, assistant_response: str, tool_uses: list[dict]
+        self,
+        chunk,
+        assistant_response: str,
+        tool_uses: list[dict],
+        stream_state: dict[str, Any] | None = None,
     ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         chunk_text = None
         input_tokens = 0

@@ -305,7 +305,11 @@ class BaseLLMService(ABC):
 
     @abstractmethod
     def process_stream_chunk(
-        self, chunk, assistant_response, tool_uses
+        self,
+        chunk,
+        assistant_response: str,
+        tool_uses: list[dict],
+        stream_state: dict[str, Any] | None = None,
     ) -> tuple[str, list[dict] | None, TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from the streaming response.

@@ -45,11 +45,13 @@ async def run_agent_loop(
         if request_usage_callback is not None:
             request_usage_callback(_token_usage)
 
+    stream = agent.process_messages(history, callback=process_result)
+
     async for (
         response_message,
         chunk_text,
         thinking_chunk,
-    ) in agent.process_messages(history, callback=process_result):
+    ) in stream:
         if response_message:
             current_response = response_message
         if thinking_chunk:
@@ -59,12 +61,18 @@ async def run_agent_loop(
             if signature:
                 thinking_signature += signature
 
-    if not tool_uses:
-        assistant_message = agent.format_message(
-            MessageType.Assistant, {"message": current_response}
-        )
+    thinking_data = (thinking_content, thinking_signature) if thinking_content else None
+
+    def append_assistant_message(assistant_message: dict[str, Any] | None) -> None:
+        """Append a finalized assistant message to history."""
         if assistant_message:
             history.append(assistant_message)
+
+    if not tool_uses:
+        assistant_message = stream.format_assistant_message(
+            current_response, thinking=thinking_data
+        )
+        append_assistant_message(assistant_message)
 
         user_message = agent.extract_last_user_message_for_memory(history)
         agent.store_memory_if_available(user_message, history, current_response)
@@ -85,24 +93,19 @@ async def run_agent_loop(
         filtered = tool_uses
 
     if not filtered:
-        assistant_message = agent.format_message(
-            MessageType.Assistant, {"message": current_response}
+        assistant_message = stream.format_assistant_message(
+            current_response, thinking=thinking_data
         )
-        if assistant_message:
-            history.append(assistant_message)
+        append_assistant_message(assistant_message)
 
         user_message = agent.extract_last_user_message_for_memory(history)
         agent.store_memory_if_available(user_message, history, current_response)
         return current_response, token_usage
 
-    thinking_data = (thinking_content, thinking_signature) if thinking_content else None
-
-    assistant_message = agent.format_message(
-        MessageType.Assistant,
-        {"message": current_response, "thinking": thinking_data, "tool_uses": filtered},
+    assistant_message = stream.format_assistant_message(
+        current_response, thinking=thinking_data, tool_uses=filtered
     )
-    if assistant_message:
-        history.append(assistant_message)
+    append_assistant_message(assistant_message)
 
     parallel_buffer: list[dict[str, Any]] = []
 

@@ -27,6 +27,7 @@ from a2a.types.a2a_pb2 import (
 )
 from loguru import logger
 
+from .agent_response_stream import AgentResponseStream
 from .base import BaseAgent, MessageType
 
 if TYPE_CHECKING:
@@ -302,10 +303,29 @@ class RemoteAgent(BaseAgent):
         if msg_text:
             yield ("".join(full_response_text), None, (msg_text, None))
 
-    async def process_messages(
+    def process_messages(
         self,
         messages: list[dict[str, Any]] | None = None,
         callback: Callable | None = None,
+    ) -> AgentResponseStream:
+        """Process messages through the remote agent as a stream.
+
+        The returned stream has no provider continuation state (remote agents
+        do not expose ``_metadata``), but supports the same iteration,
+        finalization, and close interface as local agent streams.
+        """
+        return AgentResponseStream(
+            agent=self,
+            state_factory=lambda: None,
+            iterator_factory=lambda stream_state: self._stream_messages(
+                messages, callback
+            ),
+        )
+
+    async def _stream_messages(
+        self,
+        messages: list[dict[str, Any]] | None,
+        callback: Callable | None,
     ):
         client = await self._ensure_client()
         if not messages:

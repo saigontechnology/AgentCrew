@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from loguru import logger
 
+from AgentCrew.modules.agents.agent_response_stream import AgentResponseStream
+from AgentCrew.modules.agents.message_metadata import redact_message_for_debug
 from AgentCrew.modules.llm.token_usage import ConversationUsage, TokenUsage
 
 from .base import BaseAgent, MessageType
@@ -775,26 +777,54 @@ class LocalAgent(BaseAgent):
 
         return final_messages
 
-    async def process_messages(
+    def create_stream_state(self) -> dict[str, Any] | None:
+        """Create a per-stream state container if the LLM service provides one.
+
+        Returns ``None`` for services without streaming continuation state.
+        Uses ``getattr`` so partially-initialized subclasses without ``llm``
+        remain safe.
+        """
+        llm = getattr(self, "llm", None)
+        if llm is not None and hasattr(llm, "create_stream_state"):
+            return llm.create_stream_state()
+        return None
+
+    def process_messages(
         self,
         messages: list[dict[str, Any]] | None = None,
         callback: Callable | None = None,
-    ):
+    ) -> AgentResponseStream:
         """
         Process messages using this agent.
 
-        Delegates pre-processing (context.build hooks, enhancement, vision)
-        to :meth:`pre_process_message`, then runs ``agent.process``
-        before/after hooks and streams the LLM response.
+        Returns an :class:`AgentResponseStream` that owns its request-local
+        provider stream state. Iterate it with ``async for``, close it on
+        cancellation with ``await stream.aclose()``, and finalize assistant
+        messages with ``stream.format_assistant_message(...)``.
 
         Args:
             messages: The messages to process
             callback: Optional ``(tool_uses, token_usage) -> None``
 
-        Yields:
+        Returns:
+            An ``AgentResponseStream`` yielding
             ``(assistant_response, chunk_text, thinking_chunk)`` tuples.
         """
+        return AgentResponseStream(
+            agent=self,
+            state_factory=self.create_stream_state,
+            iterator_factory=lambda stream_state: self._stream_messages(
+                messages, callback, stream_state
+            ),
+        )
 
+    async def _stream_messages(
+        self,
+        messages: list[dict[str, Any]] | None,
+        callback: Callable | None,
+        stream_state: dict[str, Any] | None,
+    ):
+        """Private async iterator implementing the stream lifecycle."""
         if not self.llm:
             return
 
@@ -849,15 +879,26 @@ class LocalAgent(BaseAgent):
                 final_messages
             ) as stream:
                 async for chunk in stream:
-                    (
-                        assistant_response,
-                        tool_uses,
-                        chunk_token_usage,
-                        chunk_text,
-                        thinking_chunk,
-                    ) = self.llm.process_stream_chunk(
-                        chunk, assistant_response, _tool_uses
-                    )
+                    if stream_state is not None:
+                        (
+                            assistant_response,
+                            tool_uses,
+                            chunk_token_usage,
+                            chunk_text,
+                            thinking_chunk,
+                        ) = self.llm.process_stream_chunk(
+                            chunk, assistant_response, _tool_uses, stream_state
+                        )
+                    else:
+                        (
+                            assistant_response,
+                            tool_uses,
+                            chunk_token_usage,
+                            chunk_text,
+                            thinking_chunk,
+                        ) = self.llm.process_stream_chunk(
+                            chunk, assistant_response, _tool_uses
+                        )
                     yield (assistant_response, chunk_text, thinking_chunk)
 
                     if tool_uses:
@@ -901,5 +942,8 @@ class LocalAgent(BaseAgent):
             if _original_model is not None and _modified_model_id != _original_model:
                 self.llm.model = _original_model
             logger.error(f"Error during message processing: {e}")
-            logger.debug(f"Final messages at error time: {final_messages}")
+            logger.debug(
+                "Final messages at error time: "
+                f"{[redact_message_for_debug(m) for m in final_messages]}"
+            )
             raise

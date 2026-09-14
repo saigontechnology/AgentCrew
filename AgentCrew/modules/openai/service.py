@@ -81,6 +81,7 @@ class OpenAIService(BaseLLMService):
         for msg in messages:
             msg.pop("agent", None)
             msg.pop("tool_name", None)
+            msg.pop("_metadata", None)
             if msg.get("role") == "consolidated":
                 msg["role"] = "user"
                 msg.pop("metadata", None)
@@ -281,7 +282,11 @@ class OpenAIService(BaseLLMService):
         return await self.client.chat.completions.create(**stream_params, stream=True)
 
     def process_stream_chunk(
-        self, chunk, assistant_response: str, tool_uses: list[dict]
+        self,
+        chunk,
+        assistant_response: str,
+        tool_uses: list[dict],
+        stream_state: dict[str, Any] | None = None,
     ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from the streaming response.

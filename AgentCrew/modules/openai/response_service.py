@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from typing import Any
@@ -6,6 +7,12 @@ from dotenv import load_dotenv
 from loguru import logger
 from openai import AsyncOpenAI
 
+from AgentCrew.modules.agents.message_metadata import (
+    METADATA_FIELD,
+    get_reasoning_output_items,
+    get_responses_provider_state,
+    is_compatible_responses_state,
+)
 from AgentCrew.modules.llm.base import (
     BaseLLMService,
 )
@@ -46,6 +53,88 @@ class OpenAIResponseService(BaseLLMService):
         self.conversation_state = {}
         logger.info("Cleared conversation state")
 
+    def create_stream_state(self) -> dict[str, Any]:
+        """Create a per-stream state container for Responses continuation data.
+
+        Per-stream state stays local to the processing scope (passed through
+        parameters) so concurrent streams remain isolated.
+        """
+        return {
+            "reasoning_items": [],
+            "summary_deltas_received": False,
+            "provider": self._provider_name,
+            "model": self.model,
+        }
+
+    @staticmethod
+    def _summary_text(summary: Any) -> str:
+        """Extract concatenated summary text from a reasoning item summary."""
+        texts = []
+        for part in summary or []:
+            if isinstance(part, dict):
+                if part.get("type") == "summary_text" and part.get("text"):
+                    texts.append(part["text"])
+            elif getattr(part, "type", None) == "summary_text" and getattr(
+                part, "text", ""
+            ):
+                texts.append(part.text)
+        return "\n".join(texts)
+
+    @staticmethod
+    def _summary_parts(summary: Any) -> list[dict[str, Any]]:
+        """Normalize reasoning summary parts into plain dicts for replay."""
+        parts: list[dict[str, Any]] = []
+        for part in summary or []:
+            if isinstance(part, dict):
+                parts.append(copy.deepcopy(part))
+            else:
+                parts.append(
+                    {
+                        "type": getattr(part, "type", "summary_text"),
+                        "text": getattr(part, "text", ""),
+                    }
+                )
+        return parts
+
+    def _capture_reasoning_item(
+        self, item: Any, stream_state: dict[str, Any] | None
+    ) -> None:
+        """Store a completed reasoning item as opaque Responses continuation state.
+
+        Only items carrying ``encrypted_content`` are stored — those are the
+        ones the Responses API can resolve client-side on the next request.
+        The item is normalized into plain JSON-safe dicts and appended to the
+        per-stream ``stream_state`` (never to instance attributes).
+        """
+        if stream_state is None:
+            return
+        if getattr(item, "type", None) != "reasoning":
+            return
+        encrypted_content = getattr(item, "encrypted_content", None)
+        if not encrypted_content:
+            logger.debug(
+                "Response API: reasoning item without encrypted_content "
+                f"(id={getattr(item, 'id', None)}) not stored"
+            )
+            return
+        if hasattr(item, "model_dump"):
+            reasoning_item = item.model_dump(mode="json", exclude_none=True)
+        else:
+            reasoning_item: dict[str, Any] = {
+                "id": getattr(item, "id", None),
+                "type": "reasoning",
+                "summary": self._summary_parts(getattr(item, "summary", None)),
+            }
+            status = getattr(item, "status", None)
+            if status is not None:
+                reasoning_item["status"] = status
+        reasoning_item["encrypted_content"] = encrypted_content
+        stream_state.setdefault("reasoning_items", []).append(reasoning_item)
+        logger.debug(
+            "Response API: captured reasoning item "
+            f"id={reasoning_item.get('id')} encrypted_length={len(encrypted_content)}"
+        )
+
     def set_think(self, budget_tokens) -> bool:
         """
         Enable or disable thinking mode with the specified token budget.
@@ -84,12 +173,41 @@ class OpenAIResponseService(BaseLLMService):
             return input_cost + output_cost + cached_cost
         return 0.0
 
-    def _convert_internal_format(self, messages: list[dict[str, Any]]):
+    def _convert_internal_format(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
-        Convert Chat Completions messages format to Response API input format.
+        Convert internal history format to Response API input format.
+
+        Operates on a deep copy so the persisted in-memory history (including
+        ``_metadata`` provider state) is never mutated. Completed reasoning
+        items stored under ``_metadata`` are replayed before their assistant
+        message when the provider and model are compatible; on mismatch the
+        canonical visible history is used as fallback. The canonical thinking
+        block is suppressed during replay to avoid duplicating the summary
+        already carried by the replayed reasoning item.
         """
-        tool_call_list = {}
-        for i, msg in enumerate(messages):
+        formatted: list[dict[str, Any]] = []
+        for msg in copy.deepcopy(messages):
+            provider_state = get_responses_provider_state(msg)
+            msg.pop(METADATA_FIELD, None)
+            if is_compatible_responses_state(
+                provider_state, self._provider_name, self.model
+            ):
+                replay_reasoning_items = get_reasoning_output_items(provider_state)
+                if replay_reasoning_items:
+                    formatted.extend(copy.deepcopy(replay_reasoning_items))
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        msg["content"] = [
+                            part
+                            for part in content
+                            if not (
+                                isinstance(part, dict)
+                                and part.get("type") == "thinking"
+                            )
+                        ]
+
             msg.pop("agent", None)
             role = msg.get("role", "user")
             if role == "consolidated":
@@ -124,20 +242,19 @@ class OpenAIResponseService(BaseLLMService):
                         )
                         part["image_url"] = image_url_value
                         part.pop("content", None)
-            if "tool_calls" in msg:
-                tool_call_list[i] = msg.pop("tool_calls")
-        for idx, tool_calls in tool_call_list.items():
-            for i, tool_call in enumerate(tool_calls):
-                messages.insert(
-                    idx + i + 1,
+
+            tool_calls = msg.pop("tool_calls", None)
+            formatted.append(msg)
+            for tool_call in tool_calls or []:
+                formatted.append(
                     {
                         "type": "function_call",
                         "call_id": tool_call.get("id", ""),
                         "name": tool_call.get("name", ""),
                         "arguments": json.dumps(tool_call.get("arguments", "")),
-                    },
+                    }
                 )
-        return messages
+        return formatted
 
     async def process_message(
         self,
@@ -161,7 +278,10 @@ class OpenAIResponseService(BaseLLMService):
         if self.reasoning_effort and "thinking" in ModelRegistry.get_model_capabilities(
             f"{self._provider_name}/{self.model}"
         ):
-            request_params["reasoning"] = {"effort": self.reasoning_effort}
+            request_params["reasoning"] = {
+                "effort": self.reasoning_effort,
+                "summary": "auto",
+            }
 
         result_text = ""
         input_tokens = 0
@@ -259,7 +379,10 @@ class OpenAIResponseService(BaseLLMService):
             "thinking" in ModelRegistry.get_model_capabilities(full_model_id)
             and self.reasoning_effort
         ):
-            stream_params["reasoning"] = {"effort": self.reasoning_effort}
+            stream_params["reasoning"] = {
+                "effort": self.reasoning_effort,
+                "summary": "auto",
+            }
 
         if self._extra_headers:
             stream_params["extra_headers"] = self._extra_headers
@@ -313,7 +436,11 @@ class OpenAIResponseService(BaseLLMService):
         return tool_use
 
     def process_stream_chunk(
-        self, chunk, assistant_response: str, tool_uses: list[dict]
+        self,
+        chunk,
+        assistant_response: str,
+        tool_uses: list[dict],
+        stream_state: dict[str, Any] | None = None,
     ) -> tuple[str, list[dict], TokenUsage, str | None, tuple | None]:
         """
         Process a single chunk from Response API streaming.
@@ -321,7 +448,10 @@ class OpenAIResponseService(BaseLLMService):
 
         All per-stream parsing state lives inside ``tool_uses`` entries
         (via temporary ``_output_index`` / ``_saw_args_delta`` fields)
-        so that concurrent streams remain isolated.
+        so that concurrent streams remain isolated. Completed reasoning items
+        carrying ``encrypted_content`` are captured into ``stream_state``
+        (created via :meth:`create_stream_state`) for opaque continuation
+        replay on the next request.
         """
         chunk_text = None
         input_tokens = 0
@@ -371,6 +501,13 @@ class OpenAIResponseService(BaseLLMService):
                 if text and not assistant_response:
                     assistant_response = text
                     chunk_text = text
+
+            elif event_type == "response.reasoning_summary_text.delta":
+                delta = getattr(chunk, "delta", "")
+                if delta:
+                    thinking_content = (delta, None)
+                    if stream_state is not None:
+                        stream_state["summary_deltas_received"] = True
 
             elif event_type == "response.function_call_arguments.delta":
                 delta = getattr(chunk, "delta", "")
@@ -427,6 +564,15 @@ class OpenAIResponseService(BaseLLMService):
                             ]
                             if reasoning_content:
                                 thinking_content = ("\n".join(reasoning_content), None)
+                        self._capture_reasoning_item(item, stream_state)
+                        if thinking_content is None and stream_state is not None:
+                            summary_text = self._summary_text(
+                                getattr(item, "summary", None)
+                            )
+                            if summary_text and not stream_state.get(
+                                "summary_deltas_received"
+                            ):
+                                thinking_content = (summary_text, None)
 
             elif event_type == "response.completed":
                 response = getattr(chunk, "response", None)

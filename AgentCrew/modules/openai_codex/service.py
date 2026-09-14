@@ -276,7 +276,10 @@ class OpenAICodexService(OpenAIResponseService):
             "thinking" in ModelRegistry.get_model_capabilities(full_model_id)
             and self.reasoning_effort
         ):
-            stream_params["reasoning"] = {"effort": self.reasoning_effort}
+            stream_params["reasoning"] = {
+                "effort": self.reasoning_effort,
+                "summary": "auto",
+            }
 
         if self._extra_headers:
             stream_params["extra_headers"] = self._extra_headers

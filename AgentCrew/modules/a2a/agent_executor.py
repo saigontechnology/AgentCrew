@@ -35,6 +35,7 @@ from .exceptions import TaskCanceledException
 from .session_store import AgentCrewSessionStore, _owner_key
 
 if TYPE_CHECKING:
+    from AgentCrew.modules.agents.agent_response_stream import AgentResponseStream
     from AgentCrew.modules.utils.file_handler import FileHandler
 
 # Re-export for compatibility with tests that import from this module
@@ -335,6 +336,8 @@ class AgentCrewA2AExecutor(AgentExecutor):
         owner = _owner_key(context.call_context)
         current_response = ""
         tool_uses: list[dict[str, Any]] = []
+        thinking_content = ""
+        thinking_signature = ""
 
         def process_result(_tool_uses, _token_usage):
             nonlocal tool_uses, token_usage
@@ -372,12 +375,13 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 else:
                     raise
 
+        stream = agent.process_messages(history, callback=process_result)
         try:
             async for (
                 response_message,
                 chunk_text,
                 thinking_chunk,
-            ) in agent.process_messages(history, callback=process_result):
+            ) in stream:
                 if cancel_event.is_set():
                     raise TaskCanceledException(f"Task {task_id} was canceled")
 
@@ -402,7 +406,11 @@ class AgentCrewA2AExecutor(AgentExecutor):
 
                 # Thinking chunks — separate artifact ID with append tracking
                 if thinking_chunk:
-                    think_text, _ = thinking_chunk
+                    think_text, think_signature = thinking_chunk
+                    if think_text:
+                        thinking_content += think_text
+                    if think_signature:
+                        thinking_signature += think_signature
                     if think_text:
                         if not working_emitted:
                             await event_queue.enqueue_event(
@@ -441,6 +449,10 @@ class AgentCrewA2AExecutor(AgentExecutor):
             await buffer.flush()
             await stop_flush_task()
 
+            thinking_data = (
+                (thinking_content, thinking_signature) if thinking_content else None
+            )
+
             if tool_uses:
                 from .adapters import convert_agent_response_to_a2a_artifact
 
@@ -461,14 +473,10 @@ class AgentCrewA2AExecutor(AgentExecutor):
                         )
                     )
 
-                assistant_message = agent.format_message(
-                    MessageType.Assistant,
-                    {
-                        "message": current_response,
-                        "tool_uses": [
-                            t for t in tool_uses if t.get("name", "") != "transfer"
-                        ],
-                    },
+                assistant_message = stream.format_assistant_message(
+                    current_response,
+                    thinking=thinking_data,
+                    tool_uses=[t for t in tool_uses if t.get("name", "") != "transfer"],
                 )
                 if assistant_message:
                     await self.session_store.append_history(
@@ -520,6 +528,8 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 history,
                 token_usage,
                 answer_state,
+                stream=stream,
+                thinking_data=thinking_data,
             )
             return current_response, token_usage
 
@@ -750,6 +760,8 @@ class AgentCrewA2AExecutor(AgentExecutor):
         history: list[dict[str, Any]],
         token_usage: TokenUsage | None = None,
         answer_state: AnswerArtifactState | None = None,
+        stream: AgentResponseStream | None = None,
+        thinking_data: tuple[str, str | None] | None = None,
     ) -> None:
         owner = _owner_key(context.call_context)
         if token_usage is None:
@@ -761,9 +773,15 @@ class AgentCrewA2AExecutor(AgentExecutor):
         )
 
         if current_response.strip():
-            assistant_message = agent.format_message(
-                MessageType.Assistant, {"message": current_response}
-            )
+            if stream is not None:
+                assistant_message = stream.format_assistant_message(
+                    current_response, thinking=thinking_data
+                )
+            else:
+                assistant_message = agent.format_message(
+                    MessageType.Assistant,
+                    {"message": current_response, "thinking": thinking_data},
+                )
             if assistant_message:
                 await self.session_store.append_history(
                     context_id, assistant_message, owner
