@@ -612,6 +612,23 @@ Model Context Protocol (MCP) extends agent capabilities with external tools.
 }
 ```
 
+**Parallel Search (optional):**
+
+To opt in, manually add this entry to your own `mcp_servers.json`. The default
+Parallel Search endpoint does not require an account or API key. Only search
+queries made by the chosen agent and URLs it asks to fetch are sent to Parallel.
+
+```json
+{
+  "parallel_search": {
+    "name": "parallel_search",
+    "url": "https://search.parallel.ai/mcp",
+    "streaming_server": true,
+    "enabledForAgents": ["Researcher"]
+  }
+}
+```
+
 **Remote MCP Server using legacy SSE:**
 
 ```json
