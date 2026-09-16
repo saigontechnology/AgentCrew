@@ -291,7 +291,6 @@ class TestMappingCompleteness:
             "openai_codex",
             "google",
             "deepinfra",
-            "crofai",
             "fireworks",
             "github_copilot",
             "commandcode",

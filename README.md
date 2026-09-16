@@ -92,7 +92,6 @@ agentcrew chat --provider github_copilot
 **Pay-as-you-go API keys:**
 
 ```bash
-export CROFAI_API_KEY="your-key"          # CrofAI — OpenAI-compatible, budget-friendly
 export DEEPINFRA_API_KEY="your-key"       # DeepInfra — open models (LLaMA, Qwen, etc.)
 export OPENAI_API_KEY="sk-proj-..."       # OpenAI GPT-4o
 export GEMINI_API_KEY="AIza..."           # Google Gemini — free tier available
@@ -103,7 +102,6 @@ Or store keys in `~/.AgentCrew/config.json`:
 ```json
 {
   "api_keys": {
-    "CROFAI_API_KEY": "your-key",
     "OPENAI_API_KEY": "sk-proj-..."
   }
 }
@@ -121,7 +119,6 @@ schema, llama.cpp configuration, model capabilities, and sampling options.
 | Provider         | Cost profile               | Best for                               |
 | ---------------- | -------------------------- | -------------------------------------- |
 | **OpenCode Go**  | Subscription-based         | Curated open-source models, no API key |
-| **CrofAI**       | Pay-as-you-go, low cost    | General tasks, OpenAI-compatible       |
 | **Command Code** | Subscription-based         | Frontier models via subscription       |
 | **DeepInfra**    | Pay-as-you-go, low cost    | Open models (LLaMA, Qwen, etc.)        |
 | **Together AI**  | Pay-as-you-go              | Open models, fine-tuning               |
@@ -138,7 +135,7 @@ schema, llama.cpp configuration, model capabilities, and sampling options.
 > | If you...                           | Pick this                            |
 > | ----------------------------------- | ------------------------------------ |
 > | Want curated open-source models     | **OpenCode Go** — subscription-based |
-> | Want low-cost, open-source friendly | **CrofAI** or **DeepInfra**          |
+> | Want low-cost, open-source friendly | **DeepInfra**                         |
 > | Have a Command Code subscription    | **Command Code**                     |
 > | Have ChatGPT Plus / Pro             | `openai_codex` — no extra cost       |
 > | Have GitHub Copilot                 | `github_copilot` — no extra cost     |

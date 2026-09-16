@@ -14,7 +14,6 @@ PROVIDER_API_KEY_MAP: dict[str, str] = {
     "openai_response": "OPENAI_API_KEY",
     "google": "GEMINI_API_KEY",
     "deepinfra": "DEEPINFRA_API_KEY",
-    "crofai": "CROFAI_API_KEY",
     "together": "TOGETHER_API_KEY",
     "opencode_go": "OPENCODE_API_KEY",
     "opencode_anthropic": "OPENCODE_API_KEY",
@@ -40,7 +39,6 @@ PROVIDER_MODEL_MODULES: dict[str, tuple[str, str]] = {
         "AgentCrew.modules.llm.model_definitions.deepinfra",
         "DEEPINFRA_MODELS",
     ),
-    "crofai": ("AgentCrew.modules.llm.model_definitions.crofai", "CROFAI_MODELS"),
     "together": ("AgentCrew.modules.llm.model_definitions.together", "TOGETHER_MODELS"),
     "opencode_go": (
         "AgentCrew.modules.llm.model_definitions.opencode",

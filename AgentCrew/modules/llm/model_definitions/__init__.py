@@ -6,7 +6,6 @@ Each provider's models can be loaded independently.
 
 from .anthropic import ANTHROPIC_MODELS
 from .commandcode import COMMANDCODE_MODELS
-from .crofai import CROFAI_MODELS
 from .deepinfra import DEEPINFRA_MODELS
 from .fireworks import FIREWORKS_MODELS
 from .github_copilot import GITHUB_COPILOT_MODELS
@@ -19,7 +18,6 @@ from .together import TOGETHER_MODELS
 __all__ = [
     "ANTHROPIC_MODELS",
     "COMMANDCODE_MODELS",
-    "CROFAI_MODELS",
     "DEEPINFRA_MODELS",
     "FIREWORKS_MODELS",
     "GITHUB_COPILOT_MODELS",

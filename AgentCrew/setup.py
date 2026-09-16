@@ -40,7 +40,6 @@ PROVIDER_LIST = [
     "openai",
     "openai_codex",
     "google",
-    "crofai",
     "deepinfra",
     "together",
     "opencode_go",
@@ -55,7 +54,7 @@ def common_options(func):
         "--provider",
         type=click.Choice(PROVIDER_LIST),
         default=None,
-        help="LLM provider to use (claude, openai, google, crofai, github_copilot, deepinfra, together, opencode_go, commandcode, or openai_codex)",
+        help="LLM provider to use (claude, openai, google, github_copilot, deepinfra, together, opencode_go, commandcode, or openai_codex)",
     )
     @click.option(
         "--agent-config",
@@ -73,7 +72,6 @@ def common_options(func):
                 "openai",
                 "openai_codex",
                 "google",
-                "crofai",
                 "deepinfra",
                 "together",
                 "opencode_go",
@@ -234,7 +232,6 @@ class ApplicationSetup:
         keys_to_check = [
             "ANTHROPIC_API_KEY",
             "GEMINI_API_KEY",
-            "CROFAI_API_KEY",
             "OPENAI_API_KEY",
             "DEEPINFRA_API_KEY",
             "TOGETHER_API_KEY",
@@ -267,7 +264,6 @@ class ApplicationSetup:
                     api_key_map = {
                         "claude": "ANTHROPIC_API_KEY",
                         "google": "GEMINI_API_KEY",
-                        "crofai": "CROFAI_API_KEY",
                         "openai": "OPENAI_API_KEY",
                         "deepinfra": "DEEPINFRA_API_KEY",
                         "together": "TOGETHER_API_KEY",
@@ -307,8 +303,6 @@ class ApplicationSetup:
             return "together"
         elif os.getenv("OPENCODE_API_KEY"):
             return "opencode_go"
-        elif os.getenv("CROFAI_API_KEY"):
-            return "crofai"
         elif os.getenv("COMMAND_CODE_API_KEY"):
             return "commandcode"
         elif os.getenv("FIREWORKS_API_KEY"):

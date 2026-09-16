@@ -15,7 +15,7 @@ you will have a working team of specialists that can hand off work to each other
 - One of the following:
   - An **OpenCode Go subscription** (curated open-source models, no API key needed)
   - A **ChatGPT Plus / Pro** or **GitHub Copilot** subscription
-  - An API key from CrofAI, DeepInfra, OpenAI, Google Gemini, or another provider
+  - An API key from DeepInfra, OpenAI, Google Gemini, or another provider
 
 ---
 
@@ -89,7 +89,6 @@ Same flow — browser-based login, no API key required.
 Set an environment variable and launch:
 
 ```bash
-export CROFAI_API_KEY="crof-..."
 export DEEPINFRA_API_KEY="your-key"
 export OPENAI_API_KEY="sk-proj-..."
 export GEMINI_API_KEY="AIza..."
@@ -102,7 +101,7 @@ You can also store keys permanently in `~/.AgentCrew/config.json`:
 ```json
 {
   "api_keys": {
-    "CROFAI_API_KEY": "crof-..."
+    "OPENAI_API_KEY": "sk-proj-..."
   }
 }
 ```
@@ -174,7 +173,7 @@ You will see the AgentCrew terminal interface with a prompt like:
 
 ```
 ┌─ AgentCrew ──────────────────────────────────┐
-│ Agent: Coding  │  Model: crofai/qwen-14b     │
+│ Agent: Coding  │  Model: deepinfra/google/gemma-4-31B-it     │
 └──────────────────────────────────────────────┘
 >
 ```

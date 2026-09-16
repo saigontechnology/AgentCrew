@@ -634,7 +634,7 @@ def chatgpt_auth():
     "--provider",
     type=click.Choice(PROVIDER_LIST),
     default=None,
-    help="LLM provider to use (claude, openai, google, crofai, github_copilot, deepinfra, together, opencode_go, commandcode, or openai_codex)",
+    help="LLM provider to use (claude, openai, google, github_copilot, deepinfra, together, opencode_go, commandcode, or openai_codex)",
 )
 @click.option(
     "--agent-config",

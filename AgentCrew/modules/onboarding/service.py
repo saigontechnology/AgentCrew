@@ -249,8 +249,6 @@ class OnboardingService:
                 self.llm_service.model = "gemini-3.1-pro-preview"
             elif self.llm_service.provider_name == "commandcode":
                 self.llm_service.model = "zai-org/GLM-5.2"
-            elif self.llm_service.provider_name == "crofai":
-                self.llm_service.model = "glm-5.2"
             elif self.llm_service.provider_name == "claude":
                 self.llm_service.model = "claude-sonnet-4-6"
             elif self.llm_service.provider_name == "openai":

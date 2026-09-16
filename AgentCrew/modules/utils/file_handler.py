@@ -87,11 +87,6 @@ ANYDOC_FORMATS = [
 # The first provider whose API key env var is set will be used.
 # Ordered by cost (cheapest first).
 PICTURE_DESCRIPTION_PROVIDERS = {
-    "crofai": {
-        "url": "https://crof.ai/v1/chat/completions",
-        "api_key_env": "CROFAI_API_KEY",
-        "model": "qwen3.5-9b",
-    },
     "commandcode": {
         "url": "https://api.commandcode.ai/provider/v1/chat/completions",
         "api_key_env": "COMMAND_CODE_API_KEY",
@@ -432,30 +427,31 @@ class FileHandler:
             last_used_provider = GlobalConfig().get_last_used_provider()
 
             if last_used_provider:
-                config = PICTURE_DESCRIPTION_PROVIDERS[last_used_provider]
-                api_key = os.getenv(config["api_key_env"])
-                if api_key:
-                    headers = {
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {api_key}",
-                    }
-                    params = {
-                        "model": config["model"],
-                        "temperature": 0.6,
-                        "max_tokens": 1000,
-                    }
+                config = PICTURE_DESCRIPTION_PROVIDERS.get(last_used_provider)
+                if config:
+                    api_key = os.getenv(config["api_key_env"])
+                    if api_key:
+                        headers = {
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {api_key}",
+                        }
+                        params = {
+                            "model": config["model"],
+                            "temperature": 0.6,
+                            "max_tokens": 1000,
+                        }
 
-                    logger.info(
-                        f"Picture description enabled with provider: {last_used_provider}, model: {config['model']}"
-                    )
-                    return PictureDescriptionApiOptions(
-                        url=AnyUrl(config["url"]),
-                        headers=headers,
-                        params=params,
-                        concurrency=4,
-                        prompt=VISION_DESCRIPTION_PROMPT,
-                        timeout=120,
-                    )
+                        logger.info(
+                            f"Picture description enabled with provider: {last_used_provider}, model: {config['model']}"
+                        )
+                        return PictureDescriptionApiOptions(
+                            url=AnyUrl(config["url"]),
+                            headers=headers,
+                            params=params,
+                            concurrency=4,
+                            prompt=VISION_DESCRIPTION_PROMPT,
+                            timeout=120,
+                        )
 
             for provider, config in PICTURE_DESCRIPTION_PROVIDERS.items():
                 api_key = os.getenv(config["api_key_env"])

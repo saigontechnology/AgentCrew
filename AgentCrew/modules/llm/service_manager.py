@@ -53,7 +53,6 @@ class ServiceManager:
             "openai_codex": self._create_openai_codex_service,
             "google": self._create_google_service,
             "deepinfra": self._create_deepinfra_service,
-            "crofai": self._create_crofai_service,
             "together": self._create_together_service,
             "opencode_go": self._create_opencode_go_service,
             "opencode_anthropic": self._create_opencode_anthropic_service,
@@ -125,14 +124,6 @@ class ServiceManager:
         from AgentCrew.modules.custom_llm import DeepInfraService
 
         return DeepInfraService()
-
-    def _create_crofai_service(self) -> BaseLLMService:
-        """Lazy import and create CrofAI service."""
-        if not os.getenv("CROFAI_API_KEY"):
-            logger.error("API key for CrofAI not found.")
-        from AgentCrew.modules.custom_llm import CrofAIService
-
-        return CrofAIService()
 
     def _create_together_service(self) -> BaseLLMService:
         """Lazy import and create Together service."""

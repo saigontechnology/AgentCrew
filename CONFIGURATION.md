@@ -43,13 +43,11 @@ behavior.
 
 ### API Keys
 
-Add your API keys to connect AgentCrew with AI providers. Open-source friendly
-and budget options are listed first:
+Add your API keys to connect AgentCrew with AI providers.
 
 ```json
 {
   "api_keys": {
-    "CROFAI_API_KEY": "your-key",
     "DEEPINFRA_API_KEY": "your-key",
     "OPENAI_API_KEY": "sk-proj-...",
     "GEMINI_API_KEY": "AIza...",
@@ -63,22 +61,16 @@ and budget options are listed first:
 
 **Required Keys:**
 
-- At least one AI provider key (CrofAI, DeepInfra, OpenAI, Gemini, Anthropic,
-  etc.)
+- At least one AI provider key (DeepInfra, OpenAI, Gemini, Anthropic, etc.)
 
 **Optional Keys:**
 
-- `CROFAI_API_KEY` — For CrofAI, an open-source friendly OpenAI-compatible
-  provider
-- `CROFAI_BASE_URL` — Optional CrofAI endpoint override (defaults to
-  `https://crof.ai/v1`)
 - `TAVILY_API_KEY` — For web search capabilities
 - `VOYAGE_API_KEY` — For alternative embedding provider
 - `ELEVENLABS_API_KEY` — For voice synthesis
 
 **Getting API Keys:**
 
-- **CrofAI:** <https://crof.ai/> — open-source friendly, low-cost
 - **DeepInfra:** <https://deepinfra.com/dash/api_keys> — open models (LLaMA,
   Qwen)
 - **OpenCode Go:** Subscription-based, no API key — run
@@ -91,26 +83,6 @@ and budget options are listed first:
 - **Tavily:** <https://tavily.com/>
 - **Voyage AI:** <https://www.voyageai.com/>
 - **ElevenLabs:** <https://elevenlabs.io/>
-
-### CrofAI
-
-CrofAI is available as a built-in OpenAI-compatible provider. Set the API key in
-`.env` or your shell environment:
-
-```bash
-CROFAI_API_KEY="your-api-key"
-```
-
-AgentCrew uses `https://crof.ai/v1` by default. To point at another compatible
-CrofAI endpoint, set:
-
-```bash
-CROFAI_BASE_URL="https://crof.ai/v1"
-```
-
-The `/usage` command calls CrofAI's account usage endpoint at `/usage_api/` and
-shows remaining daily requests plus account credit balance when available. This
-account usage is separate from per-call token usage reported by chat responses.
 
 ### Custom LLM Providers
 

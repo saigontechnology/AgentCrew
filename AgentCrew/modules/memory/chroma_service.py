@@ -55,8 +55,6 @@ class ChromaMemoryService(BaseMemoryService):
                 self.llm_service.model = "deepseek-v4-flash"
             elif self.llm_service.provider_name == "commandcode":
                 self.llm_service.model = "deepseek/deepseek-v4-flash"
-            elif self.llm_service.provider_name == "crofai":
-                self.llm_service.model = "deepseek-v4-flash"
 
         self._collection = None
         self.collection_name = collection_name
