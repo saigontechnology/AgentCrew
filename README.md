@@ -219,7 +219,7 @@ agentcrew a2a-server --host 0.0.0.0 --port 41241
 | ------------------- | ---------------------------------------------------- | --------------------------------------------- |
 | `code_analysis`     | Read files, grep, analyze repo structure             | Any agent working with code                   |
 | `file_editing`      | Write/modify files (search-replace blocks, backups)  | Coding and documentation agents               |
-| `web_search`        | Search the web via Tavily                            | Research and fact-checking agents             |
+| `web_search`        | Search the web (Tavily, or You.com via `WEB_SEARCH_PROVIDER=youcom`) | Research and fact-checking agents             |
 | `fetch_webpage`     | Extract content from a URL                           | Research agents                               |
 | `browser`           | Full browser automation (navigate, click, form fill) | QA, web scraping, form-filling agents         |
 | `command_execution` | Run shell commands (rate limits, audit logs)         | DevOps, code execution agents                 |

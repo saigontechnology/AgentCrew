@@ -65,7 +65,9 @@ Add your API keys to connect AgentCrew with AI providers.
 
 **Optional Keys:**
 
-- `TAVILY_API_KEY` — For web search capabilities
+- `TAVILY_API_KEY` — For web search capabilities (default provider)
+- `WEB_SEARCH_PROVIDER` — Set to `youcom` to use the You.com web search backend instead of Tavily
+- `YDC_API_KEY` — Optional You.com API key; without it the You.com provider runs keyless
 - `VOYAGE_API_KEY` — For alternative embedding provider
 - `ELEVENLABS_API_KEY` — For voice synthesis
 
@@ -81,8 +83,29 @@ Add your API keys to connect AgentCrew with AI providers.
 - **Anthropic Claude:** <https://console.anthropic.com/>
 - **GitHub Copilot:** Authenticate using `agentcrew copilot-auth`
 - **Tavily:** <https://tavily.com/>
+- **You.com:** Optional — the `youcom` web search provider works without any
+  API key; get a key at <https://you.com/platform/api-keys> for the
+  authenticated endpoint
 - **Voyage AI:** <https://www.voyageai.com/>
 - **ElevenLabs:** <https://elevenlabs.io/>
+
+### Web Search Provider
+
+The `web_search` tool defaults to Tavily. To use You.com instead, set
+`WEB_SEARCH_PROVIDER=youcom`:
+
+```bash
+export WEB_SEARCH_PROVIDER=youcom
+agentcrew chat
+```
+
+The You.com provider talks to the You.com MCP endpoint and works without any
+API key (keyless free profile). Optionally set `YDC_API_KEY` to switch to the
+authenticated endpoint, which also enables server-side URL content extraction
+for the `fetch_webpage` tool; without a key, `fetch_webpage` falls back to
+fetching the page directly and converting it to markdown. `crawl_website` is
+not supported by the You.com provider and returns an explanatory message
+pointing to `fetch_webpage` / `search_web`.
 
 ### Custom LLM Providers
 

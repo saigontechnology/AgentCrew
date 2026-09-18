@@ -242,6 +242,8 @@ class ApplicationSetup:
             "TAVILY_API_KEY",
             "VOYAGE_API_KEY",
             "ELEVENLABS_API_KEY",
+            "YDC_API_KEY",
+            "WEB_SEARCH_PROVIDER",
         ]
 
         for key_name in keys_to_check:
@@ -430,9 +432,9 @@ class ApplicationSetup:
         clipboard_service = ClipboardService()
 
         try:
-            from AgentCrew.modules.web_search import TavilySearchService
+            from AgentCrew.modules.web_search import create_search_service
 
-            search_service = TavilySearchService()
+            search_service = create_search_service()
         except ValueError as e:
             click.echo(
                 f"\u26a0\ufe0f Web search tools not available: {e!s}\n"
@@ -440,7 +442,9 @@ class ApplicationSetup:
                 "   documentation, or real-time data from the internet.\n"
                 "   \U0001f4a1 Get a free Tavily API key (no credit card, 1,000 calls/month) at:\n"
                 "   https://app.tavily.com/\n"
-                "   Then set it via the TAVILY_API_KEY environment variable or config.json."
+                "   Then set it via the TAVILY_API_KEY environment variable or config.json.\n"
+                "   Alternatively, set WEB_SEARCH_PROVIDER=youcom to use You.com web search\n"
+                "   without any API key."
             )
             search_service = None
         except Exception as e:
