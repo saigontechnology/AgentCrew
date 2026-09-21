@@ -40,7 +40,7 @@ def _read_file_sync(path: str) -> bytes:
 class CodeAnalysisService:
     """Service for analyzing code structure using tree-sitter."""
 
-    LANGUAGE_MAP: ClassVar[dict[str, str | None]] = EXTENSION_TO_LANGUAGE
+    LANGUAGE_MAP: ClassVar[dict[str, str]] = EXTENSION_TO_LANGUAGE
 
     CUSTOM_PARSER_LANGUAGES: ClassVar[set[str]] = set(LANGUAGE_PARSER_MAP.keys())
 
@@ -70,7 +70,7 @@ class CodeAnalysisService:
                 self.llm_service.provider_name == "copilot_response"
                 or self.llm_service.provider_name == "openai_codex"
             ):
-                self.llm_service.model = "gpt-5.4-mini"
+                self.llm_service.model = "gpt-5.6-luna"
             elif self.llm_service.provider_name == "together":
                 self.llm_service.model = "Qwen/Qwen3.5-9B"
             elif self.llm_service.provider_name == "opencode_go":
@@ -763,19 +763,20 @@ class CodeAnalysisService:
             compact = format_single_file_analysis(
                 rel_path, structure, self.class_types, self.function_types
             )
-
-            # Compute content hash (or use manifest hash)
-            content_hash = manifest.get(rel_path, "")
-            if not content_hash:
-                full_path = os.path.join(norm_path, rel_path)
-                try:
-                    content_hash = _sha256_hex(
-                        Path(full_path).read_bytes()
-                        if os.path.exists(full_path)
-                        else b""
-                    )
-                except (OSError, PermissionError):
-                    content_hash = _sha256_hex(b"")
+            content_hash = ""
+            if manifest:
+                # Compute content hash (or use manifest hash)
+                content_hash = manifest.get(rel_path, "")
+                if not content_hash:
+                    full_path = os.path.join(norm_path, rel_path)
+                    try:
+                        content_hash = _sha256_hex(
+                            Path(full_path).read_bytes()
+                            if os.path.exists(full_path)
+                            else b""
+                        )
+                    except (OSError, PermissionError):
+                        content_hash = _sha256_hex(b"")
 
             files[rel_path] = {
                 "hash": content_hash,
@@ -788,14 +789,16 @@ class CodeAnalysisService:
         # Overlay error results
         for err_item in errors:
             rel_path = err_item["path"]
-            content_hash = manifest.get(rel_path, "")
-            if not content_hash:
-                try:
-                    content_hash = _sha256_hex(
-                        Path(os.path.join(norm_path, rel_path)).read_bytes()
-                    )
-                except (OSError, PermissionError):
-                    content_hash = _sha256_hex(b"")
+            content_hash = ""
+            if manifest:
+                content_hash = manifest.get(rel_path, "")
+                if not content_hash:
+                    try:
+                        content_hash = _sha256_hex(
+                            Path(os.path.join(norm_path, rel_path)).read_bytes()
+                        )
+                    except (OSError, PermissionError):
+                        content_hash = _sha256_hex(b"")
             files[rel_path] = {
                 "hash": content_hash,
                 "error": err_item["error"],

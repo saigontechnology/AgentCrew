@@ -177,9 +177,9 @@ class AgentToolRegistrar:
                 register_ask(agent)
                 agent.tool_prompts.append(ask_tool_prompt())
 
-            agent.tool_prompts.append(
-                agent.services["agent_manager"].get_context_awareness_prompt()
-            )
+            # agent.tool_prompts.append(
+            #     agent.services["agent_manager"].get_context_awareness_prompt()
+            # )
 
     def register_tool(
         self,

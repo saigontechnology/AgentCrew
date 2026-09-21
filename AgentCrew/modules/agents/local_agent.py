@@ -97,12 +97,16 @@ class LocalAgent(BaseAgent):
         from .memory_coordinator import AgentMemoryCoordinator
         from .message_formatter import AgentMessageFormatter
         from .tool_registrar import AgentToolRegistrar
+        from .tool_result_summary import AgentToolResultCoordinator
 
         self._tool_registrar = AgentToolRegistrar(self)
         self._context_manager = AgentContextManager(self)
         self._llm_lifecycle = AgentLLMLifecycle(self)
         self._memory_coordinator = AgentMemoryCoordinator(self)
         self._message_formatter = AgentMessageFormatter(self)
+        self._tool_result_coordinator = AgentToolResultCoordinator(
+            self, self._message_formatter
+        )
 
     @property
     def input_tokens_usage(self) -> int:
@@ -430,8 +434,8 @@ class LocalAgent(BaseAgent):
     def format_message(
         self, message_type: MessageType, message_data: dict[str, Any]
     ) -> dict[str, Any] | None:
-        """Route message formatting through the collaborator."""
-        return self._message_formatter.format_message(message_type, message_data)
+        """Route message formatting through the ToolResult coordinator."""
+        return self._tool_result_coordinator.format_message(message_type, message_data)
 
     def configure_think(self, think_setting):
         if self.llm:

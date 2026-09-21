@@ -209,6 +209,7 @@ Control UI appearance, system behavior, and context management:
     "theme": "saigontech",
     "yolo_mode": false,
     "auto_context_shrink": true,
+    "tool_result_summary_enabled": true,
     "shrink_excluded": []
   }
 }
@@ -230,13 +231,32 @@ Control UI appearance, system behavior, and context management:
   model's context window
   - **How it works:** When the total input tokens exceed 85% of the model's
     maximum context limit, AgentCrew starts replacing verbose tool result
-    content with a compact placeholder that shows only the tool name and its
-    arguments (e.g.,
+    content with a compact replacement. A ready asynchronous, factual tool
+    summary is preferred (for example,
+    `[tool summary for web_search: The search returned five current Python release sources.]`).
+    If summary generation has not completed, is unavailable, or no longer
+    matches the original tool output, AgentCrew keeps the existing placeholder
+    showing the tool name and arguments (for example,
     `[tool:web_search(query=latest python ...) was truncated]`). The last 10
     messages are always kept intact regardless of token usage.
+  - **Summary timing and data handling:** Summaries are generated off the main
+    inference path and may not be available until a later inference. They use
+    a dedicated standalone client configured from `memory_llm` or the active
+    provider, so memory and summary workers never share an LLM instance. When
+    memory or conversation persistence is unavailable, summaries remain
+    available through a bounded process-local cache for jobs, A2A, and ACP.
+    The summary client receives the tool name, arguments, and result needed to
+    produce the summary. AgentCrew persists only the generated summary and
+    compatibility metadata for local chats, not the original result.
   - `true` — Enable automatic shrinking (recommended for long conversations)
   - `false` — Keep all tool results in full (may hit context limits)
   - Default: `true`
+
+- `tool_result_summary_enabled` — Enable asynchronous ToolResult summaries used by context shrinking
+  - `true` — Generate summaries in the background and use a ready, compatible summary when available
+  - `false` — Keep automatic context shrinking enabled, but use the existing
+    `[tool:<name>(<args>) was truncated]` placeholder instead of generating summaries
+  - Default: `true`; missing keys in existing configurations are treated as enabled
 
 - `shrink_excluded` — List of tool names that should never have their results
   shrunk, even when `auto_context_shrink` is enabled
@@ -695,6 +715,10 @@ export AGENTCREW_DEFAULT_MAX_CONTEXT="120000"
 
 # Context shrinking — keep more (or fewer) recent messages untouched (default: 10)
 export AGENTCREW_CONTEXT_SHRINK_THRESHOLD="10"
+
+# Bound each asynchronous summary request and its prompt payload
+export AGENTCREW_TOOL_SUMMARY_TIMEOUT_SECONDS="5"
+export AGENTCREW_TOOL_SUMMARY_MAX_PROMPT_CHARS="30000"
 ```
 
 > **NOTED**: config.json values take priority over environment variables.
@@ -705,6 +729,8 @@ export AGENTCREW_CONTEXT_SHRINK_THRESHOLD="10"
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
 | `AGENTCREW_DEFAULT_MAX_CONTEXT`      | Overrides the token threshold at which shrinking activates. Set to a number of tokens (e.g., `120000`). The default is 85% of the model's maximum context window. | `85% of model max context` |
 | `AGENTCREW_CONTEXT_SHRINK_THRESHOLD` | Controls how many of the most recent messages are always preserved in full, regardless of token usage.                                                            | `10`                       |
+| `AGENTCREW_TOOL_SUMMARY_TIMEOUT_SECONDS` | Limits one asynchronous summary request before it is discarded without affecting inference. | `5` seconds |
+| `AGENTCREW_TOOL_SUMMARY_MAX_PROMPT_CHARS` | Caps the tool arguments/result payload sent to the summary provider; the source hash still uses the complete canonical result. | `30000` characters |
 
 ## Configuration Priority
 

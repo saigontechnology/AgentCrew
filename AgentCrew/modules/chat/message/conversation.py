@@ -34,6 +34,9 @@ class ConversationManager:
             self.message_handler.current_conversation_id = (
                 self.message_handler.persistent_service.start_conversation()
             )
+            self._preload_tool_result_summaries(
+                self.message_handler.current_conversation_id
+            )
             if self.message_handler.memory_service:
                 self.message_handler.memory_service.session_id = (
                     self.message_handler.current_conversation_id
@@ -71,6 +74,18 @@ class ConversationManager:
             logger.warning(f"Warning: {error_message}")
             self.message_handler.bus.emit_sync(AppEvents.ERROR, message=error_message)
             self.message_handler.current_conversation_id = None
+
+    def _preload_tool_result_summaries(self, conversation_id: str) -> None:
+        services = getattr(self.message_handler.agent, "services", {})
+        summary_service = services.get("tool_result_summary")
+        if summary_service is not None:
+            summary_service.preload_chat_scope(conversation_id)
+
+    def _clear_tool_result_summary_scope(self, conversation_id: str) -> None:
+        services = getattr(self.message_handler.agent, "services", {})
+        summary_service = services.get("tool_result_summary")
+        if summary_service is not None:
+            summary_service.invalidate_scope(f"chat:{conversation_id}")
 
     def store_conversation_turn(self, user_input, input_index):
         """Store a conversation turn for jump navigation."""
@@ -142,6 +157,7 @@ class ConversationManager:
     ) -> None:
         """Post-agent-selection logic: memory, turns, token usage, events."""
         self.message_handler.current_conversation_id = conversation_id
+        self._preload_tool_result_summaries(conversation_id)
 
         if self.message_handler.memory_service:
             self.message_handler.memory_service.session_id = (
@@ -277,12 +293,10 @@ class ConversationManager:
             True if deletion was successful, False otherwise.
         """
         logger.info(f"INFO: Attempting to delete conversation: {conversation_id}")
-        if (
-            self.message_handler.persistent_service
-            and self.message_handler.persistent_service.delete_conversation(
-                conversation_id
-            )
-        ):
+        persistence_service = self.message_handler.persistent_service
+        if persistence_service:
+            self._clear_tool_result_summary_scope(conversation_id)
+        if persistence_service and persistence_service.delete_conversation(conversation_id):
             logger.info(
                 f"INFO: Successfully deleted conversation file for ID: {conversation_id}"
             )
@@ -315,6 +329,8 @@ class ConversationManager:
                 self.start_new_conversation()
             return True
         else:
+            if persistence_service:
+                self._preload_tool_result_summaries(conversation_id)
             error_msg = f"Failed to delete conversation {conversation_id[:8]}..."
             logger.error(f"ERROR: {error_msg}")
             self.message_handler.bus.emit_sync(AppEvents.ERROR, message=error_msg)

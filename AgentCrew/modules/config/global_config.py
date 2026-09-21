@@ -56,6 +56,7 @@ class GlobalConfig:
                 "swap_enter": False,
                 "yolo_mode": False,
                 "auto_context_shrink": True,
+                "tool_result_summary_enabled": True,
                 "shrink_excluded": [],
                 "trusted_project_plugins": False,
             },

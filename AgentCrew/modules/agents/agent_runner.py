@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -11,7 +12,7 @@ from AgentCrew.modules.tools.parallel_executor import (
 )
 
 
-async def run_agent_loop(
+async def _run_agent_loop(
     agent: LocalAgent,
     history: list[dict[str, Any]],
     *,
@@ -78,7 +79,7 @@ async def run_agent_loop(
         agent.store_memory_if_available(user_message, history, current_response)
         # Prevent agent loop exit with empty response
         if current_response.strip() == "":
-            return await run_agent_loop(
+            return await _run_agent_loop(
                 agent,
                 history,
                 tool_filter=tool_filter,
@@ -214,10 +215,37 @@ async def run_agent_loop(
             if msg:
                 history.append(msg)
 
-    return await run_agent_loop(
+    return await _run_agent_loop(
         agent,
         history,
         tool_filter=tool_filter,
         prior_token_usage=token_usage,
         request_usage_callback=request_usage_callback,
     )
+
+
+async def run_agent_loop(
+    agent: LocalAgent,
+    history: list[dict[str, Any]],
+    *,
+    tool_filter: Callable[[dict[str, Any]], bool] | None = None,
+    prior_token_usage: TokenUsage | None = None,
+    request_usage_callback: Callable[[TokenUsage], None] | None = None,
+    scope_id: str | None = None,
+) -> tuple[str, TokenUsage]:
+    from AgentCrew.modules.agents.tool_result_summary import (
+        bind_inference_scope,
+        reset_inference_scope,
+    )
+
+    token = bind_inference_scope(scope_id or f"job:{uuid.uuid4()}")
+    try:
+        return await _run_agent_loop(
+            agent,
+            history,
+            tool_filter=tool_filter,
+            prior_token_usage=prior_token_usage,
+            request_usage_callback=request_usage_callback,
+        )
+    finally:
+        reset_inference_scope(token)

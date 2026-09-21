@@ -371,11 +371,37 @@ You must analyze and plan out the steps then execute it with your available tool
                         _arg_parts.append(f"{_k}={_v_str}")
                     _arg_preview = ", ".join(_arg_parts)
 
-                    # keep the reason of tool rejected remains
                     if not msg.get("is_rejected", False):
+                        summary = None
+                        summary_service = agent.services.get("tool_result_summary")
+                        if summary_service is not None:
+                            from AgentCrew.modules.agents.tool_result_summary import (
+                                current_inference_scope,
+                            )
+
+                            scope_id = current_inference_scope()
+                            if scope_id:
+                                content = msg.get("content")
+                                try:
+                                    summary = summary_service.get_summary(
+                                        scope_id,
+                                        msg.get("tool_call_id", ""),
+                                        tool_name,
+                                        _raw_args,
+                                        content,
+                                        isinstance(content, str)
+                                        and content.startswith("ERROR:"),
+                                    )
+                                except Exception:
+                                    logger.warning("Tool-result summary lookup failed")
+                        marker = (
+                            f"[tool summary for {tool_name}: {summary}]"
+                            if summary
+                            else f"[tool:{tool_name}({_arg_preview}) was truncated]"
+                        )
                         msg["content"] = [
                             {
-                                "text": f"[tool:{tool_name}({_arg_preview}) was truncated]",
+                                "text": marker,
                                 "type": "text",
                             }
                         ]

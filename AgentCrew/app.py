@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 from typing import Any
 
 import click
@@ -414,6 +415,7 @@ class AgentCrewApplication:
         from AgentCrew.modules.llm.model_registry import ModelRegistry
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
+        job_scope_token = None
         try:
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
@@ -504,6 +506,11 @@ class AgentCrewApplication:
                     }
                 )
 
+                from AgentCrew.modules.agents.tool_result_summary import (
+                    bind_inference_scope,
+                )
+
+                job_scope_token = bind_inference_scope(f"job:{uuid.uuid4()}")
                 max_attempts = 4
                 attempt = 0
                 response = ""
@@ -568,6 +575,12 @@ class AgentCrewApplication:
             logger.exception("Failed to run job")
             raise
         finally:
+            if job_scope_token is not None:
+                from AgentCrew.modules.agents.tool_result_summary import (
+                    reset_inference_scope,
+                )
+
+                reset_inference_scope(job_scope_token)
             try:
                 asyncio.run(self.setup.shutdown())
             except Exception:
