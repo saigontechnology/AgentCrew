@@ -106,6 +106,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
 
         cancel_event = await self._get_cancel_event(task_id)
         cancel_event.clear()
+        from AgentCrew.modules.agents.tool_result_summary import bind_inference_scope
+
+        scope_token = bind_inference_scope(f"a2a:{owner}:{context_id}")
 
         try:
             history, pending = await asyncio.gather(
@@ -164,6 +167,11 @@ class AgentCrewA2AExecutor(AgentExecutor):
                     )
                 )
         finally:
+            from AgentCrew.modules.agents.tool_result_summary import (
+                reset_inference_scope,
+            )
+
+            reset_inference_scope(scope_token)
             await self._cleanup_cancel(task_id)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:

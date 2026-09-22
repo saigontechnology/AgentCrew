@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import tempfile
 import threading
 import uuid
 from typing import Any
@@ -65,6 +66,7 @@ class ContextPersistenceService:
 
         # Thread lock for adaptive behaviors file access
         self._behavior_lock = threading.Lock()
+        self._metadata_lock = threading.RLock()
 
         # _ensure_dir already raises OSError on failure
         self._ensure_dir(self.base_dir)
@@ -135,8 +137,17 @@ class ContextPersistenceService:
         try:
             # Ensure directory exists before writing (raises OSError on failure)
             self._ensure_dir(os.path.dirname(file_path))
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            fd, temporary_path = tempfile.mkstemp(
+                dir=os.path.dirname(file_path), prefix=".agentcrew-", suffix=".tmp"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                os.replace(temporary_path, file_path)
+            except Exception:
+                if os.path.exists(temporary_path):
+                    os.remove(temporary_path)
+                raise
         except (TypeError, OSError) as e:
             logger.error(f"ERROR: Could not write to {file_path}: {e}")
             raise  # Re-raise the caught exception
@@ -323,11 +334,12 @@ class ContextPersistenceService:
         )
 
         try:
-            existing = self._read_json_file(file_path, default_value={})
-            if not isinstance(existing, dict):
-                existing = {}
-            existing.update(metadata)
-            self._write_json_file(file_path, existing)
+            with self._metadata_lock:
+                existing = self._read_json_file(file_path, default_value={})
+                if not isinstance(existing, dict):
+                    existing = {}
+                existing.update(metadata)
+                self._write_json_file(file_path, existing)
             logger.info(f"INFO: Stored metadata for conversation: {conversation_id}")
             return True
         except Exception as e:
@@ -348,7 +360,8 @@ class ContextPersistenceService:
             self.conversations_dir, f"{conversation_id}.metadata.json"
         )
 
-        metadata = self._read_json_file(file_path, default_value={})
+        with self._metadata_lock:
+            metadata = self._read_json_file(file_path, default_value={})
 
         if not isinstance(metadata, dict):
             logger.warning(
@@ -357,6 +370,47 @@ class ContextPersistenceService:
             return {}
 
         return metadata
+
+    def upsert_tool_result_summary(
+        self,
+        conversation_id: str,
+        tool_call_id: str,
+        summary: dict[str, Any],
+    ) -> bool:
+        if not tool_call_id or not isinstance(summary, dict):
+            return False
+        file_path = os.path.join(
+            self.conversations_dir, f"{conversation_id}.metadata.json"
+        )
+        try:
+            with self._metadata_lock:
+                metadata = self._read_json_file(file_path, default_value={})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                summaries = metadata.get("tool_result_summaries")
+                if not isinstance(summaries, dict):
+                    summaries = {}
+                summaries[tool_call_id] = dict(summary)
+                metadata["tool_result_summaries"] = summaries
+                self._write_json_file(file_path, metadata)
+            return True
+        except Exception as exc:
+            logger.warning(f"Could not store tool-result summary: {exc}")
+            return False
+
+    def get_tool_result_summaries(
+        self, conversation_id: str
+    ) -> dict[str, dict[str, Any]]:
+        with self._metadata_lock:
+            metadata = self.get_conversation_metadata(conversation_id)
+            summaries = metadata.get("tool_result_summaries", {})
+            if not isinstance(summaries, dict):
+                return {}
+            return {
+                tool_call_id: dict(summary)
+                for tool_call_id, summary in summaries.items()
+                if isinstance(tool_call_id, str) and isinstance(summary, dict)
+            }
 
     def _extract_text_preview(self, content: Any, max_length: int = 50) -> str:
         if isinstance(content, str) and content:
@@ -791,6 +845,9 @@ Rules:
                 "timestamp": now,
             }
             self.store_conversation_metadata(new_conversation_id, child_metadata)
+            self._copy_tool_result_summaries(
+                parent_conversation_id, new_conversation_id, forked_messages
+            )
 
             # Register fork_children on the effective parent
             parent_metadata = self.get_conversation_metadata(effective_parent_id)
@@ -814,6 +871,31 @@ Rules:
         except Exception as e:
             logger.error(f"Error forking conversation: {e}")
             return None
+
+    def _copy_tool_result_summaries(
+        self,
+        parent_conversation_id: str,
+        new_conversation_id: str,
+        inherited_messages: list[dict[str, Any]],
+    ) -> None:
+        tool_call_ids = {
+            message.get("tool_call_id")
+            for message in inherited_messages
+            if isinstance(message, dict)
+            and message.get("role") == "tool"
+            and isinstance(message.get("tool_call_id"), str)
+        }
+        if not tool_call_ids:
+            return
+        parent_summaries = self.get_tool_result_summaries(parent_conversation_id)
+        for tool_call_id in tool_call_ids:
+            if not tool_call_id:
+                continue
+            summary = parent_summaries.get(tool_call_id)
+            if isinstance(summary, dict):
+                self.upsert_tool_result_summary(
+                    new_conversation_id, tool_call_id, summary
+                )
 
     def get_fork_info(self, conversation_id: str) -> dict[str, Any]:
         """

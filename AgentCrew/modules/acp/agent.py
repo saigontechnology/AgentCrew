@@ -482,6 +482,10 @@ class AgentCrewAcpAgent(Agent):
 
         from acp.schema import PromptResponse
 
+        from AgentCrew.modules.agents.tool_result_summary import bind_inference_scope
+
+        scope_token = bind_inference_scope(f"acp:{session_id}")
+
         try:
             await self._turn_executor.run_turn(session_id, state, self._conn)
             return PromptResponse(
@@ -501,6 +505,11 @@ class AgentCrewAcpAgent(Agent):
                 stop_reason="refusal",
             )
         finally:
+            from AgentCrew.modules.agents.tool_result_summary import (
+                reset_inference_scope,
+            )
+
+            reset_inference_scope(scope_token)
             _current_acp_session.reset(token)
             # Re-acquire lock to persist — safe because run_turn has returned
             async with self._get_session_lock(session_id):

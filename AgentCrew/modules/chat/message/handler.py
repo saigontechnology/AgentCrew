@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import traceback
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -831,6 +832,14 @@ class MessageHandler:
             # responses pass a non-None token_usage and keep the same ledger.
             self._turn_usage_ledger = {}
             self._turn_usage_committed = {}
+        from AgentCrew.modules.agents.tool_result_summary import (
+            bind_inference_scope,
+            reset_inference_scope,
+        )
+
+        scope_token = bind_inference_scope(
+            f"chat:{self.current_conversation_id or uuid.uuid4()}"
+        )
         loop = asyncio.get_running_loop()
         session = self._create_stream_session()
         task = loop.create_task(
@@ -856,6 +865,7 @@ class MessageHandler:
             if not session.finished.is_set() and task.cancelled():
                 session.finalize("canceled")
             self._clear_stream_session(session)
+            reset_inference_scope(scope_token)
 
     def get_recent_agent_responses(self) -> list:
         return self.streamline_messages[self.last_assisstant_response_idx :]

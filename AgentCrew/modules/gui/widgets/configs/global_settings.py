@@ -111,6 +111,7 @@ class SettingsTab(QWidget):
         self.theme_dropdown = None
         self.yolo_mode_checkbox = None
         self.auto_context_shrink_checkbox = None
+        self.tool_result_summary_checkbox = None
         self.shrink_excluded_input = None
 
         self.init_ui()
@@ -157,6 +158,13 @@ class SettingsTab(QWidget):
         self.auto_context_shrink_checkbox.setChecked(False)  # Default to unchecked
         global_settings_form_layout.addRow(
             auto_context_shrink_label, self.auto_context_shrink_checkbox
+        )
+
+        tool_result_summary_label = QLabel("Tool Result Summaries:")
+        self.tool_result_summary_checkbox = QCheckBox()
+        self.tool_result_summary_checkbox.setChecked(True)
+        global_settings_form_layout.addRow(
+            tool_result_summary_label, self.tool_result_summary_checkbox
         )
 
         # Shrink Excluded Tools input
@@ -226,6 +234,12 @@ class SettingsTab(QWidget):
         if self.auto_context_shrink_checkbox:
             self.auto_context_shrink_checkbox.setChecked(auto_context_shrink)
 
+        tool_result_summary_enabled = global_settings_data.get(
+            "tool_result_summary_enabled", True
+        )
+        if self.tool_result_summary_checkbox:
+            self.tool_result_summary_checkbox.setChecked(tool_result_summary_enabled)
+
         # Load Shrink Excluded Tools setting
         shrink_excluded = global_settings_data.get("shrink_excluded", [])
         if self.shrink_excluded_input:
@@ -254,6 +268,11 @@ class SettingsTab(QWidget):
             self.auto_context_shrink_checkbox.isChecked()
             if self.auto_context_shrink_checkbox
             else False
+        )
+        self.global_config["global_settings"]["tool_result_summary_enabled"] = (
+            self.tool_result_summary_checkbox.isChecked()
+            if self.tool_result_summary_checkbox
+            else True
         )
 
         # Save Shrink Excluded Tools setting

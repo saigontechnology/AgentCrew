@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import os
@@ -163,6 +164,7 @@ class ApplicationSetup:
         try:
             await self.shutdown_plugins()
         finally:
+            await self._close_tool_result_summary_service()
             if self.agent_manager is not None:
                 try:
                     await self.agent_manager.close_all_remote_agents()
@@ -172,6 +174,18 @@ class ApplicationSetup:
                 from AgentCrew.modules.llm.service_manager import ServiceManager
 
                 await ServiceManager.get_instance().drain_pending_closes()
+
+    async def _close_tool_result_summary_service(self) -> None:
+        if not self.services:
+            return
+        summary_service = self.services.get("tool_result_summary")
+        if summary_service is None:
+            return
+        stopped = await asyncio.to_thread(summary_service.close)
+        if not stopped:
+            logger.warning(
+                "Tool-result summary worker is still stopping after shutdown"
+            )
 
     async def _close_dedicated_llm_services(self) -> None:
         """Close all dedicated LocalAgent LLM services, deduplicated by identity.
@@ -427,6 +441,35 @@ class ApplicationSetup:
 
             context_service = ContextPersistenceService()
 
+        global_config = GlobalConfig().read()
+        global_settings = global_config.get("global_settings", {})
+        context_shrink_enabled = global_settings.get("auto_context_shrink", True)
+        tool_result_summary_enabled = global_settings.get(
+            "tool_result_summary_enabled", True
+        )
+        tool_result_summary_service = None
+        if context_shrink_enabled and tool_result_summary_enabled:
+            from AgentCrew.modules.agents.tool_result_summary import (
+                ToolResultSummaryService,
+            )
+
+            try:
+                summary_provider = memory_llm or provider
+                summary_llm = llm_manager.initialize_standalone_service(
+                    summary_provider
+                )
+                if runtime.model_id:
+                    model = registry.get_model(f"{provider}/{runtime.model_id}")
+                    if model:
+                        summary_llm.model = model.id
+                else:
+                    summary_llm.model = llm_service.model
+                tool_result_summary_service = ToolResultSummaryService(
+                    summary_llm, context_service
+                )
+            except Exception as exc:
+                logger.warning(f"Tool-result summaries unavailable: {exc}")
+
         from AgentCrew.modules.clipboard import ClipboardService
 
         clipboard_service = ClipboardService()
@@ -553,6 +596,7 @@ class ApplicationSetup:
         self.services = {
             "llm": llm_service,
             "memory": memory_service,
+            "tool_result_summary": tool_result_summary_service,
             "clipboard": clipboard_service,
             "code_analysis": code_analysis_service,
             "web_search": search_service,
@@ -570,7 +614,6 @@ class ApplicationSetup:
         self.agent_manager = AgentManager.get_instance()
         self.services["agent_manager"] = self.agent_manager
 
-        global_config = GlobalConfig().read()
         self.agent_manager.context_shrink_enabled = global_config.get(
             "global_settings", {}
         ).get("auto_context_shrink", True)

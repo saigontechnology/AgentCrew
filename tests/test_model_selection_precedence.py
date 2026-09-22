@@ -311,6 +311,18 @@ def _install_fake_modules(monkeypatch, fake_modules):
         monkeypatch.setitem(sys.modules, name, module)
 
 
+def _install_memory_service(monkeypatch):
+    class _MemoryService:
+        def __init__(self, llm_service):
+            self.llm_service = llm_service
+
+    monkeypatch.setitem(
+        sys.modules,
+        "AgentCrew.modules.memory.chroma_service",
+        SimpleNamespace(ChromaMemoryService=_MemoryService),
+    )
+
+
 @pytest.fixture
 def app_setup(monkeypatch):
     """ApplicationSetup with mocked registry/llm-manager/global-config."""
@@ -647,6 +659,163 @@ class TestSetupServicesPrecedence:
         )
         assert service.model == "gpt-5"
         assert "openai" not in llm_manager.services
+
+    def test_summary_uses_distinct_memory_provider_client(self, app_setup, monkeypatch):
+        setup, _, llm_manager = app_setup
+        _install_memory_service(monkeypatch)
+        standalone_services = []
+
+        def initialize(provider):
+            service = _StubLLM(provider_name=provider)
+            standalone_services.append(service)
+            return service
+
+        monkeypatch.setattr(llm_manager, "initialize_standalone_service", initialize)
+        monkeypatch.setattr(
+            GlobalConfig,
+            "read",
+            lambda self: {"global_settings": {"auto_context_shrink": True}},
+        )
+        services = setup.setup_services(
+            _runtime("openai"), memory_llm="claude", need_memory=True
+        )
+        memory_llm = services["memory"].llm_service
+        summary_llm = services["tool_result_summary"].llm_service
+        assert [service.provider_name for service in standalone_services[:2]] == [
+            "claude",
+            "claude",
+        ]
+        assert summary_llm is not memory_llm
+        assert summary_llm.provider_name == memory_llm.provider_name
+        assert summary_llm.model == memory_llm.model
+        assert services["tool_result_summary"].close()
+
+    def test_summary_is_provisioned_when_both_settings_enabled(
+        self, app_setup, monkeypatch
+    ):
+        setup, _, _ = app_setup
+        _install_memory_service(monkeypatch)
+        monkeypatch.setattr(
+            GlobalConfig,
+            "read",
+            lambda self: {
+                "global_settings": {
+                    "auto_context_shrink": True,
+                    "tool_result_summary_enabled": True,
+                }
+            },
+        )
+        services = setup.setup_services(_runtime("openai"), need_memory=True)
+        assert services["tool_result_summary"] is not None
+        assert services["tool_result_summary"].close()
+
+    def test_summary_is_not_provisioned_when_summary_setting_disabled(
+        self, app_setup, monkeypatch
+    ):
+        setup, _, _ = app_setup
+        _install_memory_service(monkeypatch)
+        monkeypatch.setattr(
+            GlobalConfig,
+            "read",
+            lambda self: {
+                "global_settings": {
+                    "auto_context_shrink": True,
+                    "tool_result_summary_enabled": False,
+                }
+            },
+        )
+        services = setup.setup_services(_runtime("openai"), need_memory=True)
+        assert services["tool_result_summary"] is None
+
+    def test_summary_is_provisioned_when_setting_is_missing(
+        self, app_setup, monkeypatch
+    ):
+        setup, _, _ = app_setup
+        _install_memory_service(monkeypatch)
+        monkeypatch.setattr(
+            GlobalConfig,
+            "read",
+            lambda self: {"global_settings": {"auto_context_shrink": True}},
+        )
+        services = setup.setup_services(_runtime("openai"), need_memory=True)
+        assert services["tool_result_summary"] is not None
+        assert services["tool_result_summary"].close()
+
+    def test_summary_is_provisioned_without_memory_or_persistence(
+        self, app_setup, monkeypatch
+    ):
+        setup, _, _ = app_setup
+        monkeypatch.setattr(
+            GlobalConfig,
+            "read",
+            lambda self: {
+                "global_settings": {
+                    "auto_context_shrink": True,
+                    "tool_result_summary_enabled": True,
+                }
+            },
+        )
+        services = setup.setup_services(_runtime("openai"), need_memory=False)
+        assert services["memory"] is None
+        assert services["context_persistent"] is None
+        assert services["tool_result_summary"] is not None
+        assert services["tool_result_summary"].close()
+
+    def test_summary_is_not_provisioned_when_shrinking_disabled(
+        self, app_setup, monkeypatch
+    ):
+        setup, _, llm_manager = app_setup
+        _install_memory_service(monkeypatch)
+        standalone_calls = []
+        monkeypatch.setattr(
+            llm_manager,
+            "initialize_standalone_service",
+            lambda provider: (
+                standalone_calls.append(provider) or _StubLLM(provider_name=provider)
+            ),
+        )
+        monkeypatch.setattr(
+            GlobalConfig,
+            "read",
+            lambda self: {
+                "global_settings": {
+                    "auto_context_shrink": False,
+                    "tool_result_summary_enabled": True,
+                }
+            },
+        )
+        services = setup.setup_services(_runtime("openai"), need_memory=True)
+        assert services["tool_result_summary"] is None
+        assert standalone_calls == ["openai", "openai"]
+
+    def test_removed_summary_provider_environment_variable_has_no_effect(
+        self, app_setup, monkeypatch
+    ):
+        setup, _, llm_manager = app_setup
+        _install_memory_service(monkeypatch)
+        standalone_services = []
+        monkeypatch.setattr(
+            llm_manager,
+            "initialize_standalone_service",
+            lambda provider: (
+                standalone_services.append(_StubLLM(provider_name=provider))
+                or standalone_services[-1]
+            ),
+        )
+        monkeypatch.setattr(
+            GlobalConfig,
+            "read",
+            lambda self: {"global_settings": {"auto_context_shrink": True}},
+        )
+        monkeypatch.setenv("AGENTCREW_TOOL_SUMMARY_PROVIDER", "custom-summary")
+        services = setup.setup_services(
+            _runtime("openai"), memory_llm="claude", need_memory=True
+        )
+        assert [service.provider_name for service in standalone_services[:2]] == [
+            "claude",
+            "claude",
+        ]
+        assert services["tool_result_summary"].close()
 
 
 # ---------------------------------------------------------------------------
