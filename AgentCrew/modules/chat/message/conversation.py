@@ -296,7 +296,9 @@ class ConversationManager:
         persistence_service = self.message_handler.persistent_service
         if persistence_service:
             self._clear_tool_result_summary_scope(conversation_id)
-        if persistence_service and persistence_service.delete_conversation(conversation_id):
+        if persistence_service and persistence_service.delete_conversation(
+            conversation_id
+        ):
             logger.info(
                 f"INFO: Successfully deleted conversation file for ID: {conversation_id}"
             )

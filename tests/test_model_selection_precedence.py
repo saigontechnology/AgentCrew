@@ -770,8 +770,9 @@ class TestSetupServicesPrecedence:
         monkeypatch.setattr(
             llm_manager,
             "initialize_standalone_service",
-            lambda provider: standalone_calls.append(provider)
-            or _StubLLM(provider_name=provider),
+            lambda provider: (
+                standalone_calls.append(provider) or _StubLLM(provider_name=provider)
+            ),
         )
         monkeypatch.setattr(
             GlobalConfig,
@@ -796,8 +797,10 @@ class TestSetupServicesPrecedence:
         monkeypatch.setattr(
             llm_manager,
             "initialize_standalone_service",
-            lambda provider: standalone_services.append(_StubLLM(provider_name=provider))
-            or standalone_services[-1],
+            lambda provider: (
+                standalone_services.append(_StubLLM(provider_name=provider))
+                or standalone_services[-1]
+            ),
         )
         monkeypatch.setattr(
             GlobalConfig,

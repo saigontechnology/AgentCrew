@@ -112,11 +112,16 @@ def test_queue_full_and_provider_failure_fall_back_without_summary():
     failed = ToolResultSummaryService(_SummaryLLM(fail=True))
     assert failed.submit("job:2", "call-1", "read_file", {}, "contents", False)
     assert _wait_for(lambda: not failed._pending)
-    assert failed.get_summary("job:2", "call-1", "read_file", {}, "contents", False) is None
+    assert (
+        failed.get_summary("job:2", "call-1", "read_file", {}, "contents", False)
+        is None
+    )
     assert failed.close()
 
 
-def test_structured_browser_result_uses_ready_summary_and_stale_value_falls_back(monkeypatch):
+def test_structured_browser_result_uses_ready_summary_and_stale_value_falls_back(
+    monkeypatch,
+):
     content = [
         {"type": "text", "text": "[UNIQUE]Rendered page[/UNIQUE]"},
         {"type": "image", "source": {"media_type": "image/jpeg", "data": "abc"}},
@@ -132,7 +137,9 @@ def test_structured_browser_result_uses_ready_summary_and_stale_value_falls_back
     token = bind_inference_scope("chat:conversation-1")
     try:
         messages = _shrink_messages(content)
-        AgentContextManager(service and _shrink_agent(service)).shrink_tool_results(messages)
+        AgentContextManager(service and _shrink_agent(service)).shrink_tool_results(
+            messages
+        )
         assert messages[1]["content"][0]["text"] == (
             "[tool summary for get_browser_content: "
             "The browser returned the requested page content.]"
@@ -167,7 +174,9 @@ def test_prompt_is_bounded_while_hash_uses_full_source(monkeypatch):
 def test_rejected_excluded_and_disabled_calls_are_not_scheduled():
     submitted = []
     receiver = SimpleNamespace(submit=lambda **kwargs: submitted.append(kwargs))
-    manager = SimpleNamespace(context_shrink_enabled=True, shrink_excluded_list=["keep"])
+    manager = SimpleNamespace(
+        context_shrink_enabled=True, shrink_excluded_list=["keep"]
+    )
     agent = LocalAgent(
         "agent",
         "description",
@@ -204,7 +213,9 @@ def test_rejected_excluded_and_disabled_calls_are_not_scheduled():
     assert submitted == []
 
 
-def test_metadata_upsert_and_filtered_fork_inheritance_preserve_existing_fields(tmp_path):
+def test_metadata_upsert_and_filtered_fork_inheritance_preserve_existing_fields(
+    tmp_path,
+):
     persistence = ContextPersistenceService(str(tmp_path))
     parent = persistence.start_conversation()
     persistence.append_conversation_messages(
@@ -216,7 +227,9 @@ def test_metadata_upsert_and_filtered_fork_inheritance_preserve_existing_fields(
         ],
         force=True,
     )
-    persistence.store_conversation_metadata(parent, {"input_tokens": 42, "parent_id": "root"})
+    persistence.store_conversation_metadata(
+        parent, {"input_tokens": 42, "parent_id": "root"}
+    )
     for call_id in ("call-1", "call-2"):
         persistence.upsert_tool_result_summary(
             parent,
@@ -267,15 +280,31 @@ def test_shutdown_times_out_closes_once_and_prevents_post_close_writes(tmp_path)
     assert service.close()
     assert service.close()
     assert llm.closed == 1
-    assert service.get_summary(scope, "call-1", "read_file", {}, "contents", False) is None
+    assert (
+        service.get_summary(scope, "call-1", "read_file", {}, "contents", False) is None
+    )
 
 
 def test_process_local_scopes_are_isolated():
     service = ToolResultSummaryService(None)
     record = _summary_record(service, "read_file", {}, "contents")
     service._cache_record("a2a:owner-a:ctx", "call-1", record)
-    assert service.get_summary("a2a:owner-a:ctx", "call-1", "read_file", {}, "contents", False)
-    assert service.get_summary("a2a:owner-b:ctx", "call-1", "read_file", {}, "contents", False) is None
+    assert service.get_summary(
+        "a2a:owner-a:ctx", "call-1", "read_file", {}, "contents", False
+    )
+    assert (
+        service.get_summary(
+            "a2a:owner-b:ctx", "call-1", "read_file", {}, "contents", False
+        )
+        is None
+    )
     service._cache_record("acp:session-a", "call-1", record)
-    assert service.get_summary("acp:session-a", "call-1", "read_file", {}, "contents", False)
-    assert service.get_summary("acp:session-b", "call-1", "read_file", {}, "contents", False) is None
+    assert service.get_summary(
+        "acp:session-a", "call-1", "read_file", {}, "contents", False
+    )
+    assert (
+        service.get_summary(
+            "acp:session-b", "call-1", "read_file", {}, "contents", False
+        )
+        is None
+    )

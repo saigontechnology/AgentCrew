@@ -183,7 +183,9 @@ class ApplicationSetup:
             return
         stopped = await asyncio.to_thread(summary_service.close)
         if not stopped:
-            logger.warning("Tool-result summary worker is still stopping after shutdown")
+            logger.warning(
+                "Tool-result summary worker is still stopping after shutdown"
+            )
 
     async def _close_dedicated_llm_services(self) -> None:
         """Close all dedicated LocalAgent LLM services, deduplicated by identity.
@@ -451,7 +453,9 @@ class ApplicationSetup:
 
             try:
                 summary_provider = memory_llm or provider
-                summary_llm = llm_manager.initialize_standalone_service(summary_provider)
+                summary_llm = llm_manager.initialize_standalone_service(
+                    summary_provider
+                )
                 if runtime.model_id:
                     model = registry.get_model(f"{provider}/{runtime.model_id}")
                     if model:

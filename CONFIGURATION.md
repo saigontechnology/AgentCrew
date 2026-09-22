@@ -1,926 +1,502 @@
 # AgentCrew Configuration Guide
 
-This guide explains how to configure AgentCrew for different AI providers,
-custom agents, tools, and system settings. Use it as a reference when you need
-to change providers, add a new agent, connect external tools, or tune
-performance.
-
-> **When to use this guide:**
->
-> - Setting up a new provider for the first time
-> - Adding a new agent with specific tools and instructions
-> - Connecting external services via MCP
-> - Troubleshooting configuration issues
-> - Sharing agent configurations with a team
+This guide covers AgentCrew's global settings, credentials, agents, MCP servers,
+adaptive behaviors, and runtime overrides. All example credentials are
+placeholders: replace them locally or remove unused entries. Never commit a real
+credential.
 
 ## Configuration Files
 
-AgentCrew stores all configuration in `~/.AgentCrew/` (or
-`%USERPROFILE%\.AgentCrew\` on Windows). You can edit these files directly or
-manage them through the GUI settings panel.
+The production CLI stores configuration in `~/.AgentCrew/` by default (or
+`%USERPROFILE%\.AgentCrew\` on Windows):
 
-```
+```text
 ~/.AgentCrew/
-├── config.json              # Global settings and API keys
-├── agents.toml              # Agent definitions and configurations
-├── mcp_servers.json         # Model Context Protocol server configs
+├── config.json
+├── agents.toml
+├── mcp_servers.json
 ├── persistents/
-│   └── adaptive.json        # Learned behaviors for all agents
-└── conversations/           # Saved conversation history
+│   └── adaptive.json
+└── conversations/
 ```
 
-> **When to edit each file:**
->
-> - `config.json` — changing providers, API keys, themes, global preferences
-> - `agents.toml` — creating, modifying, or removing agents
-> - `mcp_servers.json` — connecting external tools via MCP
-> - `adaptive.json` — reviewing behaviors the agent has learned (auto-managed)
+| File | Purpose |
+| --- | --- |
+| `config.json` | Global settings, supported API keys, last-used state, and custom LLM providers. |
+| `agents.toml` | Local and remote agent definitions. |
+| `mcp_servers.json` | Model Context Protocol server definitions. |
+| `persistents/adaptive.json` | Learned adaptive behaviors; normally auto-managed. |
 
-## Global Configuration (config.json)
+You can edit these files directly or use the GUI settings panel. Restart or
+reload AgentCrew after direct edits when the active process does not pick them
+up automatically.
 
-The main configuration file controls API keys, UI preferences, and system
-behavior.
+## Global Configuration (`config.json`)
 
-### API Keys
+`config.json` contains global settings, credentials, remembered selections, and
+custom LLM definitions. Set `AGENTCREW_CONFIG_PATH` before startup to use a
+different file.
 
-Add your API keys to connect AgentCrew with AI providers.
+### Complete Example
+
+This complete, copy-pasteable template contains every user-editable top-level
+section. `last_used` is auto-managed by AgentCrew and is included only to show
+the full file shape.
 
 ```json
 {
   "api_keys": {
-    "DEEPINFRA_API_KEY": "your-key",
-    "OPENAI_API_KEY": "sk-proj-...",
-    "GEMINI_API_KEY": "AIza...",
-    "ANTHROPIC_API_KEY": "sk-ant-...",
-    "TAVILY_API_KEY": "tvly-...",
-    "VOYAGE_API_KEY": "pa-...",
-    "ELEVENLABS_API_KEY": ""
-  }
-}
-```
-
-**Required Keys:**
-
-- At least one AI provider key (DeepInfra, OpenAI, Gemini, Anthropic, etc.)
-
-**Optional Keys:**
-
-- `TAVILY_API_KEY` — For web search capabilities
-- `VOYAGE_API_KEY` — For alternative embedding provider
-- `ELEVENLABS_API_KEY` — For voice synthesis
-
-**Getting API Keys:**
-
-- **DeepInfra:** <https://deepinfra.com/dash/api_keys> — open models (LLaMA,
-  Qwen)
-- **OpenCode Go:** Subscription-based, no API key — run
-  `agentcrew chat --provider opencode_go`
-- **Command Code:** Subscription-based — curated frontier models
-- **OpenAI:** <https://platform.openai.com/api-keys>
-- **Google Gemini:** <https://aistudio.google.com/apikey> — free tier available
-- **Anthropic Claude:** <https://console.anthropic.com/>
-- **GitHub Copilot:** Authenticate using `agentcrew copilot-auth`
-- **Tavily:** <https://tavily.com/>
-- **Voyage AI:** <https://www.voyageai.com/>
-- **ElevenLabs:** <https://elevenlabs.io/>
-
-### Custom LLM Providers
-
-Add OpenAI-compatible providers like llama.cpp, Ollama, or LM Studio:
-
-```json
-{
-  "custom_llm_providers": [
-    {
-      "name": "llama.cpp",
-      "type": "openai_compatible",
-      "api_base_url": "http://localhost:8009",
-      "api_key": "",
-      "default_model_id": "qwen-14b",
-      "available_models": [
-        {
-          "id": "../Qwen3-14B-Q6_K.gguf",
-          "name": "Local Qwen 14B",
-          "provider": "llama.cpp",
-          "capabilities": ["tool_use", "stream"],
-          "default": false,
-          "description": "Quantized Qwen model running locally",
-          "input_token_price_1m": 0.0,
-          "output_token_price_1m": 0.0,
-          "cached_token_price_1m": 0.0,
-          "default_reasoning": null,
-          "max_context_token": 72000,
-          "service_name": null,
-          "force_sample_params": null
-        }
-      ],
-      "is_stream": false,
-      "extra_headers": {}
-    }
-  ]
-}
-```
-
-```json
-  "custom_llm_providers": [
-    {
-      "name": "ollama",
-      "type": "openai_compatible",
-      "api_base_url": "http://localhost:11434/v1",
-      "api_key": "ollama", # any string for placeholder
-      "default_model_id": "llama3.2:latest",
-      "available_models": [
-        {
-          "id": "llama3.2:latest",
-          "name": "Ollama llama3.2:latest",
-          "provider": "ollama",
-          "capabilities": ["tool_use", "stream"],
-          "default": true,
-          "description": "Local Ollama model",
-          "input_token_price_1m": 0.0,
-          "output_token_price_1m": 0.0,
-          "cached_token_price_1m": 0.0,
-          "default_reasoning": null,
-          "max_context_token": 72000,
-          "service_name": null,
-          "force_sample_params": null
-        }
-      ],
-      "is_stream": false,
-      "extra_headers": {}
-    }
-  ]
-}
-```
-
-**Fields:**
-
-- `name` - Unique identifier for the provider
-- `type` - Always `"openai_compatible"` for custom providers
-- `api_base_url` - Base URL for the API endpoint
-- `api_key` - API key if required (leave empty for local servers)
-- `default_model_id` - Default model to use
-- `available_models` - List of models this provider offers
-- `is_stream` - Whether to enable streaming responses
-- `extra_headers` - Additional HTTP headers for requests
-
-**Model Fields:**
-
-- `id` - Unique model identifier
-- `name` - Human-readable model name
-- `provider` - (Optional) Override provider name; defaults to parent provider
-  `name`
-- `description` - Model description
-- `capabilities` - List of capability flags (see below)
-- `default` - Whether this is the default model for the provider
-- `input_token_price_1m` - Price per million input tokens (USD)
-- `output_token_price_1m` - Price per million output tokens (USD)
-- `cached_token_price_1m` - Price per million cached input tokens (USD)
-- `default_reasoning` - Default reasoning/thinking level
-  - Options: `null`, `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`
-- `max_context_token` - Maximum context window in tokens (default: `72000`)
-- `service_name` - Override the LLM service class name; leave `null` to use the
-  provider name
-- `force_sample_params` - Override sampling parameters for this model (see
-  below)
-  - `temperature` - Sampling temperature (0.0–5.0)
-  - `top_p` - Nucleus sampling threshold (0.0–1.0)
-  - `min_p` - Minimum probability threshold (0.0–1.0)
-  - `top_k` - Top-K sampling (0–500)
-  - `frequency_penalty` - Frequency penalty (-2.0–2.0)
-  - `presence_penalty` - Presence penalty (-2.0–2.0)
-  - `repetition_penalty` - Repetition penalty (0.0–2.0)
-
-**Model Capabilities:**
-
-- `"tool_use"` - The model can call tools/functions
-- `"thinking"` - Supports extended reasoning (like Claude's thinking mode)
-- `"vision"` - Can process images
-- `"stream"` - Supports streaming responses
-- `"structured_output"` - Supports JSON-structured output mode
-
-### Global Settings
-
-Control UI appearance, system behavior, and context management:
-
-```json
-{
+    "ANTHROPIC_API_KEY": "YOUR_ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY": "YOUR_GEMINI_API_KEY",
+    "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY",
+    "DEEPINFRA_API_KEY": "YOUR_DEEPINFRA_API_KEY",
+    "TOGETHER_API_KEY": "YOUR_TOGETHER_API_KEY",
+    "OPENCODE_API_KEY": "YOUR_OPENCODE_API_KEY",
+    "COMMAND_CODE_API_KEY": "YOUR_COMMAND_CODE_API_KEY",
+    "GITHUB_COPILOT_API_KEY": "YOUR_GITHUB_COPILOT_API_KEY",
+    "FIREWORKS_API_KEY": "YOUR_FIREWORKS_API_KEY",
+    "TAVILY_API_KEY": "YOUR_TAVILY_API_KEY",
+    "VOYAGE_API_KEY": "YOUR_VOYAGE_API_KEY",
+    "ELEVENLABS_API_KEY": "YOUR_ELEVENLABS_API_KEY"
+  },
+  "auto_approval_tools": [
+    "read_file"
+  ],
   "global_settings": {
-    "theme": "saigontech",
+    "theme": "dark",
+    "swap_enter": false,
     "yolo_mode": false,
     "auto_context_shrink": true,
     "tool_result_summary_enabled": true,
-    "shrink_excluded": []
-  }
+    "shrink_excluded": [],
+    "trusted_project_plugins": false,
+    "agent_mode": "transfer"
+  },
+  "last_used": {
+    "model": "",
+    "provider": "",
+    "timestamp": "",
+    "agent": ""
+  },
+  "custom_llm_providers": [
+    {
+      "name": "example_provider",
+      "type": "openai_compatible",
+      "api_base_url": "https://llm.example.com/v1",
+      "api_key": "YOUR_CUSTOM_PROVIDER_API_KEY",
+      "default_model_id": "example-model",
+      "available_models": [
+        {
+          "id": "example-model",
+          "name": "Example model",
+          "provider": "example_provider",
+          "capabilities": ["tool_use", "stream"],
+          "default": true,
+          "description": "Example OpenAI-compatible model",
+          "input_token_price_1m": 0.0,
+          "output_token_price_1m": 0.0,
+          "cached_token_price_1m": 0.0,
+          "default_reasoning": null,
+          "max_context_token": 72000,
+          "service_name": null,
+          "force_sample_params": null
+        }
+      ],
+      "extra_headers": {}
+    }
+  ]
 }
 ```
 
-**Settings:**
+At least one hosted LLM needs a provider credential or an applicable
+OAuth/subscription login. Remove unused entries, or use empty strings, rather
+than keeping placeholder text in a live configuration.
 
-- `theme` — UI color scheme
-  - Options: `"saigontech"`, `"dracula"`, `"nord"`, `"catppuccin"`, `"unicorn"`,
-    `"atom_light"`
-  - Default: `"saigontech"`
+### API Keys and Credential Scope
 
-- `yolo_mode` — Auto-approve all tool usage without prompts
-  - `true` — Tools execute automatically (use with caution)
-  - `false` — Prompt for approval before each tool use (safer)
-  - Default: `false`
+The following twelve names are the complete `config.json.api_keys` allow-list.
+At startup, AgentCrew copies each non-empty value into the process environment.
+They can also be set directly as environment variables.
 
-- `auto_context_shrink` — Automatically shrink tool results to stay within the
-  model's context window
-  - **How it works:** When the total input tokens exceed 85% of the model's
-    maximum context limit, AgentCrew starts replacing verbose tool result
-    content with a compact replacement. A ready asynchronous, factual tool
-    summary is preferred (for example,
-    `[tool summary for web_search: The search returned five current Python release sources.]`).
-    If summary generation has not completed, is unavailable, or no longer
-    matches the original tool output, AgentCrew keeps the existing placeholder
-    showing the tool name and arguments (for example,
-    `[tool:web_search(query=latest python ...) was truncated]`). The last 10
-    messages are always kept intact regardless of token usage.
-  - **Summary timing and data handling:** Summaries are generated off the main
-    inference path and may not be available until a later inference. They use
-    a dedicated standalone client configured from `memory_llm` or the active
-    provider, so memory and summary workers never share an LLM instance. When
-    memory or conversation persistence is unavailable, summaries remain
-    available through a bounded process-local cache for jobs, A2A, and ACP.
-    The summary client receives the tool name, arguments, and result needed to
-    produce the summary. AgentCrew persists only the generated summary and
-    compatibility metadata for local chats, not the original result.
-  - `true` — Enable automatic shrinking (recommended for long conversations)
-  - `false` — Keep all tool results in full (may hit context limits)
-  - Default: `true`
+| Key | Purpose/provider |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Anthropic Claude provider credential. |
+| `GEMINI_API_KEY` | Google Gemini provider credential. |
+| `OPENAI_API_KEY` | OpenAI API provider credential. It is not required for OpenAI Codex subscription login. |
+| `DEEPINFRA_API_KEY` | DeepInfra LLM, image-generation, or voice credential. |
+| `TOGETHER_API_KEY` | Together AI provider credential. |
+| `OPENCODE_API_KEY` | OpenCode provider credential, when required by the selected account or deployment. |
+| `COMMAND_CODE_API_KEY` | Command Code provider credential. |
+| `GITHUB_COPILOT_API_KEY` | GitHub Copilot provider credential. Use `agentcrew copilot-auth` for the supported Copilot login flow. |
+| `FIREWORKS_API_KEY` | Fireworks AI provider credential. |
+| `TAVILY_API_KEY` | Tavily web-search feature credential; not an LLM provider credential. |
+| `VOYAGE_API_KEY` | Voyage embedding credential for the normal memory path. |
+| `ELEVENLABS_API_KEY` | ElevenLabs voice-synthesis credential. |
 
-- `tool_result_summary_enabled` — Enable asynchronous ToolResult summaries used by context shrinking
-  - `true` — Generate summaries in the background and use a ready, compatible summary when available
-  - `false` — Keep automatic context shrinking enabled, but use the existing
-    `[tool:<name>(<args>) was truncated]` placeholder instead of generating summaries
-  - Default: `true`; missing keys in existing configurations are treated as enabled
+For OpenAI Codex subscription authentication, use `agentcrew chatgpt-auth`.
+That flow stores OAuth state and does not introduce another `*_API_KEY` setting.
 
-- `shrink_excluded` — List of tool names that should never have their results
-  shrunk, even when `auto_context_shrink` is enabled
-  - **When to use:** Some tools return critical data that the agent needs in
-    full (e.g., `search_memory`, `read_file`, `web_search`). Adding them here
-    preserves their results.
-  - **Note:** `activate_skill` and `search_memory` are always excluded
-    automatically and do not need to be listed here.
-  - Example: `["web_search", "read_file", "code_analysis"]`
-  - Default: `[]` (empty list)
+Every distinct `*_API_KEY` name referenced by runtime source is covered here:
+
+| Name | Scope and use |
+| --- | --- |
+| The twelve keys above | Accepted under `config.json.api_keys` and loaded into the environment at startup. |
+| `A2A_SERVER_API_KEY` | Environment-only inbound A2A server authentication key. Alternatively pass `a2a-server --api-key`. It is not a provider credential and is not read from `config.json.api_keys`. |
+| `CHROMA_OPENAI_API_KEY` | Advanced, low-level OpenAI-compatible embedding-adapter default. It is not used by the normal memory setup path. |
+| `CHROMA_GOOGLE_GENAI_API_KEY` | Advanced, low-level Google GenAI embedding-adapter default. It is not used by the normal memory setup path. |
+| `CHROMA_VOYAGE_API_KEY` | Advanced, low-level Voyage embedding-adapter default. It is not used by the normal memory setup path; use `VOYAGE_API_KEY` for normal memory. |
+| `custom_llm_providers[].api_key` | Per-custom-provider field in `config.json`, not a named environment variable. |
+
+Normal memory selects Voyage when `VOYAGE_API_KEY` is available. Otherwise it
+uses Chroma's default embedding function; users normally do not need any
+`CHROMA_*` key.
+
+### Custom LLM Providers
+
+Use `custom_llm_providers` for an OpenAI-compatible endpoint such as a local
+server or supported gateway. The complete template above shows the persisted
+shape. `name`, `api_base_url`, and model `id` values must match the provider you
+intend to use, and `default_model_id` must identify an entry in
+`available_models`.
+
+Model capability values include `tool_use`, `thinking`, `vision`, `stream`, and
+`structured_output`. `force_sample_params`, when supplied, is an object that can
+contain supported sampling overrides such as `temperature`, `top_p`, `min_p`,
+`top_k`, `frequency_penalty`, `presence_penalty`, or `repetition_penalty`.
+
+### Global Settings
+
+The complete template shows all active settings and their defaults:
+
+- `theme`: `"dark"` by default.
+- `swap_enter`: `false` by default; switches Enter-key behavior in the chat UI.
+- `yolo_mode`: `false` by default; when true, automatically approves all tool
+  use.
+- `auto_context_shrink`: `true` by default; shrinks older tool results when the
+  context nears its limit.
+- `tool_result_summary_enabled`: `true` by default; enables background factual
+  summaries used by context shrinking.
+- `shrink_excluded`: empty by default; names tools whose results must not be
+  shrunk.
+- `trusted_project_plugins`: `false` by default; enables discovered project
+  plugins only when explicitly trusted.
+- `agent_mode`: `"transfer"` by default. Allowed values are `"transfer"`,
+  `"delegate"`, and `"none"`.
+
+`auto_context_shrink` starts shrinking after input usage reaches 85% of the
+configured model context limit. The newest messages remain intact, and summary
+creation is asynchronous; if a matching summary is unavailable, AgentCrew uses
+a compact tool-result placeholder instead.
 
 ### Plugins
 
-AgentCrew discovers plugins by scanning two filesystem directories:
+AgentCrew discovers project plugins in `.agentcrew/plugins/` and global plugins
+in `~/.AgentCrew/plugins/`. Project plugins are not activated unless
+`global_settings.trusted_project_plugins` is true. See
+[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for lifecycle and security
+details.
 
-- `.agentcrew/plugins/` — **project-based plugins** (higher precedence)
-- `~/.AgentCrew/plugins/` — **global plugins** (fallback)
+### Auto-Approval Tools and Last-Used State
 
-Each entry may be a `.py` file (single-file plugin) or a subdirectory containing
-`main.py` (project plugin). Plugin directories are auto-created on first
-discovery. No configuration file is required.
+`auto_approval_tools` lists tools that do not require approval when `yolo_mode`
+is false. Limit this list to trusted, low-risk tools.
 
-**Security**: Project plugins are **not activated automatically** unless
-`trusted_project_plugins` is enabled in `global_settings`:
+`last_used` records the selected model, provider, agent, and timestamp. It is
+maintained by AgentCrew; do not use it as a shared configuration setting.
 
-```json
-{
-  "global_settings": {
-    "trusted_project_plugins": true
-  }
-}
-```
+## Agent Configuration (`agents.toml`)
 
-See [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for lifecycle, EventBus,
-hook, cleanup, and security details.
+Define specialized local agents and remote A2A agents in `agents.toml`. Set
+`SW_AGENTS_CONFIG` before startup to use another path.
 
-### Auto-Approval Tools
-
-Specify tools that never require approval, even when `yolo_mode` is false:
-
-```json
-{
-  "auto_approval_tools": ["web_search", "fetch_webpage", "read_file"]
-}
-```
-
-Tools that modify state (like `file_write_or_edit`, `command_execution`) should
-generally require approval.
-
-### Last Used Settings
-
-AgentCrew tracks your last session to restore context on startup:
-
-```json
-{
-  "last_used": {
-    "model": "github_copilot/gpt-4.1",
-    "provider": "github_copilot",
-    "timestamp": "2025-10-24T14:16:27.731875",
-    "agent": "Architect"
-  }
-}
-```
-
-This is automatically maintained. You don't need to edit it manually.
-
-## Agent Configuration (agents.toml)
-
-Define your specialized agents with custom instructions and tool access.
-
-### Basic Agent Structure
+### Complete Local and Remote Example
 
 ```toml
 [[agents]]
-name = "CodeAssistant"
-description = "Specialized in code review and refactoring"
-system_prompt = """You are an expert software engineer.
-Focus on code quality, security, and maintainability.
-Current date: {current_date}"""
-tools = ["code_analysis", "file_editing", "web_search", "memory"]
-temperature = 0.7
+name = "ExampleAssistant"
+description = "Example local AgentCrew agent"
+system_prompt = "You are a helpful assistant. Today is {current_date}."
+tools = ["web_search", "read_file"]
 enabled = true
-voice_enabled = false
-voice_id = "kHhWB9Fw3aF6ly7JvltC"
+temperature = 0.7
+voice_enabled = "disabled"
+voice_id = "YOUR_ELEVENLABS_VOICE_ID"
+model_id = "openai/YOUR_MODEL_ID"
+reason_effort = "medium"
+
+[[remote_agents]]
+name = "ExampleRemoteAgent"
+description = "Example remote AgentCrew agent"
+base_url = "https://agents.example.com"
+enabled = true
+headers = { Authorization = "Bearer YOUR_A2A_TOKEN" }
 ```
 
 ### Agent Fields
 
-**Required:**
+Local agent fields are:
 
-- `name` - Unique identifier (used in commands and transfers)
-- `description` - Brief explanation of agent's purpose (helps with
-  auto-transfers)
-- `system_prompt` - Instructions that define the agent's behavior
-- `tools` - List of tools the agent can use
+| Field | Required | Description |
+| --- | --- | --- |
+| `name` | Yes | Unique local-agent identifier. |
+| `description` | No | Short purpose used for selection and transfers. Defaults to `""`. |
+| `system_prompt` | No | Agent instructions. `{current_date}` and `{agent_name}` are replaced automatically. Defaults to `""`. |
+| `tools` | No | List of tool names available to the agent. Defaults to `[]`. |
+| `enabled` | No | Whether the agent is available. Defaults to `true`. |
+| `temperature` | No | Sampling temperature. |
+| `voice_enabled` | No | String flag: `"enabled"` or `"disabled"`; not a Boolean. |
+| `voice_id` | No | ElevenLabs voice ID. |
+| `model_id` | No | Registered or provider-qualified model ID. |
+| `reason_effort` | No | Reasoning level supported by the selected model. |
 
-**Optional:**
+Remote agent fields are `name`, `description`, `base_url`, `enabled`, and
+`headers`. `base_url` is the remote A2A server endpoint. Remote entries do not
+inherit local-agent fields such as `tools`, `model_id`, or `voice_enabled`.
 
-- `temperature` - Creativity level (0.0-1.0, default: 0.7)
-  - Lower (0.0-0.3): Focused, deterministic, good for code
-  - Medium (0.4-0.7): Balanced, good for most tasks
-  - Higher (0.8-1.0): Creative, varied, good for writing
-- `enabled` - Whether agent appears in selection menu (default: true)
-- `voice_enabled` - Enable voice features for this agent (default: false)
-- `voice_id` - ElevenLabs voice ID for this agent's voice output
-  - Find voice IDs at <https://elevenlabs.io/app/voice-library>
-  - Default: `"kHhWB9Fw3aF6ly7JvltC"` (Marcus)
+### Tool Selection
 
-### System Prompt Variables
+Common built-in tools include `web_search`, `fetch_webpage`, `read_file`,
+`command_execution`, `browser`, `memory`, and `transfer`. Enable only the tools
+an agent needs. Tool availability can vary with the installed dependencies and
+configured services.
 
-AgentCrew automatically replaces these placeholders:
+## MCP Server Configuration (`mcp_servers.json`)
 
-- `{current_date}` - Today's date (e.g., "Monday, 27 October 2025")
-- `{agent_name}` - The agent's name
-- Custom variables can be added in future versions
+MCP servers extend agents with external tools. Set `MCP_CONFIG_PATH` before
+startup to use another path.
 
-### Available Tools
+### Complete MCP Examples
 
-Specify which tools your agent can access:
-
-**Code & File Operations:**
-
-- `code_analysis` - Analyze repository structure, read files
-- `file_editing` - Create or modify files with search-replace blocks
-- `read_file` - Read file contents (subset of code_analysis)
-
-**Web & Research:**
-
-- `web_search` - Search the internet via Tavily
-- `fetch_webpage` - Extract content from URLs
-- `browser` - Full browser automation (navigate, click, form fill)
-
-**System Integration:**
-
-- `command_execution` - Execute shell commands
-- `clipboard` - Read/write system clipboard
-
-**Memory & Context:**
-
-- `memory` - Store and retrieve conversation context
-- `adaptive_learning` - Learn behavioral patterns
-
-**Transfer:**
-
-- `transfer` - Transfer tasks to other agents (automatically available)
-
-### Remote Agents
-
-Connect to agents running on other AgentCrew instances:
-
-```toml
-[[remote_agents]]
-name = "ExpertResearcher"
-description = "Specialized research agent on remote server"
-url = "https://agents.example.com:41241"
-headers = { "Authorization" = "Bearer token123" }
-enabled = true
-```
-
-**Fields:**
-
-- `url` - A2A server endpoint
-- `headers` - Optional authentication headers
-- Other fields same as local agents
-
-### Agent Examples
-
-**Minimal Agent:**
-
-```toml
-[[agents]]
-name = "SimpleAssistant"
-description = "General purpose helper"
-system_prompt = "You are a helpful assistant."
-tools = ["web_search", "memory"]
-```
-
-**Specialized Developer Agent:**
-
-```toml
-[[agents]]
-name = "BackendEngineer"
-description = "Python backend development specialist"
-system_prompt = """You are a senior Python backend engineer.
-
-Focus areas:
-- API design and implementation
-- Database optimization
-- Security best practices
-- Performance tuning
-
-Always consider scalability and maintainability.
-Current date: {current_date}"""
-tools = ["code_analysis", "file_editing", "web_search", "command_execution", "memory"]
-temperature = 0.5
-```
-
-**Research Agent with Voice:**
-
-```toml
-[[agents]]
-name = "Researcher"
-description = "Deep research and analysis"
-system_prompt = """You are a systematic researcher.
-
-Process:
-1. Break down research questions
-2. Search multiple sources
-3. Cross-reference information
-4. Synthesize findings
-5. Cite sources
-
-Today is {current_date}."""
-tools = ["web_search", "fetch_webpage", "browser", "memory"]
-temperature = 0.6
-voice_enabled = true
-voice_id = "pNInz6obpgDQGcFmaJgB"
-```
-
-**Writing Agent:**
-
-```toml
-[[agents]]
-name = "TechnicalWriter"
-description = "Technical documentation specialist"
-system_prompt = """You write clear, concise technical documentation.
-
-Style guidelines:
-- Use active voice
-- Short sentences and paragraphs
-- Clear headings and structure
-- Code examples when relevant
-- Avoid jargon unless necessary
-
-Current date: {current_date}"""
-tools = ["web_search", "file_editing", "memory"]
-temperature = 0.8
-```
-
-## MCP Server Configuration (mcp_servers.json)
-
-Model Context Protocol (MCP) extends agent capabilities with external tools.
-
-### Basic MCP Server
+A local stdio server starts `command` with `args`. A remote streaming server uses
+`url` with `streaming_server` set to `true`; an `/sse` URL selects legacy SSE,
+while other URLs use Streamable HTTP. Both entries below include the full
+`MCPServerEntry` field set.
 
 ```json
 {
-  "github": {
-    "name": "github",
+  "example_stdio": {
+    "name": "example_stdio",
     "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "args": ["-y", "@example/mcp-server"],
     "env": {
-      "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."
+      "EXAMPLE_SERVER_TOKEN": "YOUR_EXAMPLE_SERVER_TOKEN"
     },
-    "enabledForAgents": ["CodeAssistant", "Researcher"],
-    "streaming_server": false
-  }
-}
-```
-
-### MCP Server Fields
-
-**Required:**
-
-- `name` - Unique identifier for the server
-- `command` - Executable to run (npx, docker, uv, python, etc.)
-- `args` - Command-line arguments
-
-**Optional:**
-
-- `env` - Environment variables for the server process
-- `enabledForAgents` - List of agents that can use this server
-  - Empty array `[]` = available to all agents
-  - `["Agent1", "Agent2"]` = only these agents can use it
-- `streaming_server` - Set to `true` for remote (HTTP/SSE) MCP servers that use a `url` instead of a local command
-- `url` - For remote MCP servers instead of local command. URLs ending in `/sse` use the legacy SSE transport; any other URL uses Streamable HTTP
-
-### MCP Server Examples
-
-**Docker-based GitHub Server:**
-
-```json
-{
-  "github": {
-    "name": "github",
-    "command": "docker",
-    "args": [
-      "run",
-      "-i",
-      "--rm",
-      "-e",
-      "GITHUB_PERSONAL_ACCESS_TOKEN",
-      "mcp/github"
-    ],
-    "env": {
-      "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..."
+    "enabledForAgents": ["ExampleAssistant"],
+    "streaming_server": false,
+    "url": "",
+    "headers": {},
+    "includeTools": ["example_tool"]
+  },
+  "example_remote": {
+    "name": "example_remote",
+    "command": "",
+    "args": [],
+    "env": {},
+    "enabledForAgents": [],
+    "streaming_server": true,
+    "url": "https://mcp.example.com/mcp",
+    "headers": {
+      "Authorization": "Bearer YOUR_MCP_TOKEN"
     },
-    "enabledForAgents": []
+    "includeTools": ["search", "fetch"]
   }
 }
 ```
 
-**UV-based Python Server:**
+| Field | Description |
+| --- | --- |
+| `name` | Server identifier. |
+| `command` and `args` | Local stdio executable and arguments. Leave empty for remote streaming servers. |
+| `env` | Environment variables passed to a local server process. |
+| `enabledForAgents` | Agent names allowed to use the server. An empty list makes it available to all agents. |
+| `streaming_server` | `false` for local stdio; `true` for remote HTTP/SSE. |
+| `url` | Remote server URL. Leave empty for local stdio servers. |
+| `headers` | Optional request headers, normally for remote authentication. |
+| `includeTools` | Optional allow-list of MCP tool names. |
+
+Remote servers can use static headers or an OAuth flow. When OAuth is required,
+AgentCrew opens the authorization URL and persists the resulting token state
+under the persistence directory.
+
+MCP discovery runs after agent activation. Built-in tools are available
+immediately while discovered MCP tools are synchronized in the background.
+
+## Adaptive Behaviors (`persistents/adaptive.json`)
+
+Agents learn behavior patterns and store them in one shared file. Set
+`AGENTCREW_ADAPTIVE_PATH` to place it elsewhere.
 
 ```json
 {
-  "filesystem": {
-    "name": "filesystem",
-    "command": "/home/user/.local/bin/uv",
-    "args": ["--directory", "/path/to/mcp/server/", "run", "filesystem_server"],
-    "env": {},
-    "enabledForAgents": ["CodeAssistant"]
-  }
-}
-```
-
-**NPX-based Server with Arguments:**
-
-```json
-{
-  "filesystem": {
-    "name": "filesystem",
-    "command": "npx",
-    "args": [
-      "-y",
-      "@modelcontextprotocol/server-filesystem",
-      "/home/user/workspace"
-    ],
-    "env": {},
-    "enabledForAgents": []
-  }
-}
-```
-
-**Remote MCP Server:**
-
-```json
-{
-  "remote_tools": {
-    "name": "remote_tools",
-    "url": "https://mcp.example.com/tools",
-    "streaming_server": true,
-    "enabledForAgents": ["Researcher"]
-  }
-}
-```
-
-**Remote MCP Server using legacy SSE:**
-
-```json
-{
-  "remote_sse": {
-    "name": "remote_sse",
-    "url": "https://mcp.example.com/sse",
-    "streaming_server": true,
-    "enabledForAgents": ["Researcher"]
-  }
-}
-```
-
-Remote servers can also pass `headers` (e.g. static bearer tokens) and use OAuth flows:
-when a remote server requires OAuth, AgentCrew opens the authorization URL in your
-browser and persists the resulting tokens under `persistents/tokens/<server>.json`.
-AgentCrew connects to MCP servers using the MCP Python SDK (`mcp==2.0.0` in this release); remote
-connections negotiate the legacy MCP protocol for compatibility with existing
-MCP servers.
-
-MCP discovery runs in the background after an agent is activated, so switching
-agents never blocks on MCP network calls. Built-in tools are available
-immediately; MCP tools are synchronized as soon as discovery finishes. The
-first message after a switch waits up to 30 seconds (bounded) for MCP
-discovery before continuing with built-in tools only — a timeout never cancels
-the underlying discovery, and a later message retries the MCP tool
-synchronization.
-
-## Adaptive Behaviors (persistents/adaptive.json)
-
-Agents learn patterns from interactions and store them as behaviors. All
-behaviors are stored in a single file: `~/.AgentCrew/persistents/adaptive.json`
-
-### Behavior Format
-
-The file structure:
-
-```json
-{
-  "AgentName": {
-    "behavior_id": "when [condition], do [action]"
-  }
-}
-```
-
-All behaviors follow the pattern: `when [condition], do [action]`
-
-### Example Adaptive Behaviors File
-
-```json
-{
-  "CodeAssistant": {
-    "python_testing_tool": "when working with python project do use uv as tool/script for testing",
-    "project_workflow_analysis": "when beginning work on a project, do start with analyze_repo to understand overall project structure first before making any changes"
-  },
-  "Architect": {
-    "communication_style_analysis": "when explaining complex codebases, do provide structured summaries focusing on architecture patterns, data flow, and key integration points rather than implementation details"
-  },
-  "Researcher": {
-    "research_methodology": "when conducting research, do cross-reference multiple sources before drawing conclusions"
+  "ExampleAssistant": {
+    "python_tools": "when working with a Python project, use uv to run Python commands"
   },
   "default": {
-    "personalization_checkout_info": "when user proceeds to checkout, remember their information for future use"
+    "concise_status": "when providing progress updates, keep them concise and actionable"
   }
 }
 ```
 
-### Managing Behaviors
-
-**View Behaviors:**
-
-- GUI: Settings → Agent Config → Adaptive Behaviors
-- File: `~/.AgentCrew/persistents/adaptive.json`
-
-**Add Behavior:**
-
-- Through conversation: Agents learn from corrections and preferences
-- Manual: Edit the JSON file directly
-
-**Behavior Scope:**
-
-- Agent-specific behaviors apply only to that agent
-- `"default"` behaviors apply to all agents
-
-Behaviors automatically apply when conditions match. They persist across
-sessions.
+Each behavior follows `when [condition], [action]`. Agent-specific behaviors
+apply only to that agent; `default` behaviors apply to all agents. Prefer the
+GUI or conversation-driven learning for normal edits.
 
 ## Environment Variables
 
-You can use configuration with environment variables:
+Set environment variables before starting AgentCrew. The twelve standard API
+keys in the table above can be set directly this way. A non-empty supported key
+in `config.json.api_keys` is exported into the startup process.
+
+AgentCrew reads JSON string values literally. Do not use `${VAR}` interpolation
+inside `config.json`; use environment variables directly for shared setups.
 
 ```bash
-# API Keys
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENAI_API_KEY="sk-proj-..."
-export GEMINI_API_KEY="AIza..."
-
-# Override config location
-export AGENTCREW_CONFIG_DIR="/custom/path"
-
-# Use priority service tier for OpenAI Codex requests
-export AGENTCREW_FAST_CODEX="1"
-
-# Enable debug logging
-export LOGURU_LEVEL="DEBUG"
-
-# Context shrinking — override the 85% default max context threshold (token count)
-export AGENTCREW_DEFAULT_MAX_CONTEXT="120000"
-
-# Context shrinking — keep more (or fewer) recent messages untouched (default: 10)
-export AGENTCREW_CONTEXT_SHRINK_THRESHOLD="10"
-
-# Bound each asynchronous summary request and its prompt payload
-export AGENTCREW_TOOL_SUMMARY_TIMEOUT_SECONDS="5"
-export AGENTCREW_TOOL_SUMMARY_MAX_PROMPT_CHARS="30000"
+export AGENTCREW_CONFIG_PATH="/path/to/config.json"
+export SW_AGENTS_CONFIG="/path/to/agents.toml"
+export MCP_CONFIG_PATH="/path/to/mcp_servers.json"
+export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+export AGENTCREW_PROVIDER="openai"
+export AGENTCREW_MODEL_ID="YOUR_MODEL_ID"
 ```
 
-> **NOTED**: config.json values take priority over environment variables.
+### Paths, Runtime, and Logging
 
-### Context Shrinking Environment Variables
+| Variable | Purpose |
+| --- | --- |
+| `AGENTCREW_CONFIG_PATH` | Path to `config.json`. |
+| `SW_AGENTS_CONFIG` | Path to `agents.toml`. |
+| `MCP_CONFIG_PATH` | Path to `mcp_servers.json`. |
+| `MEMORYDB_PATH` | Path to the Chroma memory database. |
+| `AGENTCREW_PERSISTENCE_DIR` | Base directory for conversations, tokens, and persisted state. |
+| `AGENTCREW_ADAPTIVE_PATH` | Explicit path to `adaptive.json`. |
+| `AGENTCREW_ACP_SESSION_DIR` | Directory for persisted ACP session JSON. Defaults to `.agentcrew/acp_sessions` when no constructor base directory is supplied. |
+| `AGENTCREW_PROVIDER` | Provider override; accepts a built-in provider or configured custom-provider name. |
+| `AGENTCREW_MODEL_ID` | Runtime model-ID override. |
+| `AGENTCREW_FAST_CODEX` | Set to `1` to request the priority service tier for OpenAI Codex. |
+| `AGENTCREW_LOG_PATH` | Log directory in production mode. |
+| `AGENTCREW_LOG_LEVEL` | Log level, such as `ERROR`, `WARNING`, or `DEBUG`. |
+| `AGENTCREW_ENV` | Runtime environment; production enables file logging. |
 
-| Variable                             | Purpose                                                                                                                                                           | Default                    |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `AGENTCREW_DEFAULT_MAX_CONTEXT`      | Overrides the token threshold at which shrinking activates. Set to a number of tokens (e.g., `120000`). The default is 85% of the model's maximum context window. | `85% of model max context` |
-| `AGENTCREW_CONTEXT_SHRINK_THRESHOLD` | Controls how many of the most recent messages are always preserved in full, regardless of token usage.                                                            | `10`                       |
-| `AGENTCREW_TOOL_SUMMARY_TIMEOUT_SECONDS` | Limits one asynchronous summary request before it is discarded without affecting inference. | `5` seconds |
-| `AGENTCREW_TOOL_SUMMARY_MAX_PROMPT_CHARS` | Caps the tool arguments/result payload sent to the summary provider; the source hash still uses the complete canonical result. | `30000` characters |
+### Context Shrinking and Summaries
 
-## Configuration Priority
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `AGENTCREW_DEFAULT_MAX_CONTEXT` | Token limit used before the 85% shrink trigger is calculated. | Selected model's context limit |
+| `AGENTCREW_CONTEXT_SHRINK_THRESHOLD` | Number of most-recent messages preserved in full. | `10` |
+| `AGENTCREW_TOOL_SUMMARY_TIMEOUT_SECONDS` | Timeout for one background tool-summary request. | `5` seconds |
+| `AGENTCREW_TOOL_SUMMARY_MAX_PROMPT_CHARS` | Maximum summary-provider prompt payload. | `30000` characters |
 
-AgentCrew loads settings in this order (later overrides earlier):
+### Provider, A2A, Network, and Advanced Overrides
 
-1. Default values (hardcoded in source)
-2. Environment variables
-3. Command-line arguments
-4. Configuration files (`~/.AgentCrew/config.json`)
+| Variable | Purpose |
+| --- | --- |
+| `ANTHROPIC_BASE_URL` | Anthropic-compatible API base URL override. |
+| `OPENAI_BASE_URL` | OpenAI-compatible API base URL override. |
+| `GEMINI_BASE_URL` | Gemini API base URL override. |
+| `TOGETHER_BASE_URL` | Together API base URL override. |
+| `A2A_SERVER_API_KEY` | Inbound A2A server authentication key; equivalent to the `a2a-server --api-key` option. |
+| `A2A_SERVER_EXPOSED_URL` | Public URL advertised by an A2A server when it differs from its bound URL. |
+| `AGENTCREW_HUB_HOST` | Base host used to resolve `@hub/...` agent configuration URIs. Defaults to `https://agentplace.cloud`. |
+| `AGENTCREW_VISION_CONCURRENCY` | Maximum concurrent document-image descriptions. |
+| `AGENTCREW_VISION_CACHE_PATH` | Directory for the vision-description cache. |
+| `AGENTCREW_VISION_CACHE_DISABLED` | Set to `true` to disable the vision-description cache. |
+| `AGENTCREW_BROWSER_PROFILE_PATH` | Browser automation profile directory. |
 
-Example:
+`AGENTCREW_DISABLE_GUI` and `AGENTCREW_DOCKER` are internal process-set flags,
+not normal user configuration.
 
-```bash
-# Uses config.json settings
-agentcrew chat
+## Configuration Resolution
 
-# Overrides provider from config
-agentcrew chat --provider openai
-
-# Overrides both config and provider
-OPENAI_API_KEY="sk-new..." agentcrew chat --provider openai
-```
+Runtime provider, model, and reasoning options take precedence when supplied by
+the CLI or application entry point. Otherwise AgentCrew resolves configuration,
+environment values, remembered `last_used` selections, and defaults for the
+active provider/model. Use explicit CLI options when a one-off run must not use
+the remembered selection.
 
 ## GUI Configuration
 
-The GUI provides visual configuration management:
-
-**Settings Menu:**
-
-- Global Settings: API keys, theme, yolo mode
-- Agents: Create, edit, import, export agents
-- MCP Servers: Add, configure, enable MCP servers
-- Adaptive Behaviors: View and manage learned behaviors
+The GUI settings panel manages global settings, API keys, agents, MCP servers,
+custom LLM providers, and adaptive behaviors. It writes the same files described
+in this guide.
 
 ## Configuration Best Practices
 
-**Security:**
+### Security
 
-- Never commit API keys to version control
-- Use environment variables in shared configs
-- Restrict file permissions: `chmod 600 ~/.AgentCrew/config.json`
-- Rotate API keys regularly
+- Never commit API keys, bearer tokens, or provider passwords.
+- Prefer environment variables for shared, CI, container, and team setups.
+- Restrict local global-config permissions where supported, for example:
+  `chmod 600 ~/.AgentCrew/config.json`.
+- Rotate credentials and use the smallest practical provider/token scope.
 
-**Organization:**
+### Organization and Performance
 
-- Create focused agents for specific tasks
-- Use descriptive names and descriptions
-- Document custom system prompts
-- Group related MCP servers
-
-**Performance:**
-
-- Enable only necessary tools for each agent
-- Use auto_approval_tools for read-only operations
-- Enable auto_context_shrink for long conversations
-- Choose appropriate temperature for task type
-
-**Maintenance:**
-
-- Backup configuration before major changes
-- Test agent configs before deployment
-- Review adaptive behaviors periodically
-- Keep MCP server versions updated
+- Create focused agents with descriptive names and limited tool access.
+- Use `auto_approval_tools` only for operations you trust.
+- Keep `auto_context_shrink` enabled for long conversations unless full tool
+  outputs are required.
+- Enable only MCP servers needed by each agent, and use `enabledForAgents` or
+  `includeTools` to limit access.
 
 ## Troubleshooting
 
-**Agent not available:**
-
-- Check `enabled = true` in agents.toml
-- Verify agent name has no typos
-- Restart AgentCrew after config changes
-
-**Tool not working:**
-
-- Confirm tool is in agent's `tools` list
-- Check required API keys are set
-- Review tool approval settings
-- Check logs for error messages
-
-**MCP server fails:**
-
-- Verify command is in PATH
-- Check environment variables are set
-- Test command manually in terminal
-- Review `enabledForAgents` restrictions
-- Check server logs for errors
-
-**API key errors:**
-
-- Verify key is correct and active
-- Check key has required permissions
-- Ensure no extra spaces or quotes
-- Test key with provider's CLI or API directly
-
-**Configuration not loading:**
-
-- Check file permissions (readable)
-- Verify JSON/TOML syntax is valid
-- Look for error messages on startup
-- Try `--config` flag to specify file explicitly
-
-**Voice not working:**
-
-- Make sure start with `--with-voice` flag
-- Verify `ELEVENLABS_API_KEY` or `DEEPINFRA_API_KEY` is set
-- Check `voice_enabled = true` for the agent
-- Test voice ID at ElevenLabs website
-- Check logs for voice service errors
+| Symptom | Checks |
+| --- | --- |
+| Provider is unavailable | Verify a supported provider credential or login, `AGENTCREW_PROVIDER`, and `AGENTCREW_MODEL_ID`. |
+| Agent is unavailable | Check `enabled = true`, the TOML syntax, and the `SW_AGENTS_CONFIG` path. |
+| MCP server fails | Confirm executable/URL, JSON syntax, `env`/`headers`, and `enabledForAgents`. Test the local command separately. |
+| API key error | Check that the credential is active, correctly named, and has no accidental whitespace. Do not print it in logs. |
+| Configuration does not load | Check the active path override, file permissions, and JSON/TOML syntax. |
+| Voice is unavailable | Start with `--with-voice`, configure `ELEVENLABS_API_KEY` or `DEEPINFRA_API_KEY`, and use `voice_enabled = "enabled"`. |
 
 ## Advanced Topics
 
 ### Multi-Environment Setup
 
-Manage different configs for work/personal/testing:
+Use path overrides to isolate work, personal, or test configurations:
 
 ```bash
-# Testing with custom agents
-agentcrew chat --agent-config ./test-agents.toml
+AGENTCREW_CONFIG_PATH="/path/to/work-config.json" \
+SW_AGENTS_CONFIG="/path/to/work-agents.toml" \
+MCP_CONFIG_PATH="/path/to/work-mcp.json" \
+agentcrew chat
 ```
 
 ### Team Configuration Sharing
 
-Share agent configs without exposing API keys:
-
-1. Export agents: `/export agent1,agent2 team_agents.toml`
-2. Remove API keys from shared config
-3. Document required environment variables
-4. Use a template config.json with placeholder keys
-5. Team members set their own keys locally
-
-**Example team config:**
-
-```json
-{
-  "api_keys": {
-    "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
-    "OPENAI_API_KEY": "${OPENAI_API_KEY}"
-  }
-}
-```
-
-Team members set actual keys via environment variables.
-
-### A2A Server Configuration
-
-When running as an A2A server, configure which agents are exposed:
+Share `agents.toml`, MCP templates without secrets, and a `config.json` template
+whose values are empty or placeholders. Each team member sets real credentials
+in their own environment:
 
 ```bash
-# Expose all agents
-agentcrew a2a-server --port 41241
-
-# Expose specific agents
-agentcrew a2a-server --agents "Researcher,CodeAssistant"
-
-# With authentication (add reverse proxy)
-agentcrew a2a-server --host 127.0.0.1 --port 41241
+export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY"
+export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
 ```
 
-Add authentication via nginx or Apache reverse proxy. AgentCrew doesn't handle
-authentication directly.
+### A2A Server Authentication
+
+```bash
+A2A_SERVER_API_KEY="YOUR_A2A_SERVER_API_KEY" agentcrew a2a-server --host 127.0.0.1 --port 41241
+```
+
+You can instead pass `--api-key` to `a2a-server`. A reverse proxy can provide
+additional deployment-specific controls.
 
 ### Document Processing
 
-Documents dropped into chat (Word, Excel, PowerPoint, PDF, RTF, EPUB,
-OpenDocument, CSV) are converted to Markdown before being sent to the agent.
-
-- **Default handler: [anydoc](https://github.com/firecrawl/anydoc)**
-  (`firecrawl-anydoc` core dependency). Supports `.doc/.docx/.docm`,
-  `.xls/.xlsx/.xlsm/.xlsb`, `.ppt/.pps/.pot/.pptx/.pptm/.ppsx/.ppsm`,
-  `.odt/.ods/.odp`, `.rtf`, `.epub`, `.pdf`, and `.csv`.
-- **Docling is an optional for ocr** installed via the `cpu`/`nvidia` extras
-  (`pip install "agentcrew-ai[cpu]"` or `[nvidia]`). It will be used instead of
-  anydoc if installed.
-- **Images inside documents** (embedded bytes or external URLs) are described by
-  a vision LLM and injected into the Markdown as plain text. Vision providers
-  are resolved from the same picture-description configuration used previously —
-  the API key environment variables are unchanged (e.g. `DEEPINFRA_API_KEY`,
-  `TOGETHER_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, ...). No vision key
-  configured? Documents are converted to Markdown as-is without image
-  descriptions.
+Documents added to chat are converted to Markdown before being sent to the
+agent. If document images are described, AgentCrew uses the configured provider
+credentials; without a suitable credential, document conversion continues
+without image descriptions.
 
 ## Configuration Schema Reference
 
-For schema validation and IDE support, see the configuration schema definitions
-in:
+The runtime sources are the authoritative schema references:
 
-- `AgentCrew/modules/config/config_management.py`
-- Example configs in `examples/agents/`
-
----
+- `AgentCrew/modules/config/global_config.py`
+- `AgentCrew/modules/config/agents_config.py`
+- `AgentCrew/modules/config/mcp_config.py`
+- `AgentCrew/setup.py`
 
 **Need Help?**
 

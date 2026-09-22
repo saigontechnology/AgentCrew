@@ -101,7 +101,9 @@ class UtilityCommands:
                 self.message_handler.bus.emit_sync(AppEvents.ERROR, message=str(e))
                 return CommandResult(handled=True, clear_flag=True)
             if applied:
-                self.message_handler.agent.reasoning_selection = ReasoningSelection(level, ReasoningSource.USER_SWITCH)
+                self.message_handler.agent.reasoning_selection = ReasoningSelection(
+                    level, ReasoningSource.USER_SWITCH
+                )
                 self.message_handler.bus.emit_sync(
                     AppEvents.THINK_BUDGET_SET, budget=level
                 )

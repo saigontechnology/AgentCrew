@@ -45,7 +45,9 @@ class ToolResultSummaryService:
     ) -> None:
         self._llm_service = llm_service
         self._context_persistence = context_persistence
-        self._queue: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=queue_size)
+        self._queue: queue.Queue[dict[str, Any] | None] = queue.Queue(
+            maxsize=queue_size
+        )
         self._cache_size = cache_size
         self._request_timeout_seconds = request_timeout_seconds or self._positive_float(
             "AGENTCREW_TOOL_SUMMARY_TIMEOUT_SECONDS",
@@ -182,7 +184,9 @@ class ToolResultSummaryService:
             return True
         worker.join(timeout=self._request_timeout_seconds + 1.0)
         if worker.is_alive():
-            logger.warning("Tool-result summary worker did not stop before shutdown timeout")
+            logger.warning(
+                "Tool-result summary worker did not stop before shutdown timeout"
+            )
             return False
         return True
 
@@ -367,10 +371,7 @@ class ToolResultSummaryService:
 
     @classmethod
     def _build_prompt(cls, payload: dict[str, Any]) -> str:
-        header = (
-            f"tool_name: {payload['tool_name']}\n"
-            f"is_error: {payload['is_error']}\n"
-        )
+        header = f"tool_name: {payload['tool_name']}\nis_error: {payload['is_error']}\n"
         arguments = json.dumps(
             cls._normalize(payload["arguments"]), ensure_ascii=False, sort_keys=True
         )
