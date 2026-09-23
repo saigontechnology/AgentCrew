@@ -62,7 +62,31 @@ class ToolResultSummaryService:
         self._accepting = True
         self._close_started = False
         self._worker: threading.Thread | None = None
-        if llm_service is not None:
+        if self.llm_service:
+            if self.llm_service.provider_name == "google":
+                self.llm_service.model = "gemini-2.5-flash-lite"
+            elif self.llm_service.provider_name == "claude":
+                self.llm_service.model = "claude-3-5-haiku-latest"
+            elif self.llm_service.provider_name == "openai":
+                self.llm_service.model = "gpt-5.4-mini"
+            elif self.llm_service.provider_name == "deepinfra":
+                self.llm_service.model = "google/gemma-4-31B-it"
+            elif self.llm_service.provider_name == "fireworks":
+                self.llm_service.model = "accounts/fireworks/models/gemma-4-31b-it"
+            elif self.llm_service.provider_name == "github_copilot":
+                self.llm_service.model = "claude-haiku-4.5"
+            elif (
+                self.llm_service.provider_name == "copilot_response"
+                or self.llm_service.provider_name == "openai_codex"
+            ):
+                self.llm_service.model = "gpt-6-luna"
+            elif self.llm_service.provider_name == "together":
+                self.llm_service.model = "Qwen/Qwen3.5-9B"
+            elif self.llm_service.provider_name == "opencode_go":
+                self.llm_service.model = "deepseek-v4-flash"
+            elif self.llm_service.provider_name == "commandcode":
+                self.llm_service.model = "deepseek/deepseek-v4-flash"
+        if self.llm_service is not None:
             self._worker = threading.Thread(
                 target=self._run_worker,
                 name="ToolResultSummaryWorker",

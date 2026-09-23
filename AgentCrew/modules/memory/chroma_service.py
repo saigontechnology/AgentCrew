@@ -48,7 +48,7 @@ class ChromaMemoryService(BaseMemoryService):
                 self.llm_service.provider_name == "copilot_response"
                 or self.llm_service.provider_name == "openai_codex"
             ):
-                self.llm_service.model = "gpt-5.6-luna"
+                self.llm_service.model = "gpt-6-luna"
             elif self.llm_service.provider_name == "together":
                 self.llm_service.model = "Qwen/Qwen3.5-9B"
             elif self.llm_service.provider_name == "opencode_go":
