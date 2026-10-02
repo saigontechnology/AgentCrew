@@ -130,6 +130,8 @@ They can also be set directly as environment variables.
 | `GITHUB_COPILOT_API_KEY` | GitHub Copilot provider credential. Use `agentcrew copilot-auth` for the supported Copilot login flow. |
 | `FIREWORKS_API_KEY` | Fireworks AI provider credential. |
 | `TAVILY_API_KEY` | Tavily web-search feature credential; not an LLM provider credential. |
+| `YDC_API_KEY` | You.com web-search credential, used when `WEB_SEARCH_PROVIDER` is `youcom`. Optional; without it the You.com provider runs against the keyless free profile. |
+| `WEB_SEARCH_PROVIDER` | Web-search backend selector. Set to `youcom` to use the You.com web search backend instead of the default Tavily. |
 | `VOYAGE_API_KEY` | Voyage embedding credential for the normal memory path. |
 | `ELEVENLABS_API_KEY` | ElevenLabs voice-synthesis credential. |
 
@@ -150,6 +152,25 @@ Every distinct `*_API_KEY` name referenced by runtime source is covered here:
 Normal memory selects Voyage when `VOYAGE_API_KEY` is available. Otherwise it
 uses Chroma's default embedding function; users normally do not need any
 `CHROMA_*` key.
+
+### Web Search Provider
+
+The `web_search` tool defaults to Tavily. To use You.com instead, set
+`WEB_SEARCH_PROVIDER=youcom`:
+
+```bash
+export WEB_SEARCH_PROVIDER=youcom
+agentcrew chat
+```
+
+The You.com provider talks to the You.com MCP endpoint and works without any
+API key (keyless free profile). Optionally set `YDC_API_KEY` (get one at
+<https://you.com/platform/api-keys>) to switch to the authenticated endpoint,
+which also enables server-side URL content extraction
+for the `fetch_webpage` tool; without a key, `fetch_webpage` falls back to
+fetching the page directly and converting it to markdown. `crawl_website` is
+not supported by the You.com provider and returns an explanatory message
+pointing to `fetch_webpage` / `search_web`.
 
 ### Custom LLM Providers
 

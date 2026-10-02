@@ -1,4 +1,11 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from AgentCrew.modules.web_search.service import TavilySearchService
+
+if TYPE_CHECKING:
+    from AgentCrew.modules.web_search.providers.youcom import YoucomSearchService
 
 
 def get_web_search_tool_definition():
@@ -76,12 +83,14 @@ def get_web_extract_tool_definition():
     }
 
 
-def get_web_search_tool_handler(tavily_service: TavilySearchService):
+def get_web_search_tool_handler(
+    search_service: TavilySearchService | YoucomSearchService,
+):
     """
     Return a handler function for the web search tool.
 
     Args:
-        tavily_service: An instance of TavilySearchService
+        search_service: A web search service instance (Tavily or You.com)
 
     Returns:
         Function that handles web search tool calls
@@ -97,7 +106,7 @@ def get_web_search_tool_handler(tavily_service: TavilySearchService):
         if not query:
             return "Error: No search query provided."
 
-        results = tavily_service.search(
+        results = search_service.search(
             query=query,
             topic=topic,
             search_depth=search_depth,
@@ -105,17 +114,19 @@ def get_web_search_tool_handler(tavily_service: TavilySearchService):
             include_domains=included_domains,
         )
 
-        return tavily_service.format_search_results(results)
+        return search_service.format_search_results(results)
 
     return web_search_handler
 
 
-def get_web_extract_tool_handler(tavily_service: TavilySearchService):
+def get_web_extract_tool_handler(
+    search_service: TavilySearchService | YoucomSearchService,
+):
     """
     Return a handler function for the web extract tool.
 
     Args:
-        tavily_service: An instance of TavilySearchService
+        search_service: A web search service instance (Tavily or You.com)
 
     Returns:
         Function that handles web extract tool calls
@@ -152,7 +163,7 @@ def get_web_extract_tool_handler(tavily_service: TavilySearchService):
             return "Error: No URL provided."
 
         include_images = params.get("include_images", False)
-        results = tavily_service.extract(url=url, include_images=include_images)
+        results = search_service.extract(url=url, include_images=include_images)
 
         if results.get("failed_results"):
             err = results["failed_results"][0]
@@ -253,12 +264,14 @@ def get_web_crawl_tool_definition():
     }
 
 
-def get_web_crawl_tool_handler(tavily_service: TavilySearchService):
+def get_web_crawl_tool_handler(
+    search_service: TavilySearchService | YoucomSearchService,
+):
     """
     Return a handler function for the web crawl tool.
 
     Args:
-        tavily_service: An instance of TavilySearchService
+        search_service: A web search service instance (Tavily or You.com)
 
     Returns:
         Function that handles web crawl tool calls
@@ -277,7 +290,7 @@ def get_web_crawl_tool_handler(tavily_service: TavilySearchService):
         extract_depth = params.get("extract_depth", "basic")
         instructions = params.get("instructions", "")
 
-        results = tavily_service.crawl(
+        results = search_service.crawl(
             url=url,
             max_depth=max_depth,
             limit=max_pages,
@@ -287,7 +300,7 @@ def get_web_crawl_tool_handler(tavily_service: TavilySearchService):
             instructions=instructions if instructions else None,
         )
 
-        return tavily_service.format_crawl_results(results)
+        return search_service.format_crawl_results(results)
 
     return web_crawl_handler
 
