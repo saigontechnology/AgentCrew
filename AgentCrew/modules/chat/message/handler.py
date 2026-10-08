@@ -154,6 +154,7 @@ class MessageHandler:
         Returns:
             Tuple of (exit_flag, clear_flag)
         """
+        self.tool_manager.reset_request_yolo_mode()
         self.history_manager.add_entry(user_input)
 
         if user_input.startswith("/file "):
@@ -827,6 +828,7 @@ class MessageHandler:
         _empty_response_retry_count: int = 0,
     ) -> tuple[str | None, TokenUsage]:
         if token_usage is None:
+            self.tool_manager.reset_request_yolo_mode()
             token_usage = TokenUsage()
             # Fresh user turn: open a new per-agent usage ledger. Recursive
             # responses pass a non-None token_usage and keep the same ledger.

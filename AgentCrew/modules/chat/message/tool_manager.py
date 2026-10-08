@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from contextvars import ContextVar
 from typing import Any
 
 from loguru import logger
@@ -29,10 +30,21 @@ class ToolManager:
         self._next_confirmation_id = 0  # ID counter for confirmation requests
         self.yolo_mode = False  # Enable/disable auto-approval mode
         self.session_overrided_yolo_mode: bool = False
+        self._request_yolo_mode: ContextVar[bool] = ContextVar(
+            "tool_confirmation_request_yolo_mode", default=False
+        )
 
     def get_effective_yolo_mode(self) -> bool:
-        """Determine the effective YOLO mode considering session override."""
-        return self.session_overrided_yolo_mode or self.yolo_mode
+        """Determine the effective YOLO mode considering configured and temporary modes."""
+        return (
+            self.session_overrided_yolo_mode
+            or self.yolo_mode
+            or self._request_yolo_mode.get()
+        )
+
+    def reset_request_yolo_mode(self) -> None:
+        """Restore confirmation prompts for the current request context."""
+        self._request_yolo_mode.set(False)
 
     def _load_persistent_auto_approved_tools(self):
         """Load persistent auto-approved tools from config."""
@@ -267,6 +279,8 @@ class ToolManager:
             if action == "approve_all":
                 # Remember this tool for auto-approval
                 self._auto_approved_tools.add(tool_name)
+            elif action == "enable_yolo":
+                self._request_yolo_mode.set(True)
 
         await self.bus.emit(AppEvents.TOOL_USE, **tool_use)
         result = await self._execute_approved_tool(tool_use)
@@ -320,7 +334,7 @@ class ToolManager:
 
         Args:
             confirmation_id: The ID of the confirmation request
-            result: Dictionary with the user's decision (action: 'approve', 'approve_all', or 'deny')
+            result: Dictionary with the user's decision (action: 'approve', 'approve_all', 'enable_yolo', or 'deny')
         """
         if confirmation_id in self._pending_confirmations:
             self._pending_confirmations[confirmation_id] = {
@@ -463,6 +477,8 @@ class ToolManager:
 
         if action == "approve_all":
             self._auto_approved_tools.add(tool_name)
+        elif action == "enable_yolo":
+            self._request_yolo_mode.set(True)
 
         return "approved"
 

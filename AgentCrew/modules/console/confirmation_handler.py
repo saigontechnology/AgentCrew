@@ -244,6 +244,7 @@ class ConfirmationHandler:
             "no",
             "all in this session",
             "forever (this and future sessions)",
+            "Enable YOLO for remaining tool approvals in this request",
         ]
         response = self.input_handler.get_choice_input(
             "Allow this tool to run?", choices
@@ -284,6 +285,16 @@ class ConfirmationHandler:
                 style=RICH_STYLE_YELLOW,
             )
             self.console.print(saved_text)
+        elif response == choices[4]:
+            message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "enable_yolo"}
+            )
+            self.console.print(
+                Text(
+                    "✓ YOLO mode enabled for this request; tool approvals resume with the next user request.",
+                    style=RICH_STYLE_YELLOW,
+                )
+            )
 
         self._ui.start_loading_animation()
         self.input_handler._start_input_thread()

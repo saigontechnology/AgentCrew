@@ -202,6 +202,10 @@ class ToolEventHandler:
         no_button = dialog.addButton("No", QMessageBox.ButtonRole.NoRole)
         all_button = dialog.addButton("Yes to All", QMessageBox.ButtonRole.AcceptRole)
         forever_button = dialog.addButton("Forever", QMessageBox.ButtonRole.AcceptRole)
+        yolo_button = dialog.addButton(
+            "Enable YOLO for remaining tool approvals in this request",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
 
         # Style the buttons with Catppuccin colors
         yes_button.setStyleSheet(
@@ -213,6 +217,9 @@ class ToolEventHandler:
         )
 
         forever_button.setStyleSheet(
+            self.chat_window.style_provider.get_tool_dialog_all_button_style()
+        )
+        yolo_button.setStyleSheet(
             self.chat_window.style_provider.get_tool_dialog_all_button_style()
         )
 
@@ -238,6 +245,13 @@ class ToolEventHandler:
             )
             self.chat_window.display_status_message(
                 f"Approved all future calls to tool: {tool_use['name']}"
+            )
+        elif clicked_button == yolo_button:
+            self.chat_window.message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "enable_yolo"}
+            )
+            self.chat_window.display_status_message(
+                "YOLO mode enabled for this request; tool approvals resume with the next user request"
             )
         elif clicked_button == forever_button:
             from AgentCrew.modules.config.global_config import GlobalConfig
@@ -355,6 +369,13 @@ class ToolEventHandler:
             self.chat_window.style_provider.get_tool_dialog_all_button_style()
         )
 
+        yolo_button = QPushButton(
+            "Enable YOLO for remaining tool approvals in this request"
+        )
+        yolo_button.setStyleSheet(
+            self.chat_window.style_provider.get_tool_dialog_all_button_style()
+        )
+
         no_button = QPushButton("✗ Deny")
         no_button.setStyleSheet(
             self.chat_window.style_provider.get_tool_dialog_no_button_style()
@@ -363,6 +384,7 @@ class ToolEventHandler:
         buttons_layout.addWidget(yes_button)
         buttons_layout.addWidget(all_button)
         buttons_layout.addWidget(forever_button)
+        buttons_layout.addWidget(yolo_button)
         buttons_layout.addStretch()
         buttons_layout.addWidget(no_button)
 
@@ -385,6 +407,10 @@ class ToolEventHandler:
             result["action"] = "approve_forever"
             dialog.accept()
 
+        def on_yolo():
+            result["action"] = "enable_yolo"
+            dialog.accept()
+
         def on_no():
             result["action"] = "deny"
             dialog.reject()
@@ -392,6 +418,7 @@ class ToolEventHandler:
         yes_button.clicked.connect(on_yes)
         all_button.clicked.connect(on_all)
         forever_button.clicked.connect(on_forever)
+        yolo_button.clicked.connect(on_yolo)
         no_button.clicked.connect(on_no)
 
         approve_shortcut = QShortcut(QKeySequence("Ctrl+Return"), dialog)
@@ -411,6 +438,14 @@ class ToolEventHandler:
             )
             self.chat_window.display_status_message(
                 "Approved all future write_file calls"
+            )
+
+        elif result["action"] == "enable_yolo":
+            self.chat_window.message_handler.resolve_tool_confirmation(
+                confirmation_id, {"action": "enable_yolo"}
+            )
+            self.chat_window.display_status_message(
+                "YOLO mode enabled for this request; tool approvals resume with the next user request"
             )
 
         elif result["action"] == "approve_forever":
