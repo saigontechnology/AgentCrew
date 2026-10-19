@@ -254,6 +254,7 @@ class ApplicationSetup:
             "GITHUB_COPILOT_API_KEY",
             "FIREWORKS_API_KEY",
             "TAVILY_API_KEY",
+            "YDC_API_KEY",
             "VOYAGE_API_KEY",
             "ELEVENLABS_API_KEY",
         ]
@@ -476,16 +477,17 @@ class ApplicationSetup:
             from AgentCrew.modules.web_search import TavilySearchService
 
             search_service = TavilySearchService()
-        except ValueError as e:
+        except ValueError:
+            # No Tavily key: fall back to You.com search, which works without a key.
+            from AgentCrew.modules.web_search import YouSearchService
+
+            search_service = YouSearchService()
             click.echo(
-                f"\u26a0\ufe0f Web search tools not available: {e!s}\n"
-                "   Without web search, agents cannot look up current information, recent events,\n"
-                "   documentation, or real-time data from the internet.\n"
-                "   \U0001f4a1 Get a free Tavily API key (no credit card, 1,000 calls/month) at:\n"
-                "   https://app.tavily.com/\n"
-                "   Then set it via the TAVILY_API_KEY environment variable or config.json."
+                "\u2139\ufe0f TAVILY_API_KEY not set, using You.com for web search "
+                "(free tier, no key needed).\n"
+                "   Set YDC_API_KEY for higher limits, or TAVILY_API_KEY to enable\n"
+                "   page extraction and crawling."
             )
-            search_service = None
         except Exception as e:
             click.echo(f"\u26a0\ufe0f Web search tools not available: {e!s}")
             search_service = None

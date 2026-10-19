@@ -301,6 +301,7 @@ def register(service_instance=None, agent=None):
         agent: Agent instance to register with directly (optional)
     """
     from AgentCrew.modules.tools.registration import register_tool
+    from AgentCrew.modules.web_search.you_service import YouSearchService
 
     register_tool(
         get_web_search_tool_definition,
@@ -308,6 +309,9 @@ def register(service_instance=None, agent=None):
         service_instance,
         agent,
     )
+    if isinstance(service_instance, YouSearchService):
+        # You.com provides search only; extract and crawl still need Tavily.
+        return
     register_tool(
         get_web_extract_tool_definition,
         get_web_extract_tool_handler,
