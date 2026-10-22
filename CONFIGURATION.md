@@ -56,6 +56,7 @@ the full file shape.
     "GITHUB_COPILOT_API_KEY": "YOUR_GITHUB_COPILOT_API_KEY",
     "FIREWORKS_API_KEY": "YOUR_FIREWORKS_API_KEY",
     "TAVILY_API_KEY": "YOUR_TAVILY_API_KEY",
+    "YDC_API_KEY": "YOUR_YDC_API_KEY",
     "VOYAGE_API_KEY": "YOUR_VOYAGE_API_KEY",
     "ELEVENLABS_API_KEY": "YOUR_ELEVENLABS_API_KEY",
     "CURSOR_API_KEY": "YOUR_CURSOR_API_KEY"
@@ -131,6 +132,7 @@ They can also be set directly as environment variables.
 | `GITHUB_COPILOT_API_KEY` | GitHub Copilot provider credential. Use `agentcrew copilot-auth` for the supported Copilot login flow. |
 | `FIREWORKS_API_KEY` | Fireworks AI provider credential. |
 | `TAVILY_API_KEY` | Tavily web-search feature credential; not an LLM provider credential. |
+| `YDC_API_KEY` | Optional You.com web-search credential. When `TAVILY_API_KEY` is not set, `search_web` falls back to You.com, which works without a key on the free tier (100 searches a day). The key raises that limit. Page extraction and crawling still need Tavily. |
 | `VOYAGE_API_KEY` | Voyage embedding credential for the normal memory path. |
 | `ELEVENLABS_API_KEY` | ElevenLabs voice-synthesis credential. |
 | `CURSOR_API_KEY` | Cursor Agent SDK credential. It can also be set directly in the environment. |

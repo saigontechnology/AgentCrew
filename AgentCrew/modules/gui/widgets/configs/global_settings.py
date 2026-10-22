@@ -91,6 +91,11 @@ class SettingsTab(QWidget):
             "placeholder": "e.g., tvly-...",
         },
         {
+            "label": "You.com API Key (optional):",
+            "key_name": "YDC_API_KEY",
+            "placeholder": "e.g., ydc-sk-...",
+        },
+        {
             "label": "Voyage API Key:",
             "key_name": "VOYAGE_API_KEY",
             "placeholder": "e.g., pa-...",
