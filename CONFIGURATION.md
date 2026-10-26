@@ -372,14 +372,20 @@ Local agent fields are:
 
 For local `[[agents]]`, each successfully read `system_prompt_ref` file becomes
 `<configured/path>\ncontent of file\n</configured/path>`, using the configured
-path string literally for both tags (including any `/`). Loaded sections are
-joined in declared order with a blank line (`\n\n`). If at least one file
-loads, the combined file sections **replace** `system_prompt` entirely; missing,
-unreadable, or invalid UTF-8 refs are skipped with warnings. Only when no file
-loads does the inline `system_prompt` apply. Missing or empty refs keep existing
-inline behavior. Relative paths resolve against the **process working directory**,
-not the directory containing `agents.toml`, including configs loaded from HTTP
-or `@hub/`. Files are reread on startup and configuration reload.
+path string literally for both tags (including any `/`). If the file already
+ends in a newline, no additional newline is inserted before the closing tag;
+existing file line endings are preserved.
+
+Loaded sections are joined in declared order with a blank line (`\n\n`). If at
+least one file loads, the combined file sections **replace** `system_prompt`
+entirely; missing, unreadable, or invalid UTF-8 refs are skipped with warnings.
+Only when no file loads does the inline `system_prompt` apply. Missing or empty
+refs keep existing inline behavior. Relative paths resolve against the
+**process working directory**, not the directory containing `agents.toml`,
+including configs loaded from HTTP or `@hub/`. Files are reread on startup and
+configuration reload. Both inline and file-backed prompts pass through
+`LocalAgent._parse_system_prompt`, which replaces `{current_date}`, `{cwd}`,
+`{current_agent_name}`, and `{current_agent_description}` when used.
 
 **Security warning:** HTTP and `@hub/` agent configs can reference local files,
 including sensitive files, through `system_prompt_ref`. Their contents can then

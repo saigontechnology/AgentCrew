@@ -32,7 +32,8 @@ def _resolve_system_prompt(agent: dict[str, Any]) -> str:
             )
             continue
         try:
-            content = Path(ref).read_text(encoding="utf-8")
+            with Path(ref).open("r", encoding="utf-8", newline="") as prompt_file:
+                content = prompt_file.read()
         except (OSError, UnicodeError, ValueError) as exc:
             logger.warning(
                 "Skipping system_prompt_ref {!r} for agent {!r}: {}",
@@ -41,7 +42,8 @@ def _resolve_system_prompt(agent: dict[str, Any]) -> str:
                 exc,
             )
             continue
-        sections.append(f"<{ref}>\n{content}\n</{ref}>")
+        closing_boundary = "" if content.endswith(("\n", "\r")) else "\n"
+        sections.append(f"<{ref}>\n{content}{closing_boundary}</{ref}>")
     return "\n\n".join(sections) if sections else inline_prompt
 
 

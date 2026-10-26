@@ -7,7 +7,6 @@ from typing import Any, ClassVar
 import xmltodict
 from loguru import logger
 
-from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.config.agents_config import AgentsConfig
 
@@ -254,14 +253,6 @@ Output ONLY the complete revised system prompt. No commentary, no explanation, n
         normalized_memory_ids: list[str],
         edited_by_user: bool,
     ) -> dict[str, Any]:
-        refreshed_agent = AgentManager.get_instance().get_local_agent(agent.name)
-        if isinstance(refreshed_agent, LocalAgent):
-            refreshed_agent.set_system_prompt(revised_prompt)
-        else:
-            logger.warning(
-                f"Persisted prompt revision for agent '{agent.name}' but could not refresh the in-memory local agent instance."
-            )
-
         if self.persistence_service:
             try:
                 self.persistence_service.store_prompt_evolution(

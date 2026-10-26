@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from AgentCrew.modules.config.agents_config import AgentsConfig
+from AgentCrew.modules.config.agents_config import AgentsConfig, AgentsFileConfig
 
 
 class TestAgentsConfigPromptUpdate(unittest.TestCase):
@@ -16,30 +16,32 @@ class TestAgentsConfigPromptUpdate(unittest.TestCase):
             try:
                 config = AgentsConfig()
                 config.write(
-                    {
-                        "agents": [
-                            {
-                                "name": "Engineer",
-                                "description": "Implementation specialist",
-                                "tools": [],
-                                "system_prompt": "Old prompt",
-                            },
-                            {
-                                "name": "Architect",
-                                "description": "Design specialist",
-                                "tools": [],
-                                "system_prompt": "Keep me",
-                            },
-                        ]
-                    }
+                    AgentsFileConfig.from_dict(
+                        {
+                            "agents": [
+                                {
+                                    "name": "Engineer",
+                                    "description": "Implementation specialist",
+                                    "tools": [],
+                                    "system_prompt": "Old prompt",
+                                },
+                                {
+                                    "name": "Architect",
+                                    "description": "Design specialist",
+                                    "tools": [],
+                                    "system_prompt": "Keep me",
+                                },
+                            ]
+                        }
+                    )
                 )
 
                 updated = config.update_agent_system_prompt("Engineer", "New prompt")
                 self.assertTrue(updated)
                 data = config.read()
-                agents = {agent["name"]: agent for agent in data["agents"]}
-                self.assertEqual(agents["Engineer"]["system_prompt"], "New prompt")
-                self.assertEqual(agents["Architect"]["system_prompt"], "Keep me")
+                agents = {agent.name: agent for agent in data.agents}
+                self.assertEqual(agents["Engineer"].system_prompt, "New prompt")
+                self.assertEqual(agents["Architect"].system_prompt, "Keep me")
             finally:
                 if old_env is None:
                     os.environ.pop("SW_AGENTS_CONFIG", None)

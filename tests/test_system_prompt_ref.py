@@ -6,7 +6,9 @@ import json
 import pytest
 from loguru import logger
 
+from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.agents.manager import AgentManager
+from AgentCrew.modules.agents.prompt_evolution_service import PromptEvolutionService
 from AgentCrew.modules.config import agents_config as config_module
 from AgentCrew.modules.config.agents_config import AgentsFileConfig, LocalAgentConfig
 
@@ -23,13 +25,14 @@ def test_ordered_literal_wrappers_and_inline_precedence(tmp_path, monkeypatch):
     (tmp_path / "prompts").mkdir()
     (tmp_path / "prompts" / "first.txt").write_text("one", encoding="utf-8")
     (tmp_path / "second.txt").write_text("two\n", encoding="utf-8")
+    (tmp_path / "third.txt").write_text("three\n\n", encoding="utf-8")
     config = load_config(
         tmp_path,
         [
             {
                 "name": "Writer",
                 "system_prompt": "inline",
-                "system_prompt_ref": ["prompts/first.txt", "second.txt"],
+                "system_prompt_ref": ["prompts/first.txt", "second.txt", "third.txt"],
             }
         ],
     )
@@ -38,9 +41,35 @@ def test_ordered_literal_wrappers_and_inline_precedence(tmp_path, monkeypatch):
 
     assert agent["system_prompt"] == (
         "<prompts/first.txt>\none\n</prompts/first.txt>\n\n"
-        "<second.txt>\ntwo\n\n</second.txt>"
+        "<second.txt>\ntwo\n</second.txt>\n\n"
+        "<third.txt>\nthree\n\n</third.txt>"
     )
-    assert agent["system_prompt_ref"] == ["prompts/first.txt", "second.txt"]
+    assert agent["system_prompt_ref"] == [
+        "prompts/first.txt",
+        "second.txt",
+        "third.txt",
+    ]
+
+
+@pytest.mark.parametrize("content", ["first\r\nsecond\r\n", "first\rsecond\r"])
+def test_prompt_file_preserves_original_line_endings(tmp_path, monkeypatch, content):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "lines.txt").write_bytes(content.encode("utf-8"))
+    config = load_config(
+        tmp_path, [{"name": "Writer", "system_prompt_ref": ["lines.txt"]}]
+    )
+    [agent] = AgentManager.load_agents_from_config(str(config))
+    assert agent["system_prompt"] == f"<lines.txt>\n{content}</lines.txt>"
+
+
+def test_empty_prompt_file_has_closing_line_boundary(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "empty.txt").write_text("", encoding="utf-8")
+    config = load_config(
+        tmp_path, [{"name": "Writer", "system_prompt_ref": ["empty.txt"]}]
+    )
+    [agent] = AgentManager.load_agents_from_config(str(config))
+    assert agent["system_prompt"] == "<empty.txt>\n\n</empty.txt>"
 
 
 def test_toml_local_prompt_refs(tmp_path, monkeypatch):
@@ -178,6 +207,69 @@ def test_typed_config_round_trip():
     result = AgentsFileConfig.from_dict(data).to_dict()
     assert result["agents"][0]["system_prompt_ref"] == ["a", "/b"]
     assert "system_prompt_ref" not in LocalAgentConfig("NoRefs", "").to_dict()
+
+
+@pytest.mark.parametrize("async_revision", [False, True])
+@pytest.mark.parametrize("file_state", ["available", "missing", "no_refs"])
+def test_prompt_evolution_reloads_effective_prompt(
+    tmp_path, monkeypatch, async_revision, file_state
+):
+    monkeypatch.chdir(tmp_path)
+    prompt_file = tmp_path / "rules.txt"
+    if file_state == "available":
+        prompt_file.write_text("file rules", encoding="utf-8")
+    refs = [] if file_state == "no_refs" else ["rules.txt"]
+    config_path = load_config(
+        tmp_path,
+        [
+            {
+                "name": "Writer",
+                "description": "writer",
+                "tools": [],
+                "system_prompt": "original inline",
+                "system_prompt_ref": refs,
+            }
+        ],
+    )
+    monkeypatch.setenv("SW_AGENTS_CONFIG", str(config_path))
+    [definition] = AgentManager.load_agents_from_config(str(config_path))
+    agent = LocalAgent("Writer", "writer", None, {}, [])
+    agent.set_system_prompt(definition["system_prompt"])
+
+    class Manager:
+        def __init__(self):
+            self.agents = {"Writer": agent}
+
+        load_agents_from_config = staticmethod(AgentManager.load_agents_from_config)
+
+        def get_local_agent(self, name):
+            return self.agents.get(name)
+
+    monkeypatch.setattr(AgentManager, "get_instance", lambda: Manager())
+    monkeypatch.setattr(
+        config_module, "_reload_model_selection", lambda *args: (None, None, None)
+    )
+    monkeypatch.setattr(agent, "reapply_reasoning", lambda: None)
+    service = PromptEvolutionService(agents_config=config_module.AgentsConfig())
+    revised = "revised inline fallback"
+
+    if async_revision:
+        result = asyncio.run(
+            service.apply_prompt_revision_async(agent, revised, "approved")
+        )
+    else:
+        result = service.apply_prompt_revision(agent, revised, "approved")
+
+    saved = service.agents_config.read().agents[0]
+    assert saved.system_prompt == revised
+    assert saved.system_prompt_ref == refs
+    expected = (
+        "<rules.txt>\nfile rules\n</rules.txt>"
+        if file_state == "available"
+        else revised
+    )
+    assert agent.get_system_prompt() == expected
+    assert result["revised_system_prompt"] == revised
 
 
 def test_export_import_preserves_refs(tmp_path, monkeypatch):
