@@ -794,8 +794,8 @@ class CursorAgent(BaseAgent):
             return
         try:
             cancel()
-        except Exception as exc:
-            logger.debug(f"Cursor run cancel skipped: {exc}")
+        except Exception:
+            logger.debug("Cursor run cancel skipped")
 
 
 def _message_type(message: Any) -> str:
@@ -994,6 +994,8 @@ def _delegate_to_cursor(
             run_holder["run"] = run
         chunks: list[str] = []
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                return f"Error: Cursor delegation to '{target.name}' cancelled."
             stream = getattr(run, "stream", None)
             if stream is not None:
                 for message in stream():
@@ -1021,6 +1023,6 @@ def _delegate_to_cursor(
             if close is not None:
                 try:
                     close()
-                except Exception as exc:
-                    logger.warning(f"Failed to close one-shot Cursor agent: {exc}")
+                except Exception:
+                    logger.warning("Failed to close one-shot Cursor agent")
         _release_cwd(target.cwd, owner)

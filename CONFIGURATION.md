@@ -433,7 +433,10 @@ For Cursor agents, add the Cursor agent's name to `enabledForAgents`. Assigned
 AgentCrew MCP tools are discovered when the Cursor SDK agent is created, exposed
 as `server__tool` custom tools, and called through AgentCrew's stateless MCP
 service (including its OAuth handling). `includeTools` also applies. Cursor's
-native project and user MCP settings remain available independently.
+native project and user MCP settings remain available independently. Cursor SDK
+custom tools do not use AgentCrew's interactive per-call approval: adding a
+Cursor agent to `enabledForAgents` explicitly grants it access to those tools.
+Use `includeTools` to limit access, especially for destructive servers.
 
 For local agents, MCP discovery runs after activation. Built-in tools are
 available immediately while discovered MCP tools are synchronized in the background.

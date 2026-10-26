@@ -94,6 +94,23 @@ def _log_background_cleanup(task: asyncio.Task) -> None:
             logger.warning("Delegate cleanup task failed: %s", error)
 
 
+def _log_cursor_cleanup_failure(task: asyncio.Task) -> None:
+    """Observe late cleanup failures without logging SDK errors or credentials."""
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("Cursor delegate cancellation cleanup failed")
+
+
+async def _wait_cursor_cleanup(task: asyncio.Task, label: str) -> None:
+    """Bound a cleanup wait; the worker retains its cwd lease until it exits."""
+    task.add_done_callback(_log_cursor_cleanup_failure)
+    try:
+        done, _ = await asyncio.wait({task}, timeout=DELEGATE_CLEANUP_TIMEOUT)
+        if not done:
+            logger.warning("Cursor delegate {} cleanup timed out", label)
+    except asyncio.CancelledError:
+        logger.warning("Cursor delegate {} cleanup wait cancelled", label)
+
+
 async def _bounded_delegate_cleanup(label: str, operation: Any) -> None:
     """Give each owned cleanup operation at most one second."""
     task = asyncio.create_task(operation)
@@ -316,8 +333,14 @@ def get_delegate_tool_handler(agent_manager: AgentManager) -> Callable:
                 return result
             except asyncio.CancelledError:
                 cancelled.set()
-                await asyncio.to_thread(CursorAgent._cancel_run, run_holder.get("run"))
-                await asyncio.shield(worker)
+                cancel_task = asyncio.create_task(
+                    asyncio.to_thread(CursorAgent._cancel_run, run_holder.get("run"))
+                )
+                try:
+                    await _wait_cursor_cleanup(cancel_task, "run cancel")
+                    await _wait_cursor_cleanup(worker, "worker")
+                except Exception:
+                    logger.warning("Cursor delegate cancellation cleanup failed")
                 raise
             finally:
                 publisher.enqueue("finish", "")
