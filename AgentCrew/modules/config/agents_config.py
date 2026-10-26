@@ -23,6 +23,7 @@ class LocalAgentConfig:
     voice_id: str | None = None
     model_id: str | None = None
     reason_effort: str | None = None
+    system_prompt_ref: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LocalAgentConfig":
@@ -30,6 +31,7 @@ class LocalAgentConfig:
             name=data["name"],
             description=data.get("description", ""),
             system_prompt=data.get("system_prompt", ""),
+            system_prompt_ref=data.get("system_prompt_ref", []),
             tools=data.get("tools", []),
             enabled=data.get("enabled", True),
             temperature=data.get("temperature"),
@@ -47,6 +49,8 @@ class LocalAgentConfig:
             "tools": self.tools,
             "enabled": self.enabled,
         }
+        if self.system_prompt_ref:
+            result["system_prompt_ref"] = self.system_prompt_ref
         if self.temperature is not None:
             result["temperature"] = self.temperature
         if self.voice_enabled != "disabled":

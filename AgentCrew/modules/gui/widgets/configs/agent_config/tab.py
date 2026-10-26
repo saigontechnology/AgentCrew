@@ -324,6 +324,10 @@ class AgentsConfigTab(QWidget):
 
             current_item.setText(name)
 
+        if agent_type == "local" and "system_prompt_ref" in agent_data_from_list:
+            updated_agent_data["system_prompt_ref"] = agent_data_from_list[
+                "system_prompt_ref"
+            ]
         current_item.setData(Qt.ItemDataRole.UserRole, updated_agent_data)
         self.save_all_agents()
         self._is_dirty = False

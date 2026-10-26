@@ -2,12 +2,47 @@ import json
 import os
 import tomllib as toml
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 from .base import BaseAgent
 from .local_agent import LocalAgent
+
+
+def _resolve_system_prompt(agent: dict[str, Any]) -> str:
+    """Load local-agent prompt refs from the process working directory."""
+    inline_prompt = agent.get("system_prompt", "")
+    refs = agent.get("system_prompt_ref", [])
+    if not isinstance(refs, list):
+        logger.warning(
+            "Invalid system_prompt_ref for agent {!r}: expected a list",
+            agent.get("name"),
+        )
+        return inline_prompt
+
+    sections = []
+    for ref in refs:
+        if not isinstance(ref, str) or not ref:
+            logger.warning(
+                "Skipping invalid system_prompt_ref {!r} for agent {!r}",
+                ref,
+                agent.get("name"),
+            )
+            continue
+        try:
+            content = Path(ref).read_text(encoding="utf-8")
+        except (OSError, UnicodeError, ValueError) as exc:
+            logger.warning(
+                "Skipping system_prompt_ref {!r} for agent {!r}: {}",
+                ref,
+                agent.get("name"),
+                exc,
+            )
+            continue
+        sections.append(f"<{ref}>\n{content}\n</{ref}>")
+    return "\n\n".join(sections) if sections else inline_prompt
 
 
 class AgentMode(str, Enum):
@@ -41,6 +76,7 @@ class AgentManager:
             list of agent dictionaries.
         """
 
+        remote_config = config_uri.startswith(("@hub/", "http://", "https://"))
         if config_uri.startswith("@hub/"):
             hub_host = os.environ.get("AGENTCREW_HUB_HOST", "https://agentplace.cloud")
             config_uri = hub_host.rstrip("/") + "/" + config_uri[5:]
@@ -87,6 +123,14 @@ class AgentManager:
         local_agents = [
             agent for agent in config.get("agents", []) if agent.get("enabled", True)
         ]
+        for agent in local_agents:
+            if remote_config and agent.get("system_prompt_ref"):
+                logger.warning(
+                    "Remote agent config for {!r} references local prompt files; "
+                    "their contents may be sent to the configured LLM",
+                    agent.get("name"),
+                )
+            agent["system_prompt"] = _resolve_system_prompt(agent)
         remote_agents = [
             agent
             for agent in config.get("remote_agents", [])

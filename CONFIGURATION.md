@@ -295,6 +295,7 @@ Define specialized local agents, remote A2A agents, and Cursor agents in
 name = "ExampleAssistant"
 description = "Example local AgentCrew agent"
 system_prompt = "You are a helpful assistant. Today is {current_date}."
+system_prompt_ref = ["prompts/role.md", "/absolute/path/to/rules.md"]
 tools = ["web_search", "read_file"]
 enabled = true
 temperature = 0.7
@@ -359,7 +360,8 @@ Local agent fields are:
 | --- | --- | --- |
 | `name` | Yes | Unique local-agent identifier. |
 | `description` | No | Short purpose used for selection and transfers. Defaults to `""`. |
-| `system_prompt` | No | Agent instructions. `{current_date}` and `{agent_name}` are replaced automatically. Defaults to `""`. |
+| `system_prompt` | No | Inline agent instructions; used when no referenced file loads. Defaults to `""`. |
+| `system_prompt_ref` | No | Ordered list of UTF-8 prompt file paths (absolute or relative to the process working directory). Defaults to `[]`. |
 | `tools` | No | List of tool names available to the agent. Defaults to `[]`. |
 | `enabled` | No | Whether the agent is available. Defaults to `true`. |
 | `temperature` | No | Sampling temperature. |
@@ -367,6 +369,22 @@ Local agent fields are:
 | `voice_id` | No | ElevenLabs voice ID. |
 | `model_id` | No | Registered or provider-qualified model ID. |
 | `reason_effort` | No | Reasoning level supported by the selected model. |
+
+For local `[[agents]]`, each successfully read `system_prompt_ref` file becomes
+`<configured/path>\ncontent of file\n</configured/path>`, using the configured
+path string literally for both tags (including any `/`). Loaded sections are
+joined in declared order with a blank line (`\n\n`). If at least one file
+loads, the combined file sections **replace** `system_prompt` entirely; missing,
+unreadable, or invalid UTF-8 refs are skipped with warnings. Only when no file
+loads does the inline `system_prompt` apply. Missing or empty refs keep existing
+inline behavior. Relative paths resolve against the **process working directory**,
+not the directory containing `agents.toml`, including configs loaded from HTTP
+or `@hub/`. Files are reread on startup and configuration reload.
+
+**Security warning:** HTTP and `@hub/` agent configs can reference local files,
+including sensitive files, through `system_prompt_ref`. Their contents can then
+be included in requests to the configured LLM provider. Only load agent configs
+from trusted sources; review referenced paths before use.
 
 Remote agent fields are `name`, `description`, `base_url`, `enabled`, and
 `headers`. `base_url` is the remote A2A server endpoint. Remote entries do not
