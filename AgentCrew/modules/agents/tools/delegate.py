@@ -281,6 +281,46 @@ def get_delegate_tool_handler(agent_manager: AgentManager) -> Callable:
         if target_agent_name == from_agent_name:
             raise ValueError("Error: Cannot delegate to yourself")
 
+        target_agent = agent_manager.agents[target_agent_name]
+        from AgentCrew.modules.agents.cursor_agent import (
+            CursorAgent,
+            _delegate_to_cursor,
+        )
+
+        if isinstance(target_agent, CursorAgent):
+            import threading
+
+            cancelled = threading.Event()
+            run_holder: dict[str, Any] = {}
+            publisher = _DelegateProgressPublisher(
+                EventBus.get_instance(),
+                uuid.uuid4().hex,
+                target_agent_name,
+                DELEGATE_PROGRESS_TIMEOUT,
+            )
+            publisher.enqueue("start", task_description)
+            worker = asyncio.create_task(
+                asyncio.to_thread(
+                    _delegate_to_cursor,
+                    from_agent_name,
+                    target_agent,
+                    task_description,
+                    context,
+                    cancelled,
+                    run_holder,
+                )
+            )
+            try:
+                result = await asyncio.shield(worker)
+                publisher.enqueue("response", result)
+                return result
+            except asyncio.CancelledError:
+                cancelled.set()
+                await asyncio.to_thread(CursorAgent._cancel_run, run_holder.get("run"))
+                await asyncio.shield(worker)
+                raise
+            finally:
+                publisher.enqueue("finish", "")
         target_agent = agent_manager.get_local_agent(target_agent_name)
         if not target_agent:
             raise ValueError(

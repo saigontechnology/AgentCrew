@@ -558,6 +558,7 @@ class CursorAgent(BaseAgent):
             )
         memory = self.services.get("memory") if "memory" in self.tools else None
         if memory is None:
+            tools.update(self._mcp_custom_tools(sdk))
             return tools
 
         from AgentCrew.modules.memory.tool import (
@@ -598,7 +599,18 @@ class CursorAgent(BaseAgent):
                 input_schema=function["parameters"],
                 execute=execute,
             )
+        tools.update(self._mcp_custom_tools(sdk))
         return tools
+
+    def _mcp_custom_tools(self, sdk: Any) -> dict[str, Any]:
+        """Load assigned MCP tools without registering local LLM tools."""
+        try:
+            from AgentCrew.modules.mcpclient.cursor_adapter import cursor_mcp_tools
+
+            return cursor_mcp_tools(sdk, self.name, _run_coroutine)
+        except Exception:
+            logger.warning("Cursor MCP setup failed for agent '{}'", self.name)
+            return {}
 
     def _execute_transfer(self, args: Mapping[str, Any], _context: Any = None) -> str:
         if self._pending_transfer is not None:
@@ -948,7 +960,12 @@ async def _delegate_to_remote(source: str, target: Any, task: str, context: str)
 
 
 def _delegate_to_cursor(
-    source: str, target: CursorAgent, task: str, context: str
+    source: str,
+    target: CursorAgent,
+    task: str,
+    context: str,
+    cancel_event: threading.Event | None = None,
+    run_holder: dict[str, Any] | None = None,
 ) -> str:
     owner = f"cursor-oneshot:{uuid4()}"
     blocker = _claim_cwd(target.cwd, owner)
@@ -966,20 +983,29 @@ def _delegate_to_cursor(
             api_key=os.environ.get("CURSOR_API_KEY"),
             local=sdk.LocalAgentOptions(
                 cwd=target.cwd,
-                setting_sources=["project"],
+                setting_sources=["project", "user"],
+                custom_tools=target._mcp_custom_tools(sdk),
             ),
         )
+        if cancel_event is not None and cancel_event.is_set():
+            return f"Error: Cursor delegation to '{target.name}' cancelled."
         run = agent.send(_delegation_message(source, task, context))
+        if run_holder is not None:
+            run_holder["run"] = run
         chunks: list[str] = []
         try:
             stream = getattr(run, "stream", None)
             if stream is not None:
                 for message in stream():
+                    if cancel_event is not None and cancel_event.is_set():
+                        return f"Error: Cursor delegation to '{target.name}' cancelled."
                     delta, _thinking = target._translate_message(message)
                     if delta:
                         chunks.append(delta)
             text = "".join(chunks).strip()
             if not text:
+                if cancel_event is not None and cancel_event.is_set():
+                    return f"Error: Cursor delegation to '{target.name}' cancelled."
                 result = run.wait()
                 text = str(
                     getattr(result, "result", "") or getattr(run, "result", "") or ""

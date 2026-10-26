@@ -374,9 +374,9 @@ class MCPService:
                 return response.tools
             finally:
                 await self._close_session(session, ctx)
-        except Exception as e:
-            logger.exception(
-                f"MCPService: Discovery failed for '{server_config.name}': {e}"
+        except Exception:
+            logger.warning(
+                "MCPService: Discovery failed for server '{}'", server_config.name
             )
             return []
 
@@ -473,6 +473,30 @@ class MCPService:
             with agent._mcp_registry_lock:
                 if combined_server_id in agent.mcps_loading:
                     agent.mcps_loading.remove(combined_server_id)
+
+    async def get_cursor_tool_definitions(
+        self, server_config: MCPServerConfig, agent_name: str
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Return permitted namespaced schemas without local-LLM registration."""
+        tools = self.tools_cache.get(server_config.name)
+        if tools is None:
+            discovered = await self.discover_server_tools(server_config, agent_name)
+            tools = {tool.name: tool for tool in discovered}
+        filtered = self._filter_tools_for_registration(
+            list(tools.values()), server_config.includeTools, server_config.name
+        )
+        definitions = []
+        for tool in filtered:
+            try:
+                definitions.append(
+                    (tool.name, self._format_tool_definition(tool, server_config.name))
+                )
+            except Exception:
+                logger.warning(
+                    "MCPService: Skipping invalid tool schema on server '{}'",
+                    server_config.name,
+                )
+        return definitions
 
     def _create_stateless_tool_handler(
         self, server_config: MCPServerConfig, tool_name: str

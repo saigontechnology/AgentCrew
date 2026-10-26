@@ -419,7 +419,7 @@ while other URLs use Streamable HTTP. Both entries below include the full
 | `name` | Server identifier. |
 | `command` and `args` | Local stdio executable and arguments. Leave empty for remote streaming servers. |
 | `env` | Environment variables passed to a local server process. |
-| `enabledForAgents` | Agent names allowed to use the server. An empty list makes it available to all agents. |
+| `enabledForAgents` | Agent names allowed to use the server. An empty list disables it for all agents. |
 | `streaming_server` | `false` for local stdio; `true` for remote HTTP/SSE. |
 | `url` | Remote server URL. Leave empty for local stdio servers. |
 | `headers` | Optional request headers, normally for remote authentication. |
@@ -429,8 +429,14 @@ Remote servers can use static headers or an OAuth flow. When OAuth is required,
 AgentCrew opens the authorization URL and persists the resulting token state
 under the persistence directory.
 
-MCP discovery runs after agent activation. Built-in tools are available
-immediately while discovered MCP tools are synchronized in the background.
+For Cursor agents, add the Cursor agent's name to `enabledForAgents`. Assigned
+AgentCrew MCP tools are discovered when the Cursor SDK agent is created, exposed
+as `server__tool` custom tools, and called through AgentCrew's stateless MCP
+service (including its OAuth handling). `includeTools` also applies. Cursor's
+native project and user MCP settings remain available independently.
+
+For local agents, MCP discovery runs after activation. Built-in tools are
+available immediately while discovered MCP tools are synchronized in the background.
 
 ## Adaptive Behaviors (`persistents/adaptive.json`)
 
