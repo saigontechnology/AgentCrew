@@ -34,7 +34,8 @@ class TokenUsage:
             cached_tokens=other.cached_tokens or self.cached_tokens,
             total_input_tokens=self.total_input_tokens
             + other.input_tokens
-            + other.cached_tokens,
+            + other.cached_tokens
+            + other.cache_creation_tokens,
             cache_creation_tokens=self.cache_creation_tokens
             + other.cache_creation_tokens,
         )

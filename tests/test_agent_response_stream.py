@@ -18,17 +18,19 @@ Covers:
 from __future__ import annotations
 
 import pathlib
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
 
 from AgentCrew.modules.agents.agent_response_stream import AgentResponseStream
+from AgentCrew.modules.agents.context_manager import AgentContextManager
 from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.agents.message_metadata import (
     METADATA_FIELD,
     get_responses_provider_state,
 )
+from AgentCrew.modules.anthropic.service import AnthropicService
 from AgentCrew.modules.openai.response_service import OpenAIResponseService
 
 ENCRYPTED = "gAAAAABstream-encrypted-reasoning-blob=="
@@ -376,6 +378,58 @@ async def test_concurrent_streams_do_not_mix_reasoning_items():
     assert state_b["output_items"][0]["id"] == "rs_b"
     assert msg_a["_metadata"]["context_usage"]["prompt_tokens"] == 31
     assert msg_b["_metadata"]["context_usage"]["prompt_tokens"] == 57
+
+
+@pytest.mark.asyncio
+async def test_anthropic_cache_creation_counts_in_snapshot_and_shrink_gate(monkeypatch):
+    chunks = [
+        _event(
+            "message_start",
+            message=SimpleNamespace(
+                usage=SimpleNamespace(
+                    input_tokens=20,
+                    cache_read_input_tokens=10,
+                    cache_creation_input_tokens=60,
+                )
+            ),
+        ),
+        _event("content_block_delta", delta=SimpleNamespace(text="answer")),
+        _event("message_delta", usage=SimpleNamespace(output_tokens=5)),
+    ]
+    agent = _make_agent([chunks])
+    agent.llm._provider_name = "anthropic"
+    agent.llm.model = "claude-test"
+    agent.llm.process_stream_chunk = MethodType(
+        AnthropicService.process_stream_chunk, agent.llm
+    )
+    stream = agent.process_messages(
+        [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+    )
+    await _drain(stream)
+    message = stream.format_assistant_message("answer")
+    assert message["_metadata"]["context_usage"] == {
+        "prompt_tokens": 90,
+        "provider": "anthropic",
+        "model": "claude-test",
+    }
+    assert agent.token_usage.input_tokens == 20
+    assert agent.token_usage.cached_tokens == 10
+    assert agent.token_usage.cache_creation_tokens == 60
+    assert agent.token_usage.total_input_tokens == 90
+    assert agent.token_usage.total_tokens == 95
+
+    agent.services["agent_manager"] = SimpleNamespace(
+        context_shrink_enabled=True, shrink_excluded_list=[]
+    )
+    monkeypatch.setenv("AGENTCREW_DEFAULT_MAX_CONTEXT", "100")
+    history = [
+        {"role": "assistant", "tool_calls": [{"id": "old", "name": "read_file"}]},
+        {"role": "tool", "tool_call_id": "old", "content": "old result"},
+        *[{"role": "user", "content": "recent"} for _ in range(10)],
+    ]
+    AgentContextManager(agent).shrink_tool_results(history)
+    assert history[1]["role"] == "user"
+    assert "was truncated" in history[1]["content"][0]["text"]
 
 
 # ---------------------------------------------------------------------------

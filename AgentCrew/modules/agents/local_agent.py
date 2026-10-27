@@ -125,7 +125,9 @@ class LocalAgent(BaseAgent):
             output_tokens=self.token_usage.output_tokens,
             cached_tokens=self.token_usage.cached_tokens,
             cache_creation_tokens=self.token_usage.cache_creation_tokens,
-            total_input_tokens=value + self.token_usage.cached_tokens,
+            total_input_tokens=value
+            + self.token_usage.cached_tokens
+            + self.token_usage.cache_creation_tokens,
         )
 
     @property
@@ -919,10 +921,14 @@ class LocalAgent(BaseAgent):
                     _token_usage = _token_usage.merge(chunk_token_usage)
 
             # ── agent.process after hook ────────────────────────────
-            if _token_usage.input_tokens + _token_usage.cached_tokens > 0:
+            prompt_tokens = (
+                _token_usage.input_tokens
+                + _token_usage.cached_tokens
+                + _token_usage.cache_creation_tokens
+            )
+            if prompt_tokens > 0:
                 request_usage.update(
-                    prompt_tokens=_token_usage.input_tokens
-                    + _token_usage.cached_tokens,
+                    prompt_tokens=prompt_tokens,
                     provider=_agent_process_provider,
                     model=_modified_model_id,
                 )

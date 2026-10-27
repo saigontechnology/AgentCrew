@@ -209,6 +209,42 @@ def test_exclusions_rejected_summary_fallback_and_unique_stale(monkeypatch):
     assert any(msg.get("content") == "[UNIQUE]new" for msg in messages)
 
 
+def test_prompt_total_counts_cache_writes_once_and_emergency_setter_stays_consistent():
+    usage = TokenUsage().merge(
+        TokenUsage(
+            input_tokens=20,
+            cached_tokens=10,
+            cache_creation_tokens=60,
+            output_tokens=5,
+        )
+    )
+    usage = usage.merge(TokenUsage(output_tokens=7))
+    assert (usage.input_tokens, usage.cached_tokens, usage.cache_creation_tokens) == (
+        20,
+        10,
+        60,
+    )
+    assert usage.total_input_tokens == 90
+    assert usage.total_tokens == 97
+    assert (
+        TokenUsage().merge(TokenUsage(cache_creation_tokens=30)).total_input_tokens
+        == 30
+    )
+    assert (
+        TokenUsage()
+        .merge(TokenUsage(input_tokens=20, cached_tokens=10))
+        .total_input_tokens
+        == 30
+    )
+
+    agent = _agent(0)
+    agent.token_usage = usage
+    agent.input_tokens_usage = 100
+    assert agent.token_usage.total_input_tokens == 170
+    assert agent.token_usage.cached_tokens == 10
+    assert agent.token_usage.cache_creation_tokens == 60
+
+
 def test_metadata_merge_roundtrip_and_provider_safe():
     message = _snapshot(340_000)
     state = {
