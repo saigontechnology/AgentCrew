@@ -140,7 +140,7 @@ class ConfirmationHandler:
                     markup=False,
                 )
 
-                max_width = self.console.width - 4
+                max_width = self.console.width - 16
                 choices = [
                     "\n".join(textwrap.wrap(a, width=max_width)) for a in guided_answers
                 ]
