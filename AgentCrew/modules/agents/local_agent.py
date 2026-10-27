@@ -125,7 +125,7 @@ class LocalAgent(BaseAgent):
             output_tokens=self.token_usage.output_tokens,
             cached_tokens=self.token_usage.cached_tokens,
             cache_creation_tokens=self.token_usage.cache_creation_tokens,
-            total_input_tokens=self.token_usage.total_input_tokens,
+            total_input_tokens=value + self.token_usage.cached_tokens,
         )
 
     @property
@@ -820,12 +820,14 @@ class LocalAgent(BaseAgent):
             An ``AgentResponseStream`` yielding
             ``(assistant_response, chunk_text, thinking_chunk)`` tuples.
         """
+        request_usage: dict[str, Any] = {}
         return AgentResponseStream(
             agent=self,
             state_factory=self.create_stream_state,
             iterator_factory=lambda stream_state: self._stream_messages(
-                messages, callback, stream_state
+                messages, callback, stream_state, request_usage
             ),
+            request_usage=request_usage,
         )
 
     async def _stream_messages(
@@ -833,6 +835,7 @@ class LocalAgent(BaseAgent):
         messages: list[dict[str, Any]] | None,
         callback: Callable | None,
         stream_state: dict[str, Any] | None,
+        request_usage: dict[str, Any],
     ):
         """Private async iterator implementing the stream lifecycle."""
         if not self.llm:
@@ -916,6 +919,13 @@ class LocalAgent(BaseAgent):
                     _token_usage = _token_usage.merge(chunk_token_usage)
 
             # ── agent.process after hook ────────────────────────────
+            if _token_usage.input_tokens + _token_usage.cached_tokens > 0:
+                request_usage.update(
+                    prompt_tokens=_token_usage.input_tokens
+                    + _token_usage.cached_tokens,
+                    provider=_agent_process_provider,
+                    model=_modified_model_id,
+                )
             _process_after_envelope: AgentProcessResult = {
                 "tool_uses": _tool_uses,
                 "token_usage": _token_usage,

@@ -108,11 +108,11 @@ def _reasoning_item(item_id: str = "rs_stream") -> SimpleNamespace:
     )
 
 
-def _completed_event() -> SimpleNamespace:
+def _completed_event(input_tokens=10, cached_tokens=0) -> SimpleNamespace:
     usage = SimpleNamespace(
-        input_tokens=10,
+        input_tokens=input_tokens,
         output_tokens=5,
-        input_tokens_details=SimpleNamespace(cached_tokens=0),
+        input_tokens_details=SimpleNamespace(cached_tokens=cached_tokens),
         output_tokens_details=None,
     )
     return _event("response.completed", response=SimpleNamespace(usage=usage))
@@ -198,6 +198,11 @@ async def test_process_messages_owns_state_and_finalizes_with_metadata():
     assert state["provider"] == "openai"
     assert state["model"] == "gpt-5.4"
     assert state["output_items"][0]["encrypted_content"] == ENCRYPTED
+    assert message["_metadata"]["context_usage"] == {
+        "prompt_tokens": 10,
+        "provider": "openai",
+        "model": "gpt-5.4",
+    }
     assert len(_thinking_blocks(message)) == 1
 
 
@@ -330,7 +335,8 @@ async def test_concurrent_streams_do_not_mix_reasoning_items():
             item=_reasoning_item(item_id="rs_a"),
             output_index=0,
         ),
-        *_text_events("answer a"),
+        _event("response.output_text.delta", delta="answer a", output_index=1),
+        _completed_event(input_tokens=31, cached_tokens=21),
     ]
     chunks_b = [
         _event(
@@ -338,7 +344,8 @@ async def test_concurrent_streams_do_not_mix_reasoning_items():
             item=_reasoning_item(item_id="rs_b"),
             output_index=0,
         ),
-        *_text_events("answer b"),
+        _event("response.output_text.delta", delta="answer b", output_index=1),
+        _completed_event(input_tokens=57, cached_tokens=7),
     ]
     agent = _make_agent([chunks_a, chunks_b])
     history: list[dict[str, Any]] = [
@@ -367,6 +374,8 @@ async def test_concurrent_streams_do_not_mix_reasoning_items():
     assert state_a is not None and state_b is not None
     assert state_a["output_items"][0]["id"] == "rs_a"
     assert state_b["output_items"][0]["id"] == "rs_b"
+    assert msg_a["_metadata"]["context_usage"]["prompt_tokens"] == 31
+    assert msg_b["_metadata"]["context_usage"]["prompt_tokens"] == 57
 
 
 # ---------------------------------------------------------------------------

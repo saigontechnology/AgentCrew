@@ -1,7 +1,7 @@
 """Centralized helpers for AgentCrew-internal message metadata.
 
-The ``_metadata`` envelope (schema version 1) currently stores only opaque
-provider continuation state for the OpenAI Responses API. Existing AgentCrew
+The ``_metadata`` envelope (schema version 1) stores request-level context
+usage and opaque OpenAI Responses provider continuation state. Existing AgentCrew
 custom history fields (``agent``, ``tool_name``, ``is_rejected``, ...) remain
 top-level and are intentionally NOT migrated in this slice.
 
@@ -66,11 +66,47 @@ def attach_stream_metadata(
     reasoning_items = stream_state.get("reasoning_items") or []
     if not reasoning_items:
         return
-    message[METADATA_FIELD] = build_responses_metadata(
-        provider=stream_state.get("provider", ""),
-        model=stream_state.get("model", ""),
-        output_items=reasoning_items,
-    )
+    metadata = message.setdefault(METADATA_FIELD, {"version": METADATA_VERSION})
+    metadata.setdefault("provider_state", {})[PROVIDER_STATE_OPENAI_RESPONSES] = {
+        "provider": stream_state.get("provider", ""),
+        "model": stream_state.get("model", ""),
+        "output_items": reasoning_items,
+    }
+
+
+def attach_context_usage(
+    message: dict[str, Any], prompt_tokens: int, provider: str, model: str
+) -> None:
+    """Attach the raw request's input context, including cached prompt tokens."""
+    if prompt_tokens <= 0 or not provider or not model:
+        return
+    metadata = message.setdefault(METADATA_FIELD, {"version": METADATA_VERSION})
+    metadata["context_usage"] = {
+        "prompt_tokens": prompt_tokens,
+        "provider": provider,
+        "model": model,
+    }
+
+
+def get_context_usage(message: dict[str, Any]) -> dict[str, Any] | None:
+    """Read a valid request-level prompt snapshot from an assistant message."""
+    metadata = message.get(METADATA_FIELD)
+    if not isinstance(metadata, dict):
+        return None
+    usage = metadata.get("context_usage")
+    if not isinstance(usage, dict):
+        return None
+    tokens = usage.get("prompt_tokens")
+    if (
+        type(tokens) is not int
+        or tokens <= 0
+        or not isinstance(usage.get("provider"), str)
+        or not usage["provider"]
+        or not isinstance(usage.get("model"), str)
+        or not usage["model"]
+    ):
+        return None
+    return usage
 
 
 def get_responses_provider_state(message: dict[str, Any]) -> dict[str, Any] | None:

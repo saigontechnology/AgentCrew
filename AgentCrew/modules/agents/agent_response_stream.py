@@ -7,8 +7,8 @@ create or thread provider state themselves. Callers:
 - iterate the stream with ``async for``;
 - close it on cancellation with ``await stream.aclose()``;
 - finalize assistant messages with ``stream.format_assistant_message(...)``,
-  which delegates to the agent's message formatter and attaches any captured
-  provider continuation state.
+  which delegates to the agent's message formatter and attaches captured
+  provider continuation state and request-level prompt usage.
 
 Each stream instance owns exactly one private state container, created lazily
 on first iteration. State is never stored on the agent or LLM service, so
@@ -21,7 +21,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from AgentCrew.modules.agents.base import MessageType
-from AgentCrew.modules.agents.message_metadata import attach_stream_metadata
+from AgentCrew.modules.agents.message_metadata import (
+    attach_context_usage,
+    attach_stream_metadata,
+)
 
 if TYPE_CHECKING:
     from AgentCrew.modules.agents.base import BaseAgent
@@ -35,10 +38,12 @@ class AgentResponseStream:
         agent: BaseAgent,
         state_factory: Callable[[], dict[str, Any] | None],
         iterator_factory: Callable[[dict[str, Any] | None], Any],
+        request_usage: dict[str, Any] | None = None,
     ) -> None:
         self._agent = agent
         self._state_factory = state_factory
         self._iterator_factory = iterator_factory
+        self._request_usage = request_usage
         self._stream_state: dict[str, Any] | None = None
         self._iterator: Any = None
         self._closed = False
@@ -80,9 +85,9 @@ class AgentResponseStream:
     ) -> dict[str, Any] | None:
         """Format an assistant message and attach captured stream metadata.
 
-        Delegates to the agent's message formatter and attaches any provider
-        continuation state captured during iteration. No-op for streams
-        without captured state (for example remote agents).
+        Delegates to the agent's message formatter and attaches captured provider
+        continuation state and request-local prompt usage. No-op for streams
+        without captured state or usage (for example remote agents).
         """
         data: dict[str, Any] = {"message": response}
         if thinking is not None:
@@ -92,4 +97,6 @@ class AgentResponseStream:
         message = self._agent.format_message(MessageType.Assistant, data)
         if message is not None:
             attach_stream_metadata(message, self._stream_state)
+            if self._request_usage:
+                attach_context_usage(message, **self._request_usage)
         return message

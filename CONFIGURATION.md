@@ -254,10 +254,14 @@ The complete template shows all active settings and their defaults:
 - `agent_mode`: `"transfer"` by default. Allowed values are `"transfer"`,
   `"delegate"`, and `"none"`.
 
-`auto_context_shrink` starts shrinking after input usage reaches 85% of the
-configured model context limit. The newest messages remain intact, and summary
-creation is asynchronous; if a matching summary is unavailable, AgentCrew uses
-a compact tool-result placeholder instead.
+`auto_context_shrink` starts shrinking when input usage reaches 85% of the
+configured model context limit. It uses provider-reported prompt-token snapshots
+on assistant messages to protect a recent token-based tail (20% of the trigger
+budget); when compatible snapshots cannot establish a boundary, it protects
+the newest 10 messages instead. This watermark selects which older tool results
+are eligible, not an exact post-shrink context size. Summary creation is
+asynchronous; if a matching summary is unavailable, AgentCrew uses a compact
+tool-result placeholder instead.
 
 ### Plugins
 

@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from .message_metadata import get_context_usage
+
 if TYPE_CHECKING:
     from .local_agent import LocalAgent
 
@@ -287,30 +289,72 @@ You must analyze and plan out the steps then execute it with your available tool
                 },
             )
 
+    def _watermark_boundary(
+        self, messages: list[dict[str, Any]], current_tokens: int, trigger: int
+    ) -> int | None:
+        """Find the newest compatible prior snapshot at or below the floor."""
+        llm = self._agent.llm
+        if llm is None:
+            return None
+        identity = (self._agent.name, llm._provider_name, llm.model)
+        watermark = current_tokens - int(trigger * 0.20)
+        newer_tokens = current_tokens
+        latest = True
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if (
+                message.get("role") != "assistant"
+                or message.get("agent") != identity[0]
+            ):
+                continue
+            usage = get_context_usage(message)
+            if (
+                not usage
+                or (message["agent"], usage["provider"], usage["model"]) != identity
+            ):
+                break
+            tokens = usage["prompt_tokens"]
+            if latest:
+                if tokens != current_tokens:
+                    break
+                latest = False
+                continue
+            if tokens > newer_tokens:
+                break
+            if tokens <= watermark:
+                return index
+            newer_tokens = tokens
+        return None
+
     def shrink_tool_results(self, final_messages: list[dict[str, Any]]) -> None:
-        """Prune large tool results when token usage exceeds 85% of model context."""
+        """Prune eligible older tool results when prompt usage reaches 85%."""
         from AgentCrew.modules.llm.model_registry import ModelRegistry
 
         agent = self._agent
-        shrink_context_threshold = (
-            int(
-                os.getenv(
-                    "AGENTCREW_DEFAULT_MAX_CONTEXT",
-                    ModelRegistry.get_model_limit(agent.get_model()),
-                )
+        max_context = int(
+            os.getenv(
+                "AGENTCREW_DEFAULT_MAX_CONTEXT",
+                ModelRegistry.get_model_limit(agent.get_model()),
             )
-            * 0.85
         )
+        trigger_tokens = int(max_context * 0.85)
 
         unique_tool_indices = []
         agent_manager = agent.services.get("agent_manager", None)
 
         is_shrinkable = (
             agent_manager.context_shrink_enabled if agent_manager else False
-        ) and agent.token_usage.total_input_tokens > shrink_context_threshold
-        shrink_threshold = len(final_messages) - int(
-            os.getenv("AGENTCREW_CONTEXT_SHRINK_THRESHOLD", SHRINK_LENGTH_THRESHOLD)
-        )
+        ) and agent.token_usage.total_input_tokens >= trigger_tokens
+        shrink_threshold = None
+        if is_shrinkable and agent.token_usage.total_input_tokens < max_context:
+            shrink_threshold = self._watermark_boundary(
+                final_messages, agent.token_usage.total_input_tokens, trigger_tokens
+            )
+        using_watermark = shrink_threshold is not None
+        if shrink_threshold is None:
+            shrink_threshold = len(final_messages) - int(
+                os.getenv("AGENTCREW_CONTEXT_SHRINK_THRESHOLD", SHRINK_LENGTH_THRESHOLD)
+            )
         shrink_excluded = set(
             agent_manager.shrink_excluded_list if agent_manager else []
         )
@@ -320,6 +364,11 @@ You must analyze and plan out the steps then execute it with your available tool
         tool_result_needed_rearrange: dict[int, list[int]] = {}
         tool_with_id_needed_rearrange: list[str] = []
         shrink_tool_call_args: dict[str, dict[str, Any]] = {}
+        protected_result_ids = {
+            msg.get("tool_call_id")
+            for msg in (final_messages[shrink_threshold:] if using_watermark else [])
+            if msg.get("role") == "tool"
+        }
 
         for i, msg in enumerate(final_messages):
             content = None
@@ -333,7 +382,10 @@ You must analyze and plan out the steps then execute it with your available tool
 
                     for tool_call in msg.get("tool_calls", []):
                         if tool_call.get("id", None):
-                            if tool_call.get("name") in shrink_excluded:
+                            if (
+                                tool_call.get("name") in shrink_excluded
+                                or tool_call["id"] in protected_result_ids
+                            ):
                                 tool_with_id_needed_rearrange.append(
                                     tool_call.get("id")
                                 )
@@ -345,6 +397,7 @@ You must analyze and plan out the steps then execute it with your available tool
                         t
                         for t in msg.get("tool_calls", [])
                         if t.get("name", "") in shrink_excluded
+                        or t.get("id") in protected_result_ids
                     ]
                     if len(msg["tool_calls"]) == 0:
                         msg.pop("tool_calls", None)
