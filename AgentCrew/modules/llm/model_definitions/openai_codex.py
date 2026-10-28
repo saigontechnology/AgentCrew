@@ -106,6 +106,17 @@ OPENAI_CODEX_MODELS = [
         output_token_price_1m=0.0,
     ),
     Model(
+        id="gpt-6.1-terra",
+        provider="openai_codex",
+        name="GPT-6.1 Sol (ChatGPT)",
+        description="GPT-6.1 Terra via ChatGPT subscription OAuth",
+        capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
+        default_reasoning="high",
+        max_context_token=272_000,
+        input_token_price_1m=0.0,
+        output_token_price_1m=0.0,
+    ),
+    Model(
         id="gpt-6-sol",
         provider="openai_codex",
         name="GPT-6 Sol (ChatGPT)",

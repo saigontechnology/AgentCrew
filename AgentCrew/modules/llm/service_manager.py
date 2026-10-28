@@ -406,7 +406,7 @@ class ServiceManager:
             return
 
         if model.default_reasoning is not None:
-            setattr(service, "reasoning_effort", model.default_reasoning)
+            service.reasoning_effort = model.default_reasoning
 
     def clone_service(self, service: BaseLLMService) -> BaseLLMService:
         """Create a dedicated uncached service matching ``service``'s current model.
