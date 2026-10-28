@@ -13,6 +13,7 @@ from .google import GOOGLE_MODELS
 from .openai import OPENAI_MODELS
 from .openai_codex import OPENAI_CODEX_MODELS
 from .opencode import OPENCODE_GO_MODELS
+from .refuseless import REFUSELESS_MODELS
 from .together import TOGETHER_MODELS
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "OPENAI_CODEX_MODELS",
     "OPENAI_MODELS",
     "OPENCODE_GO_MODELS",
+    "REFUSELESS_MODELS",
     "TOGETHER_MODELS",
 ]

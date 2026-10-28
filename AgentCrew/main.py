@@ -648,7 +648,7 @@ def xai_auth(logout: bool):
     "--provider",
     type=click.Choice(PROVIDER_LIST),
     default=None,
-    help="LLM provider to use (claude, openai, google, github_copilot, deepinfra, together, opencode_go, commandcode, or openai_codex, or xai)",
+    help="LLM provider to use (claude, openai, google, github_copilot, deepinfra, together, fireworks, refuseless, opencode_go, commandcode, openai_codex, or xai)",
 )
 @click.option(
     "--agent-config",

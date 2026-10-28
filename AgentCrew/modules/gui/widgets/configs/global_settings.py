@@ -76,6 +76,11 @@ class SettingsTab(QWidget):
             "placeholder": "e.g., ...",
         },
         {
+            "label": "Refuseless API Key:",
+            "key_name": "REFUSELESS_API_KEY",
+            "placeholder": "e.g., abl_...",
+        },
+        {
             "label": "OpenCode API Key:",
             "key_name": "OPENCODE_API_KEY",
             "placeholder": "e.g., ...",

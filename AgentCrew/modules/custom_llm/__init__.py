@@ -4,6 +4,7 @@ from .deepinfra_service import DeepInfraService
 from .fireworks_service import FireworksService
 from .github_copilot_service import GithubCopilotService
 from .opencode_service import OpenCodeService
+from .refuseless_service import RefuselessService
 from .service import CustomLLMService
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "GithubCopilotResponseService",
     "GithubCopilotService",
     "OpenCodeService",
+    "RefuselessService",
 ]

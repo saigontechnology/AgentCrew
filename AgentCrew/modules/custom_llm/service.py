@@ -13,6 +13,8 @@ from AgentCrew.modules.openai import OpenAIService
 class CustomLLMService(OpenAIService):
     """Custom LLM service that can connect to any OpenAI-compatible API."""
 
+    _non_stream_reasoning_effort = "none"
+
     def __init__(
         self,
         base_url: str,
@@ -270,7 +272,7 @@ class CustomLLMService(OpenAIService):
         if "thinking" in ModelRegistry.get_model_capabilities(
             f"{self._provider_name}/{self.model}"
         ):
-            request_params["reasoning_effort"] = "none"
+            request_params["reasoning_effort"] = self._non_stream_reasoning_effort
         stream = await self.client.chat.completions.create(**request_params)
 
         async for chunk in stream:

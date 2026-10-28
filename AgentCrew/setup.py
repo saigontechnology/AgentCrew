@@ -47,6 +47,7 @@ PROVIDER_LIST = [
     "opencode_go",
     "commandcode",
     "fireworks",
+    "refuseless",
     "github_copilot",
 ]
 
@@ -56,7 +57,7 @@ def common_options(func):
         "--provider",
         type=click.Choice(PROVIDER_LIST),
         default=None,
-        help="LLM provider to use (claude, openai, google, github_copilot, deepinfra, together, opencode_go, commandcode, or openai_codex, or xai)",
+        help="LLM provider to use (claude, openai, google, github_copilot, deepinfra, together, fireworks, refuseless, opencode_go, commandcode, openai_codex, or xai)",
     )
     @click.option(
         "--agent-config",
@@ -79,6 +80,7 @@ def common_options(func):
                 "together",
                 "opencode_go",
                 "commandcode",
+                "refuseless",
                 "github_copilot",
                 "copilot_response",
             ]
@@ -258,6 +260,7 @@ class ApplicationSetup:
             "COMMAND_CODE_API_KEY",
             "GITHUB_COPILOT_API_KEY",
             "FIREWORKS_API_KEY",
+            "REFUSELESS_API_KEY",
             "TAVILY_API_KEY",
             "VOYAGE_API_KEY",
             "ELEVENLABS_API_KEY",
@@ -291,6 +294,7 @@ class ApplicationSetup:
                         "commandcode": "COMMAND_CODE_API_KEY",
                         "github_copilot": "GITHUB_COPILOT_API_KEY",
                         "fireworks": "FIREWORKS_API_KEY",
+                        "refuseless": "REFUSELESS_API_KEY",
                     }
                     if last_provider == "openai_codex":
                         from AgentCrew.modules.openai_codex.oauth import (
@@ -332,6 +336,8 @@ class ApplicationSetup:
             return "commandcode"
         elif os.getenv("FIREWORKS_API_KEY"):
             return "fireworks"
+        elif os.getenv("REFUSELESS_API_KEY"):
+            return "refuseless"
         else:
             custom_providers = GlobalConfig().read_custom_llm_providers_config()
             if len(custom_providers) > 0:

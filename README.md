@@ -140,6 +140,7 @@ schema, llama.cpp configuration, model capabilities, and sampling options.
 | **DeepInfra**    | Pay-as-you-go, low cost    | Open models (LLaMA, Qwen, etc.)        |
 | **Together AI**  | Pay-as-you-go              | Open models, fine-tuning               |
 | **Fireworks**    | Pay-as-you-go              | Fast open model inference              |
+| **Refuseless**   | See provider for pricing   | OpenAI-compatible abliterated models   |
 | OpenAI           | Per-token pricing          | GPT-4o, broad ecosystem                |
 | Anthropic        | Per-token pricing          | Claude family                          |
 | Google Gemini    | Free tier available        | Budget-friendly, strong reasoning      |

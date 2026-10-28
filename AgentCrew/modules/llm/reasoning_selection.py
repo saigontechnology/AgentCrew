@@ -140,6 +140,7 @@ def apply_reasoning_to_service(
     if service is None:
         return False
     if level is None and getattr(service, "allow_unconfigured_reasoning", False):
+        service.reasoning_effort = None
         return True
     value = adapt_reason_effort(service, level or "none")
     strict = explicit or getattr(service, "strict_reasoning_selection", False)

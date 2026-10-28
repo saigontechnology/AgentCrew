@@ -48,7 +48,7 @@ class AgentCrewApplication:
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
                 raise ValueError(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
+                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
                 )
 
             services = self.setup.setup_services(
@@ -216,7 +216,7 @@ class AgentCrewApplication:
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
                 raise ValueError(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
+                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
                 )
 
             need_memory = bool(memory_path)
@@ -293,7 +293,7 @@ class AgentCrewApplication:
                     detected_model_id=runtime_model.detected_model_id,
                 )
                 logger.error(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
+                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
                 )
 
             services = self.setup.setup_services(
@@ -420,7 +420,7 @@ class AgentCrewApplication:
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
                 raise ValueError(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, or OPENCODE_API_KEY"
+                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
                 )
 
             need_memory = bool(memory_path)

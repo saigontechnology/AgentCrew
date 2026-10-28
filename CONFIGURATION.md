@@ -55,6 +55,7 @@ the full file shape.
     "COMMAND_CODE_API_KEY": "YOUR_COMMAND_CODE_API_KEY",
     "GITHUB_COPILOT_API_KEY": "YOUR_GITHUB_COPILOT_API_KEY",
     "FIREWORKS_API_KEY": "YOUR_FIREWORKS_API_KEY",
+    "REFUSELESS_API_KEY": "YOUR_REFUSELESS_API_KEY",
     "TAVILY_API_KEY": "YOUR_TAVILY_API_KEY",
     "VOYAGE_API_KEY": "YOUR_VOYAGE_API_KEY",
     "ELEVENLABS_API_KEY": "YOUR_ELEVENLABS_API_KEY",
@@ -115,7 +116,7 @@ than keeping placeholder text in a live configuration.
 
 ### API Keys and Credential Scope
 
-The following thirteen names are the complete `config.json.api_keys` allow-list.
+The following fourteen names are the complete `config.json.api_keys` allow-list.
 At startup, AgentCrew copies each non-empty value into the process environment.
 They can also be set directly as environment variables.
 
@@ -130,10 +131,13 @@ They can also be set directly as environment variables.
 | `COMMAND_CODE_API_KEY` | Command Code provider credential. |
 | `GITHUB_COPILOT_API_KEY` | GitHub Copilot provider credential. Use `agentcrew copilot-auth` for the supported Copilot login flow. |
 | `FIREWORKS_API_KEY` | Fireworks AI provider credential. |
+| `REFUSELESS_API_KEY` | Refuseless OpenAI-compatible chat provider credential. |
 | `TAVILY_API_KEY` | Tavily web-search feature credential; not an LLM provider credential. |
 | `VOYAGE_API_KEY` | Voyage embedding credential for the normal memory path. |
 | `ELEVENLABS_API_KEY` | ElevenLabs voice-synthesis credential. |
 | `CURSOR_API_KEY` | Cursor Agent SDK credential. It can also be set directly in the environment. |
+
+Refuseless uses `https://api.refuseless.com/v1` and `refuseless/<model-id>` selections. The [official SDK guide](https://docs.refuseless.com/sdks.md) documents the two GLM 5.3 models with 1,048,576-token context; AgentCrew caps each at 128,000 tokens because Refuseless pricing is not published and the cost tier is unknown. Zero-valued token prices mean **unknown**, not free. Only the two GLM models in the [published model catalog](https://docs.refuseless.com/models.md) are built in. Advanced users can supply an explicit raw `--model-id` for other IDs, but Refuseless may return `404 model_not_found` for unrecognized models. Confirm live availability and limits with Refuseless before use.
 
 For OpenAI Codex subscription authentication, use `agentcrew chatgpt-auth`.
 That flow stores OAuth state and does not introduce another `*_API_KEY` setting.

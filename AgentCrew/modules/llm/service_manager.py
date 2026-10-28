@@ -60,6 +60,7 @@ class ServiceManager:
             "github_copilot": self._create_github_copilot_service,
             "copilot_response": self._create_copilot_response_service,
             "fireworks": self._create_fireworks_service,
+            "refuseless": self._create_refuseless_service,
             "commandcode": self._create_commandcode_service,
             "commandcode_anthropic": self._create_commandcode_anthropic_service,
         }
@@ -184,6 +185,15 @@ class ServiceManager:
         from AgentCrew.modules.custom_llm import FireworksService
 
         return FireworksService()
+
+    def _create_refuseless_service(self) -> BaseLLMService:
+        """Create Refuseless using the existing OpenAI-compatible chat service."""
+        api_key = os.getenv("REFUSELESS_API_KEY", "")
+        if not api_key:
+            raise ValueError("REFUSELESS_API_KEY not found in environment variables.")
+        from AgentCrew.modules.custom_llm import RefuselessService
+
+        return RefuselessService(api_key=api_key)
 
     def _create_commandcode_service(self) -> BaseLLMService:
         """Lazy import and create CommandCode service (OpenAI-compatible endpoint)."""
@@ -396,7 +406,7 @@ class ServiceManager:
             return
 
         if model.default_reasoning is not None:
-            service.reasoning_effort = model.default_reasoning
+            setattr(service, "reasoning_effort", model.default_reasoning)
 
     def clone_service(self, service: BaseLLMService) -> BaseLLMService:
         """Create a dedicated uncached service matching ``service``'s current model.

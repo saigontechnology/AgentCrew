@@ -18,6 +18,7 @@ PROVIDER_API_KEY_MAP: dict[str, str] = {
     "opencode_go": "OPENCODE_API_KEY",
     "opencode_anthropic": "OPENCODE_API_KEY",
     "fireworks": "FIREWORKS_API_KEY",
+    "refuseless": "REFUSELESS_API_KEY",
     "github_copilot": "GITHUB_COPILOT_API_KEY",
     "copilot_response": "GITHUB_COPILOT_API_KEY",
     "commandcode": "COMMAND_CODE_API_KEY",
@@ -51,6 +52,10 @@ PROVIDER_MODEL_MODULES: dict[str, tuple[str, str]] = {
     "fireworks": (
         "AgentCrew.modules.llm.model_definitions.fireworks",
         "FIREWORKS_MODELS",
+    ),
+    "refuseless": (
+        "AgentCrew.modules.llm.model_definitions.refuseless",
+        "REFUSELESS_MODELS",
     ),
     "github_copilot": (
         "AgentCrew.modules.llm.model_definitions.github_copilot",
