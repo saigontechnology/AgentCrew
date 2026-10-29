@@ -11,7 +11,7 @@ from loguru import logger
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
 from AgentCrew.modules.llm.model_selection import RuntimeModelInput
-from AgentCrew.modules.runtime import get_interactive_runtime, run_interactive
+from AgentCrew.modules.runtime import InteractiveAsyncRuntime
 from AgentCrew.setup import ApplicationSetup
 
 
@@ -43,9 +43,10 @@ class AgentCrewApplication:
         from AgentCrew.modules.console import ConsoleUI
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
-        interactive_runtime = get_interactive_runtime()
-        interactive_runtime.start()
+        self.interactive_runtime = InteractiveAsyncRuntime()
+        interactive_runtime = self.interactive_runtime
         try:
+            interactive_runtime.start()
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
                 raise ValueError(
@@ -57,6 +58,8 @@ class AgentCrewApplication:
                 memory_llm=memory_llm,
                 with_voice=with_voice,
                 reason_effort=reason_effort,
+                interactive=True,
+                run_async=interactive_runtime.run,
             )
 
             if mcp_config:
@@ -72,7 +75,7 @@ class AgentCrewApplication:
 
             # Initialize plugins (non-blocking — errors logged, not fatal)
             try:
-                run_interactive(self.setup.initialize_plugins())
+                interactive_runtime.run(self.setup.initialize_plugins())
             except Exception:
                 logger.exception("Failed to initialize plugins (continuing)")
 
@@ -87,6 +90,7 @@ class AgentCrewApplication:
             ui = ConsoleUI(
                 message_handler,
                 global_config.get("global_settings", {}).get("swap_enter", False),
+                runtime=interactive_runtime,
             )
             ui.start()
         except Exception as e:
@@ -95,12 +99,12 @@ class AgentCrewApplication:
         finally:
             try:
                 if interactive_runtime.is_alive():
-                    run_interactive(self.setup.shutdown())
+                    interactive_runtime.shutdown(self.setup.shutdown())
             except Exception:
                 logger.exception("Failed to shut down application resources")
+                raise
             finally:
-                interactive_runtime.shutdown()
-            MCPSessionManager.get_instance().cleanup()
+                MCPSessionManager.get_instance().cleanup()
 
     def run_gui(
         self,
@@ -112,6 +116,8 @@ class AgentCrewApplication:
         model_id: str | None = None,
         reason_effort: str | None = None,
     ) -> None:
+        import asyncio
+
         from PySide6.QtCore import QCoreApplication, Qt
         from PySide6.QtWidgets import QApplication
 
@@ -119,8 +125,6 @@ class AgentCrewApplication:
         from AgentCrew.modules.gui import ChatWindow
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
-        interactive_runtime = get_interactive_runtime()
-        interactive_runtime.start()
         try:
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
@@ -152,7 +156,7 @@ class AgentCrewApplication:
 
             # Initialize plugins in GUI mode (lazy — errors logged, not fatal)
             try:
-                run_interactive(self.setup.initialize_plugins())
+                asyncio.run(self.setup.initialize_plugins())
             except Exception:
                 logger.exception("Failed to initialize plugins (continuing)")
 
@@ -189,12 +193,9 @@ class AgentCrewApplication:
             click.echo(f"❌ Error: {e!s}", err=True)
         finally:
             try:
-                if interactive_runtime.is_alive():
-                    run_interactive(self.setup.shutdown())
+                asyncio.run(self.setup.shutdown())
             except Exception:
                 logger.exception("Failed to shut down application resources")
-            finally:
-                interactive_runtime.shutdown()
             MCPSessionManager.get_instance().cleanup()
 
     def run_server(

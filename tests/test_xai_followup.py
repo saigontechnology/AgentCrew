@@ -1,4 +1,4 @@
-"""Exercise xAI turns on a stable asyncio event loop."""
+"""Exercise xAI turns across the console's separate asyncio.run event loops."""
 
 import asyncio
 import copy
@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 from openai import APIConnectionError
 
-from AgentCrew.modules.runtime import get_interactive_runtime, run_interactive
 from AgentCrew.modules.xai.oauth import XAIOAuth
 from AgentCrew.modules.xai.response_service import XAISubscriptionResponseService
 
@@ -45,14 +44,7 @@ class LoopBoundClient:
 
 
 class XAIFollowupTests(unittest.TestCase):
-    def setUp(self):
-        self._runtime = get_interactive_runtime()
-        self._runtime.start()
-
-    def tearDown(self):
-        self._runtime.shutdown()
-
-    def test_two_turns_on_shared_interactive_runtime(self):
+    def test_two_turns_on_distinct_event_loops_without_retry(self):
         requests = []
         clients = []
 
@@ -68,61 +60,33 @@ class XAIFollowupTests(unittest.TestCase):
             service.client = client_factory()
             history = [{"role": "user", "content": "hello"}]
 
-            async def both_turns():
+            async def turn():
                 text = ""
-                async with await service.stream_assistant_response(history) as stream:
-                    async for event in stream:
-                        text += getattr(event, "delta", "")
-                self.assertEqual(text, "ok")
-                history.extend(
-                    [
-                        {"role": "assistant", "content": "ok"},
-                        {"role": "user", "content": "follow up"},
-                    ]
-                )
                 async with await service.stream_assistant_response(history) as stream:
                     async for event in stream:
                         text += getattr(event, "delta", "")
                 return text
 
             with patch(
-                "AgentCrew.modules.openai.response_service.AsyncOpenAI",
+                "AgentCrew.modules.xai.response_service.AsyncOpenAI",
                 side_effect=client_factory,
             ):
-                self.assertEqual(run_interactive(both_turns()), "okok")
+                self.assertEqual(asyncio.run(turn()), "ok")
+                history.extend(
+                    [
+                        {"role": "assistant", "content": "ok"},
+                        {"role": "user", "content": "follow up"},
+                    ]
+                )
+                self.assertEqual(asyncio.run(turn()), "ok")
 
-        self.assertEqual(len(clients), 1)
+        self.assertEqual(len(clients), 2)
         self.assertEqual(len(requests), 2)
         self.assertEqual([len(request["input"]) for request in requests], [1, 3])
         self.assertTrue(
             all("previous_response_id" not in request for request in requests)
         )
         self.assertEqual(history[-1]["content"], "follow up")
-
-    def test_cross_loop_use_fails_fast(self):
-        requests = []
-
-        def client_factory(**kwargs):
-            return LoopBoundClient(requests)
-
-        with patch.object(
-            XAIOAuth, "get_valid_access_token", return_value="test-token"
-        ):
-            service = XAISubscriptionResponseService()
-            service.client = client_factory()
-            history = [{"role": "user", "content": "hello"}]
-
-            async def turn():
-                async with await service.stream_assistant_response(history) as stream:
-                    return [event.type async for event in stream]
-
-            with patch(
-                "AgentCrew.modules.openai.response_service.AsyncOpenAI",
-                side_effect=client_factory,
-            ):
-                self.assertEqual(asyncio.run(turn())[-1], "response.completed")
-                with self.assertRaises(RuntimeError):
-                    asyncio.run(turn())
 
     def test_failed_request_does_not_mutate_history_and_next_turn_recovers(self):
         requests = []
@@ -140,10 +104,15 @@ class XAIFollowupTests(unittest.TestCase):
             service.client = client_factory()
             history = [{"role": "user", "content": "hello"}]
 
-            async def turns():
+            async def turn():
                 async with await service.stream_assistant_response(history) as stream:
-                    first = [event.type async for event in stream]
-                self.assertEqual(first[-1], "response.completed")
+                    return [event.type async for event in stream]
+
+            with patch(
+                "AgentCrew.modules.xai.response_service.AsyncOpenAI",
+                side_effect=client_factory,
+            ):
+                self.assertEqual(asyncio.run(turn())[-1], "response.completed")
                 history.extend(
                     [
                         {"role": "assistant", "content": "ok"},
@@ -152,24 +121,13 @@ class XAIFollowupTests(unittest.TestCase):
                 )
                 snapshot = copy.deepcopy(history)
                 with self.assertRaises(APIConnectionError):
-                    async with await service.stream_assistant_response(
-                        history
-                    ) as stream:
-                        async for _event in stream:
-                            pass
+                    asyncio.run(turn())
                 self.assertEqual(history, snapshot)
-                async with await service.stream_assistant_response(history) as stream:
-                    return [event.type async for event in stream]
-
-            with patch(
-                "AgentCrew.modules.openai.response_service.AsyncOpenAI",
-                side_effect=client_factory,
-            ):
-                self.assertEqual(run_interactive(turns())[-1], "response.completed")
+                self.assertEqual(asyncio.run(turn())[-1], "response.completed")
 
         self.assertEqual(len(requests), 3)
         self.assertEqual(requests[1]["input"], requests[2]["input"])
-        self.assertEqual(len(clients), 1)
+        self.assertEqual(len(clients), 3)
 
 
 if __name__ == "__main__":

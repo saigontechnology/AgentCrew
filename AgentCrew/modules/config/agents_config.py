@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -635,8 +636,10 @@ class AgentsConfig:
         import_file_path: str,
         merge_strategy: str = "update",
         skip_conflicts: bool = False,
+        *,
+        config_writer: Callable[[AgentsFileConfig], None] | None = None,
     ) -> dict[str, Any]:
-        """Import agents from a previously exported file."""
+        """Import agents, optionally using an owner's async-native write bridge."""
         result = {
             "success": False,
             "added_count": 0,
@@ -760,7 +763,7 @@ class AgentsConfig:
 
             written = AgentsFileConfig.from_dict(final_config)
             written.cursor_agents = list(current_config.cursor_agents)
-            self.write(written)
+            (config_writer or self.write)(written)
 
             result["success"] = True
             logger.info(

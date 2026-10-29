@@ -5,6 +5,7 @@ Refactored to use separate modules for different responsibilities.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import queue
 import signal
@@ -21,7 +22,7 @@ from rich.text import Text
 from AgentCrew.modules.chat.agent_evaluation import parse_agent_evaluation
 from AgentCrew.modules.events import AppEvents, EventBus
 from AgentCrew.modules.llm.token_usage import TokenUsage
-from AgentCrew.modules.runtime import run_interactive
+from AgentCrew.modules.runtime import InteractiveAsyncRuntime
 
 from .constants import (
     PROMPT_CHAR,
@@ -42,7 +43,13 @@ class ConsoleUI:
     A console-based UI for the interactive chat that receives EventBus updates.
     """
 
-    def __init__(self, message_handler: MessageHandler, swap_enter: bool = False):
+    def __init__(
+        self,
+        message_handler: MessageHandler,
+        swap_enter: bool = False,
+        *,
+        runtime: InteractiveAsyncRuntime,
+    ):
         """
         Initialize the ConsoleUI.
 
@@ -59,6 +66,9 @@ class ConsoleUI:
         from .ui_effects import UIEffects
 
         self.message_handler = message_handler
+        self.runtime = runtime
+        self._turn_lock = asyncio.Lock()
+        self._closing = threading.Event()
         self.bus = EventBus.get_instance()
         self._subscriptions: list[Any] = []
         self._stream_cancel_pending = False
@@ -80,6 +90,32 @@ class ConsoleUI:
         self._token_usage = TokenUsage()
         self._total_cost = 0
 
+    def run_exclusive(self, operation):
+        """Serialize top-level session mutations, not nested evolution callbacks."""
+        if self._closing.is_set():
+            raise RuntimeError("Console is shutting down")
+
+        async def execute():
+            async with self._turn_lock:
+                return await operation()
+
+        return self.runtime.run(execute())
+
+    async def _process_turn(self, user_input: str):
+        should_exit, was_cleared = await self.message_handler.process_user_input(
+            user_input
+        )
+        if should_exit or was_cleared or not self.message_handler.agent.history:
+            return should_exit, True, None, TokenUsage()
+        response, usage = await self.message_handler.get_assistant_response()
+        return False, False, response, usage
+
+    def load_conversation(self, conversation_id: str):
+        """Load history and select its agent on the session's runtime."""
+        return self.run_exclusive(
+            lambda: self.message_handler.load_conversation_async(conversation_id)
+        )
+
     def _set_voice_processing_state(self, is_processing: bool):
         voice_service = self.message_handler.voice_service
         if voice_service and hasattr(voice_service, "audio_handler"):
@@ -100,16 +136,11 @@ class ConsoleUI:
         try:
             self._stream_cancel_pending = False
             self.input_handler.is_message_processing = True
-            should_exit, was_cleared = run_interactive(
-                self.message_handler.process_user_input(transcript)
+            should_exit, was_cleared, assistant_response, token_usage = (
+                self.run_exclusive(lambda: self._process_turn(transcript))
             )
-
-            if should_exit or was_cleared or not self.message_handler.agent.history:
+            if should_exit or was_cleared:
                 return
-
-            assistant_response, token_usage = run_interactive(
-                self.message_handler.get_assistant_response()
-            )
             self._token_usage = self._token_usage.merge(token_usage)
         except Exception as e:
             self.message_handler.bus.emit_sync(
@@ -474,20 +505,24 @@ class ConsoleUI:
             default="accept",
         )
         if choice == "accept":
-            run_interactive(self.message_handler.submit_pending_evolution_review("accept"))
+            self.runtime.run(
+                self.message_handler.submit_pending_evolution_review("accept")
+            )
         elif choice == "edit":
             edited = self.input_handler.get_prompt_input(
                 f"Edit approved summary {self.input_handler.prompt_submit_hint}:",
                 default=data.get("user_editable_summary", ""),
             )
             action = "edit" if edited.strip() else "decline"
-            run_interactive(
+            self.runtime.run(
                 self.message_handler.submit_pending_evolution_review(
                     action, edited.strip()
                 )
             )
         else:
-            run_interactive(self.message_handler.submit_pending_evolution_review("decline"))
+            self.runtime.run(
+                self.message_handler.submit_pending_evolution_review("decline")
+            )
         self.input_handler._start_input_thread()
 
     def _on_evolution_questions(self, **data):
@@ -1101,8 +1136,10 @@ class ConsoleUI:
                         self.start_loading_animation()
 
                     # Process user input and commands
-                    should_exit, was_cleared = run_interactive(
-                        self.message_handler.process_user_input(user_input)
+                    should_exit, was_cleared, assistant_response, token_usage = (
+                        self.run_exclusive(
+                            lambda text=user_input: self._process_turn(text)
+                        )
                     )
 
                     if should_exit:
@@ -1111,15 +1148,6 @@ class ConsoleUI:
                     # Skip to next iteration if messages were cleared
                     if was_cleared:
                         continue
-
-                    # Skip to next iteration if no messages to process
-                    if not self.message_handler.agent.history:
-                        continue
-
-                    # Get assistant response
-                    assistant_response, token_usage = run_interactive(
-                        self.message_handler.get_assistant_response()
-                    )
 
                     self._is_resizing = False
                     self._token_usage = self._token_usage.merge(token_usage)
@@ -1139,6 +1167,8 @@ class ConsoleUI:
                     self._handle_keyboard_interrupt()
                     continue  # Continue the loop instead of breaking
         finally:
+            self._closing.set()
+            self.message_handler.request_stop_stream()
             # Clean up input thread when exiting
             self.input_handler.stop()
             self.ui_effects.cleanup()
