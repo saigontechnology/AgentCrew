@@ -1,3 +1,4 @@
+import asyncio
 import queue
 import threading
 from collections.abc import Callable
@@ -24,6 +25,7 @@ class AudioHandler(BaseAudioHandler):
         """Initialize audio handler."""
         super().__init__()
 
+        self.run_async = asyncio.run
         self.recording = False
         self.is_host_playing = False
         self.is_processing = False
@@ -100,9 +102,7 @@ class AudioHandler(BaseAudioHandler):
                 logger.info(
                     f"Recording stopped. Captured {len(audio_data) / sample_rate:.2f} seconds"
                 )
-                from AgentCrew.modules.runtime import run_interactive
-
-                run_interactive(voice_completed_cb(audio_data, sample_rate))
+                self.run_async(voice_completed_cb(audio_data, sample_rate))
             except Exception as e:
                 logger.error(f"Voice completion processing error: {e}")
             finally:

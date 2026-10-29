@@ -37,6 +37,7 @@ class CommandHandlers:
             console: Rich Console instance for output
             message_handler: MessageHandler instance for agent operations
         """
+        self._console_ui = console_ui
         self.console = console_ui.console
         self.message_handler = console_ui.message_handler
         self.context_service = console_ui.message_handler.persistent_service
@@ -102,7 +103,7 @@ class CommandHandlers:
         )
 
         self.open_file_in_editor(agents_config_path)
-        AgentsConfig().reload()
+        self._console_ui.run_exclusive(AgentsConfig().reload_async)
 
     def handle_edit_mcp_command(self) -> None:
         """Handle the /edit_mcp command to open MCP configuration in default editor."""
@@ -118,7 +119,7 @@ class CommandHandlers:
         )
 
         self.open_file_in_editor(mcp_config_path)
-        AgentsConfig().reload()
+        self._console_ui.run_exclusive(AgentsConfig().reload_async)
 
     def handle_edit_config_command(self) -> None:
         """Handle the /edit_config command to open AgentCrew global configuration in default editor."""
@@ -134,7 +135,7 @@ class CommandHandlers:
         )
 
         self.open_file_in_editor(config_path)
-        AgentsConfig().reload()
+        self._console_ui.run_exclusive(AgentsConfig().reload_async)
 
     def handle_toggle_session_yolo_command(self) -> None:
         """Toggle session-level YOLO mode override for auto-approval of tool calls."""
@@ -238,7 +239,12 @@ class CommandHandlers:
                 )
 
             result = AgentsConfig().import_agents(
-                file_or_url, merge_strategy="update", skip_conflicts=False
+                file_or_url,
+                merge_strategy="update",
+                skip_conflicts=False,
+                config_writer=lambda config: self._console_ui.run_exclusive(
+                    lambda: AgentsConfig().write_async(config)
+                ),
             )
 
             if not result["success"]:

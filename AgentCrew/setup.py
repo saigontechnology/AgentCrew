@@ -138,6 +138,7 @@ class ApplicationSetup:
         self.plugin_manager = PluginManager(trusted_project_plugins=_trusted)
         self._plugins_initialized = False
         self._standalone_llm_services: list[Any] = []
+        self._run_async = None
 
     async def initialize_plugins(self) -> None:
         """Discover and load all plugins transactionally."""
@@ -169,21 +170,25 @@ class ApplicationSetup:
         try:
             await self.shutdown_plugins()
         finally:
-            await self._close_tool_result_summary_service()
-            if self.agent_manager is not None:
-                try:
-                    await self.agent_manager.close_all_remote_agents()
-                finally:
+            try:
+                await self._close_tool_result_summary_service()
+            finally:
+                if self.agent_manager is not None:
                     try:
-                        await self.agent_manager.close_all_cursor_agents()
+                        await self.agent_manager.close_all_remote_agents()
                     finally:
-                        await self._close_dedicated_llm_services()
-                        await self._close_app_owned_standalone_llms()
-            else:
-                from AgentCrew.modules.llm.service_manager import ServiceManager
+                        try:
+                            await self.agent_manager.close_all_cursor_agents()
+                        finally:
+                            try:
+                                await self._close_dedicated_llm_services()
+                            finally:
+                                await self._close_app_owned_standalone_llms()
+                else:
+                    from AgentCrew.modules.llm.service_manager import ServiceManager
 
-                await self._close_app_owned_standalone_llms()
-                await ServiceManager.get_instance().drain_pending_closes()
+                    await self._close_app_owned_standalone_llms()
+                    await ServiceManager.get_instance().drain_pending_closes()
 
     async def _close_tool_result_summary_service(self) -> None:
         if not self.services:
@@ -223,7 +228,7 @@ class ApplicationSetup:
         await llm_manager.drain_pending_closes()
 
     async def _close_app_owned_standalone_llms(self) -> None:
-        """Close uncached LLM services owned by setup (memory, summaries, code analysis)."""
+        """Close uncached LLM services owned by application setup."""
         if not self._standalone_llm_services:
             return
         from AgentCrew.modules.llm.service_manager import ServiceManager
@@ -402,10 +407,15 @@ class ApplicationSetup:
         memory_llm: str | None = None,
         need_memory: bool = True,
         with_voice: bool = False,
+        interactive: bool = False,
+        run_async=None,
     ) -> dict[str, Any]:
         from AgentCrew.modules.llm.model_registry import ModelRegistry
         from AgentCrew.modules.llm.service_manager import ServiceManager
 
+        self._run_async = run_async
+        if interactive:
+            self.services = {}
         registry = ModelRegistry.get_instance()
         llm_manager = ServiceManager.get_instance()
 
@@ -430,13 +440,17 @@ class ApplicationSetup:
         )
         if selection.source is ModelSelectionSource.LAST_USED:
             try:
-                llm_service = llm_manager.get_service_for_selection(selection)
+                llm_service = llm_manager.get_service_for_selection(
+                    selection, standalone=interactive
+                )
             except Exception as e:
                 logger.warning(f"Could not restore last used model: {e}")
                 click.echo(f"\u26a0\ufe0f  Could not restore last used model: {e}")
                 llm_service = None
         else:
-            llm_service = llm_manager.get_service_for_selection(selection)
+            llm_service = llm_manager.get_service_for_selection(
+                selection, standalone=interactive
+            )
 
         if llm_service is None:
             llm_service = llm_manager.get_service_for_selection(
@@ -444,8 +458,11 @@ class ApplicationSetup:
                     provider=provider,
                     model_id=None,
                     source=ModelSelectionSource.DEFAULT,
-                )
+                ),
+                standalone=interactive,
             )
+        if interactive:
+            self._track_standalone_llm(llm_service)
 
         # Apply base reasoning: explicit CLI effort > selected model default.
         base_reasoning = resolve_reasoning_selection(
@@ -464,9 +481,7 @@ class ApplicationSetup:
             )
 
             memory_provider = memory_llm or provider
-            memory_llm_svc = self._track_standalone_llm(
-                llm_manager.initialize_standalone_service(memory_provider)
-            )
+            memory_llm_svc = llm_manager.initialize_standalone_service(memory_provider)
 
             if runtime.model_id:
                 model = registry.get_model(f"{provider}/{runtime.model_id}")
@@ -494,8 +509,8 @@ class ApplicationSetup:
 
             try:
                 summary_provider = memory_llm or provider
-                summary_llm = self._track_standalone_llm(
-                    llm_manager.initialize_standalone_service(summary_provider)
+                summary_llm = llm_manager.initialize_standalone_service(
+                    summary_provider
                 )
                 if runtime.model_id:
                     model = registry.get_model(f"{provider}/{runtime.model_id}")
@@ -508,6 +523,9 @@ class ApplicationSetup:
                 )
             except Exception as exc:
                 logger.warning(f"Tool-result summaries unavailable: {exc}")
+
+        if interactive:
+            self.services = {"tool_result_summary": tool_result_summary_service}
 
         from AgentCrew.modules.clipboard import ClipboardService
 
@@ -534,9 +552,9 @@ class ApplicationSetup:
         try:
             from AgentCrew.modules.code_analysis import CodeAnalysisService
 
-            code_analysis_llm = self._track_standalone_llm(
-                llm_manager.initialize_standalone_service(provider)
-            )
+            code_analysis_llm = llm_manager.initialize_standalone_service(provider)
+            if interactive:
+                self._track_standalone_llm(code_analysis_llm)
 
             if runtime.model_id:
                 model = registry.get_model(f"{provider}/{runtime.model_id}")
@@ -632,6 +650,9 @@ class ApplicationSetup:
             except Exception as e:
                 click.echo(f"\u26a0\ufe0f Voice service not available: {e!s}")
 
+        if voice_service is not None and run_async is not None:
+            voice_service.audio_handler.run_async = run_async
+
         self.services = {
             "llm": llm_service,
             "memory": memory_service,
@@ -718,7 +739,9 @@ class ApplicationSetup:
         if not agent_definitions and not use_standalone_provider:
             from AgentCrew.modules.onboarding import OnboardingService
 
-            onboarding = OnboardingService(services["llm"], services=services)
+            onboarding = OnboardingService(
+                services["llm"], services=services, run_async=self._run_async
+            )
             if onboarding.should_run(config_uri) and onboarding.run():
                 agent_definitions = AgentManager.load_agents_from_config(config_uri)
 

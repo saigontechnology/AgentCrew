@@ -57,7 +57,7 @@ class ConversationHandler:
                                 style=RICH_STYLE_YELLOW,
                             )
                         )
-                        messages = message_handler.load_conversation(convo_id)
+                        messages = self._console_ui.load_conversation(convo_id)
                         if messages:
                             self.display_handlers.display_loaded_conversation(
                                 messages, message_handler.agent.name
@@ -77,7 +77,7 @@ class ConversationHandler:
                         style=RICH_STYLE_YELLOW,
                     )
                 )
-                messages = message_handler.load_conversation(load_arg)
+                messages = self._console_ui.load_conversation(load_arg)
                 if messages:
                     self.display_handlers.display_loaded_conversation(
                         messages, message_handler.agent.name

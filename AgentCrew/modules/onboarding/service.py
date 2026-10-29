@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import sys
@@ -238,7 +239,9 @@ class OnboardingService:
         llm_service: BaseLLMService,
         agents_config: AgentsConfig | None = None,
         services: dict[str, Any] | None = None,
+        run_async=None,
     ):
+        self._run_async = run_async or asyncio.run
         self.llm_service = llm_service
         self.agents_config = agents_config or AgentsConfig()
         self.services = services or {}
@@ -348,9 +351,7 @@ class OnboardingService:
         self._print_status("Creating your agent '" + agent_name + "'...")
 
         try:
-            from AgentCrew.modules.runtime import run_interactive
-
-            result = run_interactive(
+            result = self._run_async(
                 self._run_onboarding_chat(agent_name, agent_description)
             )
         except Exception as e:

@@ -397,13 +397,13 @@ class XAISubscriptionResponseService(OpenAIResponseService):
         reasoning_effort: str | None,
     ) -> _CompletedResponsesStream:
         model = self._model_definition(model_id)
-        await self._ensure_valid_token()
         loop = asyncio.get_running_loop()
         if self._client_loop is not None and self._client_loop is not loop:
             raise RuntimeError(
                 "xAI Responses client is bound to a different asyncio event loop"
             )
         self._client_loop = loop
+        await self._ensure_valid_token()
         params = {
             "model": model_id,
             "input": self._convert_internal_format(messages, model_id=model_id),
