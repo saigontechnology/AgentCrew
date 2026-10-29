@@ -11,6 +11,7 @@ from loguru import logger
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.global_config import GlobalConfig
 from AgentCrew.modules.llm.model_selection import RuntimeModelInput
+from AgentCrew.modules.runtime import get_interactive_runtime, run_interactive
 from AgentCrew.setup import ApplicationSetup
 
 
@@ -38,12 +39,12 @@ class AgentCrewApplication:
         model_id: str | None = None,
         reason_effort: str | None = None,
     ) -> None:
-        import asyncio
-
         from AgentCrew.modules.chat import MessageHandler
         from AgentCrew.modules.console import ConsoleUI
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
+        interactive_runtime = get_interactive_runtime()
+        interactive_runtime.start()
         try:
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
@@ -71,7 +72,7 @@ class AgentCrewApplication:
 
             # Initialize plugins (non-blocking — errors logged, not fatal)
             try:
-                asyncio.run(self.setup.initialize_plugins())
+                run_interactive(self.setup.initialize_plugins())
             except Exception:
                 logger.exception("Failed to initialize plugins (continuing)")
 
@@ -93,9 +94,12 @@ class AgentCrewApplication:
             click.echo(f"❌ Error: {e!s}", err=True)
         finally:
             try:
-                asyncio.run(self.setup.shutdown())
+                if interactive_runtime.is_alive():
+                    run_interactive(self.setup.shutdown())
             except Exception:
                 logger.exception("Failed to shut down application resources")
+            finally:
+                interactive_runtime.shutdown()
             MCPSessionManager.get_instance().cleanup()
 
     def run_gui(
@@ -108,8 +112,6 @@ class AgentCrewApplication:
         model_id: str | None = None,
         reason_effort: str | None = None,
     ) -> None:
-        import asyncio
-
         from PySide6.QtCore import QCoreApplication, Qt
         from PySide6.QtWidgets import QApplication
 
@@ -117,6 +119,8 @@ class AgentCrewApplication:
         from AgentCrew.modules.gui import ChatWindow
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
+        interactive_runtime = get_interactive_runtime()
+        interactive_runtime.start()
         try:
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
@@ -148,7 +152,7 @@ class AgentCrewApplication:
 
             # Initialize plugins in GUI mode (lazy — errors logged, not fatal)
             try:
-                asyncio.run(self.setup.initialize_plugins())
+                run_interactive(self.setup.initialize_plugins())
             except Exception:
                 logger.exception("Failed to initialize plugins (continuing)")
 
@@ -185,9 +189,12 @@ class AgentCrewApplication:
             click.echo(f"❌ Error: {e!s}", err=True)
         finally:
             try:
-                asyncio.run(self.setup.shutdown())
+                if interactive_runtime.is_alive():
+                    run_interactive(self.setup.shutdown())
             except Exception:
                 logger.exception("Failed to shut down application resources")
+            finally:
+                interactive_runtime.shutdown()
             MCPSessionManager.get_instance().cleanup()
 
     def run_server(

@@ -137,6 +137,7 @@ class ApplicationSetup:
         # Initialize events infrastructure
         self.plugin_manager = PluginManager(trusted_project_plugins=_trusted)
         self._plugins_initialized = False
+        self._standalone_llm_services: list[Any] = []
 
     async def initialize_plugins(self) -> None:
         """Discover and load all plugins transactionally."""
@@ -177,9 +178,11 @@ class ApplicationSetup:
                         await self.agent_manager.close_all_cursor_agents()
                     finally:
                         await self._close_dedicated_llm_services()
+                        await self._close_app_owned_standalone_llms()
             else:
                 from AgentCrew.modules.llm.service_manager import ServiceManager
 
+                await self._close_app_owned_standalone_llms()
                 await ServiceManager.get_instance().drain_pending_closes()
 
     async def _close_tool_result_summary_service(self) -> None:
@@ -218,6 +221,27 @@ class ApplicationSetup:
         # Drain any scheduled async close tasks so clients are released before
         # the process exits.
         await llm_manager.drain_pending_closes()
+
+    async def _close_app_owned_standalone_llms(self) -> None:
+        """Close uncached LLM services owned by setup (memory, summaries, code analysis)."""
+        if not self._standalone_llm_services:
+            return
+        from AgentCrew.modules.llm.service_manager import ServiceManager
+
+        llm_manager = ServiceManager.get_instance()
+        seen: set[int] = set()
+        for service in self._standalone_llm_services:
+            if id(service) in seen:
+                continue
+            seen.add(id(service))
+            llm_manager.close_service(service)
+        self._standalone_llm_services.clear()
+        await llm_manager.drain_pending_closes()
+
+    def _track_standalone_llm(self, service: Any) -> Any:
+        if service is not None:
+            self._standalone_llm_services.append(service)
+        return service
 
     def load_api_keys_from_config(self) -> None:
         config_file_path = os.getenv("AGENTCREW_CONFIG_PATH")
@@ -440,7 +464,9 @@ class ApplicationSetup:
             )
 
             memory_provider = memory_llm or provider
-            memory_llm_svc = llm_manager.initialize_standalone_service(memory_provider)
+            memory_llm_svc = self._track_standalone_llm(
+                llm_manager.initialize_standalone_service(memory_provider)
+            )
 
             if runtime.model_id:
                 model = registry.get_model(f"{provider}/{runtime.model_id}")
@@ -468,8 +494,8 @@ class ApplicationSetup:
 
             try:
                 summary_provider = memory_llm or provider
-                summary_llm = llm_manager.initialize_standalone_service(
-                    summary_provider
+                summary_llm = self._track_standalone_llm(
+                    llm_manager.initialize_standalone_service(summary_provider)
                 )
                 if runtime.model_id:
                     model = registry.get_model(f"{provider}/{runtime.model_id}")
@@ -508,7 +534,9 @@ class ApplicationSetup:
         try:
             from AgentCrew.modules.code_analysis import CodeAnalysisService
 
-            code_analysis_llm = llm_manager.initialize_standalone_service(provider)
+            code_analysis_llm = self._track_standalone_llm(
+                llm_manager.initialize_standalone_service(provider)
+            )
 
             if runtime.model_id:
                 model = registry.get_model(f"{provider}/{runtime.model_id}")

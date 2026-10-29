@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx2
-from openai import AsyncOpenAI
 
 from AgentCrew.modules.agents.message_metadata import (
     get_responses_provider_state,
@@ -302,6 +301,10 @@ class XAISubscriptionResponseService(OpenAIResponseService):
 
     strict_reasoning_selection = True
 
+    async def close(self) -> None:
+        await super().close()
+        self._client_loop = None
+
     def __init__(self, token_path: str | None = None):
         self._oauth = XAIOAuth(token_path)
         token = self._oauth.get_valid_access_token()
@@ -397,10 +400,8 @@ class XAISubscriptionResponseService(OpenAIResponseService):
         await self._ensure_valid_token()
         loop = asyncio.get_running_loop()
         if self._client_loop is not None and self._client_loop is not loop:
-            self.client = AsyncOpenAI(
-                api_key=self.client.api_key,
-                base_url=self.client.base_url,
-                max_retries=0,
+            raise RuntimeError(
+                "xAI Responses client is bound to a different asyncio event loop"
             )
         self._client_loop = loop
         params = {

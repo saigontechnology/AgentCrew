@@ -1,4 +1,3 @@
-import asyncio
 import threading
 import traceback
 
@@ -11,6 +10,7 @@ from PySide6.QtCore import (
 
 from AgentCrew.modules.chat.message_handler import MessageHandler
 from AgentCrew.modules.events import AppEvents
+from AgentCrew.modules.runtime import run_interactive
 
 
 class LLMWorker(QObject):
@@ -61,7 +61,7 @@ class LLMWorker(QObject):
                 return
 
             # Process user input (commands, etc.)
-            exit_flag, clear_flag = asyncio.run(
+            exit_flag, clear_flag = run_interactive(
                 self.message_handler.process_user_input(user_input)
             )
 
@@ -79,7 +79,7 @@ class LLMWorker(QObject):
             (
                 assistant_response,
                 token_usage,
-            ) = asyncio.run(self.message_handler.get_assistant_response())
+            ) = run_interactive(self.message_handler.get_assistant_response())
 
             # Emit the response
             if assistant_response:
@@ -104,7 +104,7 @@ class LLMWorker(QObject):
                 self.error.emit("Message handler not connected")
                 return
 
-            asyncio.run(
+            run_interactive(
                 self.message_handler.submit_pending_evolution_review(action, summary)
             )
         except Exception as e:

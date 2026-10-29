@@ -1,4 +1,3 @@
-import asyncio
 import queue
 import threading
 from collections.abc import Callable
@@ -101,7 +100,9 @@ class AudioHandler(BaseAudioHandler):
                 logger.info(
                     f"Recording stopped. Captured {len(audio_data) / sample_rate:.2f} seconds"
                 )
-                asyncio.run(voice_completed_cb(audio_data, sample_rate))
+                from AgentCrew.modules.runtime import run_interactive
+
+                run_interactive(voice_completed_cb(audio_data, sample_rate))
             except Exception as e:
                 logger.error(f"Voice completion processing error: {e}")
             finally:

@@ -511,8 +511,14 @@ class ServiceManager:
 
     def _close_sync(self, service: BaseLLMService) -> None:
         """Close a service inline when no event loop is running."""
+        from AgentCrew.modules.runtime import try_get_interactive_runtime
+
+        runtime = try_get_interactive_runtime()
         try:
-            asyncio.run(service.close())
+            if runtime is not None:
+                runtime.run(service.close())
+            else:
+                asyncio.run(service.close())
         except Exception as e:
             logger.warning(f"Failed to close LLM service {service!r}: {e}")
 

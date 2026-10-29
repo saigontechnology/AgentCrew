@@ -909,6 +909,13 @@ class MessageHandler:
         self.tool_manager.reset_approved_tools()
         return self.conversation_manager.load_conversation(conversation_id)
 
+    async def load_conversation_async(self, conversation_id: str):
+        """Async load with the same side effects as :meth:`load_conversation`."""
+        self.tool_manager.reset_approved_tools()
+        return await self.conversation_manager.load_conversation_async(
+            conversation_id
+        )
+
     def delete_conversation_by_id(self, conversation_id: str) -> bool:
         """Deletes a conversation by its ID."""
         return self.conversation_manager.delete_conversation_by_id(conversation_id)

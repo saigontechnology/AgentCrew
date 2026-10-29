@@ -288,8 +288,11 @@ class ConversationLoader(QThread):
 
     def run(self):
         try:
-            # Assuming message_handler has load_conversation method
-            messages = self.message_handler.load_conversation(self.conv_id)
+            from AgentCrew.modules.runtime import run_interactive
+
+            messages = run_interactive(
+                self.message_handler.load_conversation_async(self.conv_id)
+            )
             if messages is not None:
                 self.loaded.emit(messages, self.conv_id)
             else:

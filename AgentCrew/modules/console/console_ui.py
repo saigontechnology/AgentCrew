@@ -5,7 +5,6 @@ Refactored to use separate modules for different responsibilities.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import queue
 import signal
@@ -22,6 +21,7 @@ from rich.text import Text
 from AgentCrew.modules.chat.agent_evaluation import parse_agent_evaluation
 from AgentCrew.modules.events import AppEvents, EventBus
 from AgentCrew.modules.llm.token_usage import TokenUsage
+from AgentCrew.modules.runtime import run_interactive
 
 from .constants import (
     PROMPT_CHAR,
@@ -100,14 +100,14 @@ class ConsoleUI:
         try:
             self._stream_cancel_pending = False
             self.input_handler.is_message_processing = True
-            should_exit, was_cleared = asyncio.run(
+            should_exit, was_cleared = run_interactive(
                 self.message_handler.process_user_input(transcript)
             )
 
             if should_exit or was_cleared or not self.message_handler.agent.history:
                 return
 
-            assistant_response, token_usage = asyncio.run(
+            assistant_response, token_usage = run_interactive(
                 self.message_handler.get_assistant_response()
             )
             self._token_usage = self._token_usage.merge(token_usage)
@@ -474,20 +474,20 @@ class ConsoleUI:
             default="accept",
         )
         if choice == "accept":
-            asyncio.run(self.message_handler.submit_pending_evolution_review("accept"))
+            run_interactive(self.message_handler.submit_pending_evolution_review("accept"))
         elif choice == "edit":
             edited = self.input_handler.get_prompt_input(
                 f"Edit approved summary {self.input_handler.prompt_submit_hint}:",
                 default=data.get("user_editable_summary", ""),
             )
             action = "edit" if edited.strip() else "decline"
-            asyncio.run(
+            run_interactive(
                 self.message_handler.submit_pending_evolution_review(
                     action, edited.strip()
                 )
             )
         else:
-            asyncio.run(self.message_handler.submit_pending_evolution_review("decline"))
+            run_interactive(self.message_handler.submit_pending_evolution_review("decline"))
         self.input_handler._start_input_thread()
 
     def _on_evolution_questions(self, **data):
@@ -1101,7 +1101,7 @@ class ConsoleUI:
                         self.start_loading_animation()
 
                     # Process user input and commands
-                    should_exit, was_cleared = asyncio.run(
+                    should_exit, was_cleared = run_interactive(
                         self.message_handler.process_user_input(user_input)
                     )
 
@@ -1117,7 +1117,7 @@ class ConsoleUI:
                         continue
 
                     # Get assistant response
-                    assistant_response, token_usage = asyncio.run(
+                    assistant_response, token_usage = run_interactive(
                         self.message_handler.get_assistant_response()
                     )
 

@@ -302,22 +302,10 @@ class _AnyDocIntermediate:
 
 
 def _run_async_bridge(coro) -> Any | None:
-    """Run an async coroutine from a sync context (asyncio.run bridge).
+    """Run an async coroutine from a sync context (interactive runtime bridge)."""
+    from AgentCrew.modules.runtime.bridge import run_async_bridge
 
-    Uses the codebase's canonical synchronous ``asyncio.run()`` bridge. When a
-    loop is already running in the current thread (e.g. the async message
-    handler), ``asyncio.run()`` cannot be used; log a warning and return None
-    so the caller degrades to conversion-only output.
-    """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    logger.warning(
-        "Cannot run asyncio.run() inside a running event loop; "
-        "returning file content without image descriptions"
-    )
-    return None
+    return run_async_bridge(coro)
 
 
 class FileHandler:
