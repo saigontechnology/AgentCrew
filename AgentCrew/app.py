@@ -343,58 +343,54 @@ class AgentCrewApplication:
         reason_effort: str | None = None,
     ) -> None:
         from AgentCrew.modules.acp import run_acp_agent
-        from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
-            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
-            if runtime_model.provider is None:
-                runtime_model = RuntimeModelInput(
-                    provider="opencode_go",
-                    explicit_provider=False,
-                    explicit_model_id=runtime_model.explicit_model_id,
-                    detected_model_id=runtime_model.detected_model_id,
+            with self._host_lifecycle() as runner:
+                runtime_model = self.setup.resolve_runtime_model(provider, model_id)
+                if runtime_model.provider is None:
+                    runtime_model = RuntimeModelInput(
+                        provider="opencode_go",
+                        explicit_provider=False,
+                        explicit_model_id=runtime_model.explicit_model_id,
+                        detected_model_id=runtime_model.detected_model_id,
+                    )
+                    logger.error(
+                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+                    )
+
+                services = self.setup.setup_services(
+                    runtime_model,
+                    memory_llm=memory_llm,
+                    reason_effort=reason_effort,
+                    application_owned_llms=True,
+                    run_async=runner.run,
                 )
-                logger.error(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+
+                if mcp_config:
+                    os.environ["MCP_CONFIG_PATH"] = mcp_config
+
+                os.environ["AGENTCREW_DISABLE_GUI"] = "true"
+
+                self.setup.setup_agents(
+                    services,
+                    agent_config,
+                    runtime_model=runtime_model,
+                    reason_effort=reason_effort,
                 )
 
-            services = self.setup.setup_services(
-                runtime_model,
-                memory_llm=memory_llm,
-                reason_effort=reason_effort,
-            )
+                if self.agent_manager is None:
+                    raise ValueError("Agent manager is not initialized")
 
-            if mcp_config:
-                os.environ["MCP_CONFIG_PATH"] = mcp_config
+                self.agent_manager.enforce_transfer = False
+                if agent:
+                    self.agent_manager.select_agent(agent)
+                else:
+                    self.setup.restore_last_agent()
 
-            os.environ["AGENTCREW_DISABLE_GUI"] = "true"
-
-            self.setup.setup_agents(
-                services,
-                agent_config,
-                runtime_model=runtime_model,
-                reason_effort=reason_effort,
-            )
-
-            if self.agent_manager is None:
-                raise ValueError("Agent manager is not initialized")
-
-            self.agent_manager.enforce_transfer = False
-            if agent:
-                self.agent_manager.select_agent(agent)
-            else:
-                self.setup.restore_last_agent()
-
-            asyncio.run(run_acp_agent(self.agent_manager, agent))
+                runner.run(run_acp_agent(self.agent_manager, agent))
         except Exception as e:
             logger.exception("Failed to run ACP agent")
             click.echo(f"❌ Error: {e!s}", err=True)
-        finally:
-            try:
-                asyncio.run(self.setup.shutdown())
-            except Exception:
-                logger.exception("Failed to shut down application resources")
-            MCPSessionManager.get_instance().cleanup()
 
     def _parse_output_schema(self, schema_input: str) -> tuple[str, dict]:
         try:
