@@ -60,7 +60,7 @@ class McpService:
         self._acp_server_configs = {}
         self.active = set()
         self.started = asyncio.Event()
-        self.block = False
+        self.block: asyncio.Event | None = None
 
     @staticmethod
     def _get_server_id_format(name, agent_name):
@@ -68,8 +68,8 @@ class McpService:
 
     async def register_tools_for_agent(self, config, agent_name):
         self.started.set()
-        if self.block:
-            await asyncio.Event().wait()
+        if self.block is not None:
+            await self.block.wait()
         self.active.add((config.name, agent_name))
         self.events.append(
             ("mcp-start", config.name, agent_name, asyncio.get_running_loop())
@@ -394,6 +394,66 @@ def startup_race(failures):
             pass
         else:
             raise AssertionError("In-flight session creation survived shutdown")
+        fixture.assert_closed()
+
+    run_case(exercise, failures)
+
+
+def cross_session_startup(failures):
+    async def exercise(fixture):
+        agent = fixture.agent
+        first = await fixture.new()
+        assert (await fixture.prompt(first)).stop_reason == "end_turn"
+        first_state = agent._sessions[first]
+        first_state.tool_state.acp_active_terminals["first-terminal"] = "first-terminal"
+        fixture.mcp.started.clear()
+        gate = asyncio.Event()
+        fixture.mcp.block = gate
+        creating = asyncio.create_task(fixture.new())
+        await fixture.mcp.started.wait()
+        assert creating in agent._session_requests
+        assert agent._session_requests[creating] is None
+        pending_ids = set(agent._sessions) - {first}
+        assert len(pending_ids) == 1
+        pending_id = pending_ids.pop()
+        second_state = agent._sessions[pending_id]
+        try:
+            await bounded(agent.close_session(first))
+            assert not creating.done() and not creating.cancelling(), (
+                "Closing A cancelled or completed unrelated session creation B"
+            )
+            assert agent._session_requests[creating] is None
+            assert first not in agent._sessions and first not in agent._session_locks
+            assert pending_id in agent._sessions
+            assert (
+                sum(
+                    event[0] == "restore" and event[1] == id(first_state)
+                    for event in fixture.events
+                )
+                == 1
+            )
+            assert sum(event[0] == "mcp-close" for event in fixture.events) == 1
+        finally:
+            gate.set()
+        second = await creating
+        assert second == pending_id and agent._sessions[second] is second_state
+        assert (await fixture.prompt(second)).stop_reason == "end_turn"
+        await agent.aclose()
+        await agent.aclose()
+        restores = Counter(
+            event[1] for event in fixture.events if event[0] == "restore"
+        )
+        assert restores == Counter({id(first_state): 1, id(second_state): 1})
+        starts = Counter(
+            (event[1], event[2]) for event in fixture.events if event[0] == "mcp-start"
+        )
+        closes = Counter(
+            (event[1], event[2]) for event in fixture.events if event[0] == "mcp-close"
+        )
+        assert len(starts) == 2 and starts == closes
+        assert all(count == 1 for count in closes.values())
+        assert sum(event[0] == "release" for event in fixture.events) == 1
+        assert sum(event[0] == "kill" for event in fixture.events) == 1
         fixture.assert_closed()
 
     run_case(exercise, failures)
@@ -836,6 +896,7 @@ def main():
         active_shutdown,
         explicit_close,
         startup_race,
+        cross_session_startup,
         close_failure,
         protocol_wrapper,
         sdk_eof,
