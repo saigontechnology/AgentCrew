@@ -3,6 +3,8 @@ import json
 import os
 import sys
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import click
@@ -28,6 +30,62 @@ class AgentCrewApplication:
     @property
     def agent_manager(self):
         return self.setup.agent_manager
+
+    @contextmanager
+    def _host_lifecycle(self) -> Iterator[asyncio.Runner]:
+        from AgentCrew.modules.mcpclient import MCPSessionManager
+
+        async def shutdown():
+            failures = []
+            current = asyncio.current_task()
+            pending = asyncio.all_tasks() - {current}
+            for task in pending:
+                task.cancel()
+            while pending:
+                results = await asyncio.gather(*pending, return_exceptions=True)
+                failures.extend(
+                    result
+                    for result in results
+                    if isinstance(result, BaseException)
+                    and not isinstance(result, asyncio.CancelledError)
+                )
+                pending = asyncio.all_tasks() - {current}
+            try:
+                await self.setup.shutdown()
+            except BaseException as error:
+                failures.append(error)
+            if len(failures) == 1:
+                raise failures[0]
+            if failures:
+                raise BaseExceptionGroup("Host shutdown failed", failures)
+
+        primary_error = None
+        try:
+            with asyncio.Runner() as runner:
+                try:
+                    yield runner
+                except BaseException as error:
+                    primary_error = error
+                    raise
+                finally:
+                    try:
+                        runner.run(shutdown())
+                    except BaseException:
+                        if primary_error is None:
+                            raise
+                        logger.exception(
+                            "Host shutdown failed after an operation error"
+                        )
+        except BaseException as error:
+            primary_error = error
+            raise
+        finally:
+            try:
+                MCPSessionManager.get_instance().cleanup()
+            except Exception:
+                if primary_error is None:
+                    raise
+                logger.exception("Host manager cleanup failed after an operation error")
 
     def run_console(
         self,
