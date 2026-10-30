@@ -3,6 +3,8 @@ import json
 import os
 import sys
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import click
@@ -28,6 +30,62 @@ class AgentCrewApplication:
     @property
     def agent_manager(self):
         return self.setup.agent_manager
+
+    @contextmanager
+    def _host_lifecycle(self) -> Iterator[asyncio.Runner]:
+        from AgentCrew.modules.mcpclient import MCPSessionManager
+
+        async def shutdown():
+            failures = []
+            current = asyncio.current_task()
+            pending = asyncio.all_tasks() - {current}
+            for task in pending:
+                task.cancel()
+            while pending:
+                results = await asyncio.gather(*pending, return_exceptions=True)
+                failures.extend(
+                    result
+                    for result in results
+                    if isinstance(result, BaseException)
+                    and not isinstance(result, asyncio.CancelledError)
+                )
+                pending = asyncio.all_tasks() - {current}
+            try:
+                await self.setup.shutdown()
+            except BaseException as error:
+                failures.append(error)
+            if len(failures) == 1:
+                raise failures[0]
+            if failures:
+                raise BaseExceptionGroup("Host shutdown failed", failures)
+
+        primary_error = None
+        try:
+            with asyncio.Runner() as runner:
+                try:
+                    yield runner
+                except BaseException as error:
+                    primary_error = error
+                    raise
+                finally:
+                    try:
+                        runner.run(shutdown())
+                    except BaseException:
+                        if primary_error is None:
+                            raise
+                        logger.exception(
+                            "Host shutdown failed after an operation error"
+                        )
+        except BaseException as error:
+            primary_error = error
+            raise
+        finally:
+            try:
+                MCPSessionManager.get_instance().cleanup()
+            except Exception:
+                if primary_error is None:
+                    raise
+                logger.exception("Host manager cleanup failed after an operation error")
 
     def run_console(
         self,
@@ -215,68 +273,64 @@ class AgentCrewApplication:
         reason_effort: str | None = None,
     ) -> None:
         from AgentCrew.modules.a2a.server import A2AServer
-        from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
-            if not base_url:
-                base_url = f"http://{host}:{port}"
+            with self._host_lifecycle() as runner:
+                if not base_url:
+                    base_url = f"http://{host}:{port}"
 
-            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
-            if runtime_model.provider is None:
-                raise ValueError(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+                runtime_model = self.setup.resolve_runtime_model(provider, model_id)
+                if runtime_model.provider is None:
+                    raise ValueError(
+                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+                    )
+
+                need_memory = bool(memory_path)
+                services = self.setup.setup_services(
+                    runtime_model,
+                    memory_llm=memory_llm,
+                    need_memory=need_memory,
+                    reason_effort=reason_effort,
+                    application_owned_llms=True,
+                    run_async=runner.run,
                 )
 
-            need_memory = bool(memory_path)
-            services = self.setup.setup_services(
-                runtime_model,
-                memory_llm=memory_llm,
-                need_memory=need_memory,
-                reason_effort=reason_effort,
-            )
+                if mcp_config:
+                    os.environ["MCP_CONFIG_PATH"] = mcp_config
 
-            if mcp_config:
-                os.environ["MCP_CONFIG_PATH"] = mcp_config
+                os.environ["AGENTCREW_DISABLE_GUI"] = "true"
 
-            os.environ["AGENTCREW_DISABLE_GUI"] = "true"
+                self.setup.setup_agents(
+                    services,
+                    agent_config,
+                    use_standalone_provider=runtime_model.provider,
+                    runtime_model=runtime_model,
+                    reason_effort=reason_effort,
+                )
 
-            self.setup.setup_agents(
-                services,
-                agent_config,
-                use_standalone_provider=runtime_model.provider,
-                runtime_model=runtime_model,
-                reason_effort=reason_effort,
-            )
+                if self.agent_manager is None:
+                    raise ValueError("Agent manager is not initialized")
 
-            if self.agent_manager is None:
-                raise ValueError("Agent manager is not initialized")
+                self.agent_manager.enforce_transfer = False
 
-            self.agent_manager.enforce_transfer = False
+                server = A2AServer(
+                    agent_manager=self.agent_manager,
+                    host=host,
+                    port=port,
+                    base_url=base_url,
+                    api_key=api_key,
+                    store_type=store_type,
+                    store_options=store_options,
+                )
 
-            server = A2AServer(
-                agent_manager=self.agent_manager,
-                host=host,
-                port=port,
-                base_url=base_url,
-                api_key=api_key,
-                store_type=store_type,
-                store_options=store_options,
-            )
-
-            click.echo(f"Starting A2A server on {host}:{port}")
-            click.echo(
-                f"Available agents: {', '.join(self.agent_manager.agents.keys())}"
-            )
-            server.start()
+                click.echo(f"Starting A2A server on {host}:{port}")
+                click.echo(
+                    f"Available agents: {', '.join(self.agent_manager.agents.keys())}"
+                )
+                runner.run(server.serve())
         except Exception as e:
             logger.exception("Failed to run A2A server")
             click.echo(f"❌ Error: {e!s}", err=True)
-        finally:
-            try:
-                asyncio.run(self.setup.shutdown())
-            except Exception:
-                logger.exception("Failed to shut down application resources")
-            MCPSessionManager.get_instance().cleanup()
 
     def run_acp(
         self,
@@ -289,58 +343,54 @@ class AgentCrewApplication:
         reason_effort: str | None = None,
     ) -> None:
         from AgentCrew.modules.acp import run_acp_agent
-        from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
-            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
-            if runtime_model.provider is None:
-                runtime_model = RuntimeModelInput(
-                    provider="opencode_go",
-                    explicit_provider=False,
-                    explicit_model_id=runtime_model.explicit_model_id,
-                    detected_model_id=runtime_model.detected_model_id,
+            with self._host_lifecycle() as runner:
+                runtime_model = self.setup.resolve_runtime_model(provider, model_id)
+                if runtime_model.provider is None:
+                    runtime_model = RuntimeModelInput(
+                        provider="opencode_go",
+                        explicit_provider=False,
+                        explicit_model_id=runtime_model.explicit_model_id,
+                        detected_model_id=runtime_model.detected_model_id,
+                    )
+                    logger.error(
+                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+                    )
+
+                services = self.setup.setup_services(
+                    runtime_model,
+                    memory_llm=memory_llm,
+                    reason_effort=reason_effort,
+                    application_owned_llms=True,
+                    run_async=runner.run,
                 )
-                logger.error(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+
+                if mcp_config:
+                    os.environ["MCP_CONFIG_PATH"] = mcp_config
+
+                os.environ["AGENTCREW_DISABLE_GUI"] = "true"
+
+                self.setup.setup_agents(
+                    services,
+                    agent_config,
+                    runtime_model=runtime_model,
+                    reason_effort=reason_effort,
                 )
 
-            services = self.setup.setup_services(
-                runtime_model,
-                memory_llm=memory_llm,
-                reason_effort=reason_effort,
-            )
+                if self.agent_manager is None:
+                    raise ValueError("Agent manager is not initialized")
 
-            if mcp_config:
-                os.environ["MCP_CONFIG_PATH"] = mcp_config
+                self.agent_manager.enforce_transfer = False
+                if agent:
+                    self.agent_manager.select_agent(agent)
+                else:
+                    self.setup.restore_last_agent()
 
-            os.environ["AGENTCREW_DISABLE_GUI"] = "true"
-
-            self.setup.setup_agents(
-                services,
-                agent_config,
-                runtime_model=runtime_model,
-                reason_effort=reason_effort,
-            )
-
-            if self.agent_manager is None:
-                raise ValueError("Agent manager is not initialized")
-
-            self.agent_manager.enforce_transfer = False
-            if agent:
-                self.agent_manager.select_agent(agent)
-            else:
-                self.setup.restore_last_agent()
-
-            asyncio.run(run_acp_agent(self.agent_manager, agent))
+                runner.run(run_acp_agent(self.agent_manager, agent))
         except Exception as e:
             logger.exception("Failed to run ACP agent")
             click.echo(f"❌ Error: {e!s}", err=True)
-        finally:
-            try:
-                asyncio.run(self.setup.shutdown())
-            except Exception:
-                logger.exception("Failed to shut down application resources")
-            MCPSessionManager.get_instance().cleanup()
 
     def _parse_output_schema(self, schema_input: str) -> tuple[str, dict]:
         try:
@@ -421,176 +471,197 @@ class AgentCrewApplication:
     ) -> str:
         from AgentCrew.modules.agents import LocalAgent, run_agent_loop
         from AgentCrew.modules.llm.model_registry import ModelRegistry
-        from AgentCrew.modules.mcpclient import MCPSessionManager
 
-        job_scope_token = None
         try:
-            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
-            if runtime_model.provider is None:
-                raise ValueError(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
-                )
+            with self._host_lifecycle() as runner:
+                runtime_model = self.setup.resolve_runtime_model(provider, model_id)
 
-            need_memory = bool(memory_path)
+                if runtime_model.provider is None:
+                    raise ValueError(
+                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+                    )
 
-            services = self.setup.setup_services(
-                runtime_model,
-                memory_llm=memory_llm,
-                need_memory=need_memory,
-                reason_effort=reason_effort,
-            )
-
-            if mcp_config:
-                os.environ["MCP_CONFIG_PATH"] = mcp_config
-
-            os.environ["AGENTCREW_DISABLE_GUI"] = "true"
-
-            if self.agent_manager is None:
-                raise ValueError("Agent manager is not initialized")
-
-            self.agent_manager.enforce_transfer = False
-            self.agent_manager.one_turn_process = True
-
-            if agent:
-                self.setup.setup_agents(
-                    services,
-                    agent_config,
-                    runtime_model=runtime_model,
+                services = self.setup.setup_services(
+                    runtime_model,
+                    memory_llm=memory_llm,
+                    need_memory=False,
+                    application_owned_llms=True,
+                    run_async=runner.run,
                     reason_effort=reason_effort,
                 )
-                current_agent = self.agent_manager.get_local_agent(agent)
-            else:
-                llm_service = services["llm"]
-                llm_service.clear_tools()
-                current_agent = LocalAgent(
-                    name="job",
-                    description="Lightweight job agent",
-                    llm_service=llm_service,
-                    services=services,
-                    tools=[],
-                )
-                current_agent.set_system_prompt("you are a helpful AI assistant.")
-                self.agent_manager.register_agent(current_agent)
 
-            if isinstance(current_agent, LocalAgent) and current_agent.llm:
-                schema_dict = None
-                if output_schema:
-                    schema_prompt, schema_dict = self._parse_output_schema(
-                        output_schema
+                if mcp_config:
+                    os.environ["MCP_CONFIG_PATH"] = mcp_config
+
+                os.environ["AGENTCREW_DISABLE_GUI"] = "true"
+
+                if self.agent_manager is None:
+                    raise ValueError("Agent manager is not initialized")
+
+                self.agent_manager.enforce_transfer = False
+                self.agent_manager.one_turn_process = True
+
+                if agent:
+                    self.setup.setup_agents(
+                        services,
+                        agent_config,
+                        runtime_model=runtime_model,
+                        reason_effort=reason_effort,
                     )
-                    if "structured_output" in ModelRegistry.get_model_capabilities(
-                        f"{runtime_model.provider}/{runtime_model.model_id}"
-                    ):
-                        current_agent.llm.structured_output = schema_dict
-                    else:
-                        current_agent.set_custom_system_prompt(schema_prompt)
-
-                self.agent_manager.select_agent(current_agent.name)
-
-                history: list[dict[str, Any]] = []
-
-                if files:
-                    from AgentCrew.modules.utils.file_handler import FileHandler
-
-                    file_handler = FileHandler()
-                    all_file_contents: list[dict[str, Any]] = []
-                    for file_path in files:
-                        file_path = os.path.expanduser(file_path.strip())
-                        file_content = file_handler.process_file(file_path)
-                        if file_content:
-                            all_file_contents.append(file_content)
-                    if all_file_contents:
-                        history.append(
-                            {
-                                "role": "user",
-                                "content": all_file_contents,
-                            }
-                        )
-
-                history.append(
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": task}],
-                    }
-                )
-
-                from AgentCrew.modules.agents.tool_result_summary import (
-                    bind_inference_scope,
-                )
-
-                job_scope_token = bind_inference_scope(f"job:{uuid.uuid4()}")
-                max_attempts = 4
-                attempt = 0
-                response = ""
-                token_usage = None
-
-                while attempt < max_attempts:
-                    attempt += 1
-                    response, token_usage = asyncio.run(
-                        run_agent_loop(
-                            agent=current_agent,
-                            history=history,
-                        )
+                    current_agent = self.agent_manager.get_local_agent(agent)
+                else:
+                    llm_service = services["llm"]
+                    llm_service.clear_tools()
+                    current_agent = LocalAgent(
+                        name="job",
+                        description="Lightweight job agent",
+                        llm_service=llm_service,
+                        services=services,
+                        tools=[],
                     )
-                    if not output_schema or not schema_dict:
-                        break
+                    current_agent.set_system_prompt("you are a helpful AI assistant.")
+                    self.agent_manager.register_agent(current_agent)
 
-                    if response.strip() == "":
-                        history.append(
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": "No response was generated. Please try again.",
-                                    }
-                                ],
-                            }
-                        )
-                        continue
-
-                    success, retry_message = self._validate_response_against_schema(
-                        response, schema_dict
+                async def execute_job() -> str:
+                    from AgentCrew.modules.agents.tool_result_summary import (
+                        bind_inference_scope,
+                        reset_inference_scope,
                     )
-                    if success:
-                        break
-                    else:
-                        if retry_message:
-                            history.append(
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": retry_message}
-                                    ],
-                                }
+
+                    job_scope = f"job:{uuid.uuid4()}"
+                    job_scope_token = bind_inference_scope(job_scope)
+                    try:
+                        if (
+                            not isinstance(current_agent, LocalAgent)
+                            or not current_agent.llm
+                        ):
+                            raise ValueError(f"Agent '{agent}' not found")
+
+                        schema_dict = None
+                        if output_schema:
+                            schema_prompt, schema_dict = self._parse_output_schema(
+                                output_schema
+                            )
+                            if (
+                                "structured_output"
+                                in ModelRegistry.get_model_capabilities(
+                                    f"{runtime_model.provider}/{runtime_model.model_id}"
+                                )
+                            ):
+                                current_agent.llm.structured_output = schema_dict
+                            else:
+                                current_agent.set_custom_system_prompt(schema_prompt)
+
+                        selected = await self.agent_manager.select_agent_async(
+                            current_agent.name
+                        )
+                        if not selected:
+                            raise RuntimeError(
+                                f"Failed to select agent '{current_agent.name}'"
                             )
 
-                if token_usage_file and token_usage:
-                    from dataclasses import asdict
+                        history: list[dict[str, Any]] = []
 
-                    token_usage_path = os.path.expanduser(token_usage_file)
-                    os.makedirs(os.path.dirname(token_usage_path) or ".", exist_ok=True)
-                    with open(token_usage_path, "w") as f:
-                        json.dump(asdict(token_usage), f, indent=2)
+                        if files:
+                            from AgentCrew.modules.utils.file_handler import FileHandler
 
-                if not output_schema or not schema_dict:
-                    return response.strip()
-                return self._clean_json_response(response).strip() if response else ""
-            else:
-                raise ValueError(f"Agent '{agent}' not found")
+                            file_handler = FileHandler()
+                            all_file_contents: list[dict[str, Any]] = []
+                            for file_path in files:
+                                file_path = os.path.expanduser(file_path.strip())
+                                file_content = await file_handler.async_process_file(
+                                    file_path
+                                )
+                                if file_content:
+                                    all_file_contents.append(file_content)
+                            if all_file_contents:
+                                history.append(
+                                    {
+                                        "role": "user",
+                                        "content": all_file_contents,
+                                    }
+                                )
 
+                        history.append(
+                            {
+                                "role": "user",
+                                "content": [{"type": "text", "text": task}],
+                            }
+                        )
+
+                        max_attempts = 4
+                        attempt = 0
+                        response = ""
+                        token_usage = None
+
+                        while attempt < max_attempts:
+                            attempt += 1
+                            response, token_usage = await run_agent_loop(
+                                agent=current_agent,
+                                history=history,
+                                scope_id=job_scope,
+                            )
+                            if not output_schema or not schema_dict:
+                                break
+
+                            if response.strip() == "":
+                                history.append(
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": "No response was generated. Please try again.",
+                                            }
+                                        ],
+                                    }
+                                )
+                                continue
+
+                            success, retry_message = (
+                                self._validate_response_against_schema(
+                                    response, schema_dict
+                                )
+                            )
+                            if success:
+                                break
+                            else:
+                                if retry_message:
+                                    history.append(
+                                        {
+                                            "role": "user",
+                                            "content": [
+                                                {"type": "text", "text": retry_message}
+                                            ],
+                                        }
+                                    )
+
+                        if token_usage_file and token_usage:
+                            from dataclasses import asdict
+
+                            def write_token_usage():
+                                token_usage_path = os.path.expanduser(token_usage_file)
+                                os.makedirs(
+                                    os.path.dirname(token_usage_path) or ".",
+                                    exist_ok=True,
+                                )
+                                with open(token_usage_path, "w") as f:
+                                    json.dump(asdict(token_usage), f, indent=2)
+
+                            await asyncio.to_thread(write_token_usage)
+
+                        if not output_schema or not schema_dict:
+                            return response.strip()
+
+                        return (
+                            self._clean_json_response(response).strip()
+                            if response
+                            else ""
+                        )
+                    finally:
+                        reset_inference_scope(job_scope_token)
+
+                return runner.run(execute_job())
         except Exception:
             logger.exception("Failed to run job")
             raise
-        finally:
-            if job_scope_token is not None:
-                from AgentCrew.modules.agents.tool_result_summary import (
-                    reset_inference_scope,
-                )
-
-                reset_inference_scope(job_scope_token)
-            try:
-                asyncio.run(self.setup.shutdown())
-            except Exception:
-                logger.exception("Failed to shut down application resources")
-            MCPSessionManager.get_instance().cleanup()

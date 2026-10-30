@@ -409,12 +409,15 @@ class ApplicationSetup:
         with_voice: bool = False,
         interactive: bool = False,
         run_async=None,
+        *,
+        application_owned_llms: bool = False,
     ) -> dict[str, Any]:
         from AgentCrew.modules.llm.model_registry import ModelRegistry
         from AgentCrew.modules.llm.service_manager import ServiceManager
 
         self._run_async = run_async
-        if interactive:
+        own_llms = interactive or application_owned_llms
+        if own_llms:
             self.services = {}
         registry = ModelRegistry.get_instance()
         llm_manager = ServiceManager.get_instance()
@@ -441,7 +444,7 @@ class ApplicationSetup:
         if selection.source is ModelSelectionSource.LAST_USED:
             try:
                 llm_service = llm_manager.get_service_for_selection(
-                    selection, standalone=interactive
+                    selection, standalone=own_llms
                 )
             except Exception as e:
                 logger.warning(f"Could not restore last used model: {e}")
@@ -449,7 +452,7 @@ class ApplicationSetup:
                 llm_service = None
         else:
             llm_service = llm_manager.get_service_for_selection(
-                selection, standalone=interactive
+                selection, standalone=own_llms
             )
 
         if llm_service is None:
@@ -459,9 +462,9 @@ class ApplicationSetup:
                     model_id=None,
                     source=ModelSelectionSource.DEFAULT,
                 ),
-                standalone=interactive,
+                standalone=own_llms,
             )
-        if interactive:
+        if own_llms:
             self._track_standalone_llm(llm_service)
 
         # Apply base reasoning: explicit CLI effort > selected model default.
@@ -524,7 +527,7 @@ class ApplicationSetup:
             except Exception as exc:
                 logger.warning(f"Tool-result summaries unavailable: {exc}")
 
-        if interactive:
+        if own_llms:
             self.services = {"tool_result_summary": tool_result_summary_service}
 
         from AgentCrew.modules.clipboard import ClipboardService
@@ -553,7 +556,7 @@ class ApplicationSetup:
             from AgentCrew.modules.code_analysis import CodeAnalysisService
 
             code_analysis_llm = llm_manager.initialize_standalone_service(provider)
-            if interactive:
+            if own_llms:
                 self._track_standalone_llm(code_analysis_llm)
 
             if runtime.model_id:

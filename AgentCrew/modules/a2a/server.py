@@ -3,14 +3,16 @@ A2A v1 protocol server using SDK route factories.
 
 Key design:
 - Per-agent mounts with SDK route factories (agent card + JSON-RPC).
-- Proper ASGI lifespan: stores close, handlers drain via aclose().
+- Proper ASGI lifespan: handlers drain before stores close.
 - Durable TaskStore (memory/file/redis) wired via --store-type.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
+from inspect import isawaitable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -142,6 +144,9 @@ class A2AServer:
         self._handlers: list[DefaultRequestHandlerV2] = []
         self._session_stores: list = []
         self._task_stores: list = []
+        self._close_lock = asyncio.Lock()
+        self._closed_resources: set[int] = set()
+        self._close_error: BaseException | None = None
 
         # One shared session store for all agents: conversation history is
         # keyed by {owner}:{context_id} (no agent namespace) so a conversation
@@ -192,27 +197,11 @@ class A2AServer:
 
         @asynccontextmanager
         async def lifespan(app):
-            await self._reconcile_stale_tasks()
             try:
+                await self._reconcile_stale_tasks()
                 yield
             finally:
-                logger.info("A2A v1 server shutting down — draining handlers.")
-                for h in self._handlers:
-                    try:
-                        await h.aclose()
-                    except Exception:
-                        logger.exception("Handler aclose failed")
-                for s in self._session_stores:
-                    try:
-                        await s.close()
-                    except Exception:
-                        logger.warning("Failed to close session store during shutdown")
-                for ts in self._task_stores:
-                    try:
-                        await ts.close()
-                    except Exception:
-                        logger.warning("Failed to close task store during shutdown")
-                logger.info("A2A v1 server stopped.")
+                await self.aclose()
 
         return Starlette(routes=routes, lifespan=lifespan)
 
@@ -314,15 +303,84 @@ class A2AServer:
         """
         return JSONResponse({"authRequired": bool(self.api_key)})
 
-    def start(self):
-        """Start the A2A server.
+    async def aclose(self) -> None:
+        """Drain handlers before stores and attempt each resource exactly once."""
+        async with self._close_lock:
+            if self._close_error is not None:
+                raise self._close_error
+            if not (self._handlers or self._session_stores or self._task_stores):
+                return
+            logger.info("A2A v1 server shutting down — draining handlers.")
+            failures = []
+            for resources, method in (
+                (self._handlers, "aclose"),
+                (self._session_stores, "close"),
+                (self._task_stores, "close"),
+            ):
+                for resource in resources:
+                    resource_id = id(resource)
+                    if resource_id in self._closed_resources:
+                        continue
+                    self._closed_resources.add(resource_id)
+                    try:
+                        close = getattr(resource, method, None)
+                        if close is not None:
+                            result = close()
+                            if isawaitable(result):
+                                await result
+                    except BaseException as error:
+                        logger.opt(exception=error).error("A2A resource cleanup failed")
+                        failures.append(error)
+                resources.clear()
+            if failures:
+                self._close_error = (
+                    failures[0]
+                    if len(failures) == 1
+                    else BaseExceptionGroup("A2A resource cleanup failed", failures)
+                )
+                raise self._close_error
+            logger.info("A2A v1 server stopped.")
 
-        ``nest_asyncio`` is no longer applied. ``uvicorn.run()`` is safe
-        because Python 3.12+'s native ``asyncio.run()`` supports the
-        ``loop_factory`` kwarg that uvicorn passes internally.
-        """
+    async def serve(self) -> None:
+        """Serve on the caller's loop, preserving graceful lifespan shutdown."""
         import uvicorn
 
         logger.info(f"Starting A2A v1 server on {self.host}:{self.port}")
         logger.info(f"Available agents: {list(self.agent_manager.agents.keys())}")
-        uvicorn.run(self.app, host=self.host, port=self.port)
+        primary_error = None
+        try:
+            config = uvicorn.Config(self.app, host=self.host, port=self.port)
+            server = uvicorn.Server(config)
+
+            async def run_server():
+                try:
+                    await server.serve()
+                except BaseException as error:
+                    return error
+                return None
+
+            task = asyncio.create_task(run_server())
+            try:
+                error = await asyncio.shield(task)
+                if error is not None:
+                    raise error
+            except asyncio.CancelledError:
+                while not server.started and not task.done():
+                    await asyncio.sleep(0.01)
+                server.should_exit = True
+                await task
+                raise
+        except BaseException as error:
+            primary_error = error
+            raise
+        finally:
+            try:
+                await self.aclose()
+            except BaseException:
+                if primary_error is None:
+                    raise
+                logger.exception("A2A cleanup failed; preserving server failure")
+
+    def start(self) -> None:
+        """Compatibility entry point for callers without an event loop."""
+        asyncio.run(self.serve())
