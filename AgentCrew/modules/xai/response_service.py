@@ -15,6 +15,7 @@ from AgentCrew.modules.llm.reasoning_selection import REASONING_LEVELS
 from AgentCrew.modules.llm.token_usage import TokenUsage
 from AgentCrew.modules.llm.types import Model
 from AgentCrew.modules.openai.response_service import OpenAIResponseService
+from AgentCrew.modules.openai.response_stream import ResponsesStreamGuard
 from AgentCrew.modules.xai.oauth import XAIAuthenticationError, XAIOAuth
 
 XAI_BASE_URL = "https://api.x.ai/v1"
@@ -245,57 +246,6 @@ def _usage_from_billing(
     }
 
 
-class _CompletedResponsesStream:
-    """Require terminal completion only when a Responses stream ends naturally."""
-
-    def __init__(self, stream: Any):
-        self._stream = stream
-        self._iterator = stream.__aiter__()
-        self._completed = False
-        self._closed = False
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if self._closed:
-            raise StopAsyncIteration
-        try:
-            event = await self._iterator.__anext__()
-        except StopAsyncIteration:
-            self._closed = True
-            if not self._completed:
-                raise RuntimeError(
-                    "xAI Responses stream ended without completion; request was not replayed"
-                ) from None
-            raise
-        if getattr(event, "type", None) == "response.completed":
-            self._completed = True
-        return event
-
-    async def __aenter__(self):
-        enter = getattr(self._stream, "__aenter__", None)
-        if enter is not None:
-            await enter()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._closed = True
-        exit_stream = getattr(self._stream, "__aexit__", None)
-        if exit_stream is not None:
-            return await exit_stream(exc_type, exc_val, exc_tb)
-        await self.aclose()
-        return False
-
-    async def aclose(self):
-        self._closed = True
-        close = getattr(self._stream, "aclose", None) or getattr(
-            self._stream, "close", None
-        )
-        if close is not None:
-            await close()
-
-
 class XAISubscriptionResponseService(OpenAIResponseService):
     """Reuse Responses history/event orchestration, without OpenAI-only options."""
 
@@ -395,7 +345,7 @@ class XAISubscriptionResponseService(OpenAIResponseService):
         *,
         model_id: str,
         reasoning_effort: str | None,
-    ) -> _CompletedResponsesStream:
+    ) -> ResponsesStreamGuard:
         model = self._model_definition(model_id)
         loop = asyncio.get_running_loop()
         if self._client_loop is not None and self._client_loop is not loop:
@@ -419,7 +369,7 @@ class XAISubscriptionResponseService(OpenAIResponseService):
             params["tools"] = [
                 tool for tool in self.tools if tool.get("type") == "function"
             ]
-        return _CompletedResponsesStream(await self.client.responses.create(**params))
+        return ResponsesStreamGuard(await self.client.responses.create(**params), "xAI")
 
     async def stream_assistant_response(self, messages: list[dict[str, Any]]) -> Any:
         return await self._create_responses_stream(

@@ -18,6 +18,7 @@ from AgentCrew.modules.llm.base import (
 )
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.token_usage import TokenUsage
+from AgentCrew.modules.openai.response_stream import ResponsesStreamGuard
 
 
 class OpenAIResponseService(BaseLLMService):
@@ -290,19 +291,22 @@ class OpenAIResponseService(BaseLLMService):
         output_tokens = 0
         cached_tokens = 0
 
-        async for event in await self.client.responses.create(**request_params):
-            if event.type == "response.output_text.delta":
-                result_text += event.delta
-            elif event.type == "response.completed":
-                usage = getattr(event.response, "usage", None)
-                if usage:
-                    input_tokens = getattr(usage, "input_tokens", 0)
-                    output_tokens = getattr(usage, "output_tokens", 0)
-                    input_tokens_details = getattr(usage, "input_tokens_details", None)
-                    if input_tokens_details:
-                        cached_tokens = getattr(
-                            input_tokens_details, "cached_tokens", 0
-                        )
+        async with ResponsesStreamGuard(
+            await self.client.responses.create(**request_params), self.provider_name
+        ) as stream:
+            async for event in stream:
+                if event.type == "response.output_text.delta":
+                    result_text += event.delta
+                elif event.type == "response.completed":
+                    usage = getattr(event.response, "usage", None)
+                    if usage:
+                        input_tokens = getattr(usage, "input_tokens", 0)
+                        output_tokens = getattr(usage, "output_tokens", 0)
+                        input_tokens_details = getattr(usage, "input_tokens_details", None)
+                        if input_tokens_details:
+                            cached_tokens = getattr(
+                                input_tokens_details, "cached_tokens", 0
+                            )
 
         if cached_tokens:
             input_tokens = input_tokens - cached_tokens
@@ -418,7 +422,8 @@ class OpenAIResponseService(BaseLLMService):
                 }
             }
 
-        return await self.client.responses.create(**stream_params)
+        stream = await self.client.responses.create(**stream_params)
+        return ResponsesStreamGuard(stream, self.provider_name)
 
     @staticmethod
     def _get_or_create_tool_use(tool_uses: list[dict], output_index) -> dict:
