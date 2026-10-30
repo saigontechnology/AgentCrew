@@ -190,6 +190,7 @@ class Case:
         self.resets = []
         self.echoes = []
         self.token_writes = []
+        self.selection_results = []
         self.return_value = None
         self.caught = None
         self.primary = None
@@ -290,7 +291,9 @@ class Case:
         if self.stage == "selection":
             raise self.error
         assert name in self.manager.agents
-        return True
+        selected = self.stage != "selection_false"
+        self.selection_results.append(selected)
+        return selected
 
     async def unload_plugins(self):
         assert scopes.current_inference_scope() == self.outer_scope
@@ -360,6 +363,7 @@ class Case:
         def cleanup():
             assert self.loops[0].is_closed()
             assert scopes.current_inference_scope() == self.outer_scope
+            self.events.append(("mcp-cleanup",))
 
         case = self
 
@@ -633,6 +637,62 @@ def failure_paths(failures):
         assert isinstance(case.caught, SchemaError) and case.binds
 
 
+def selection_false(failures):
+    for named in (False, True):
+        for outer_scope in (None, "caller-parent"):
+            with tempfile.TemporaryDirectory() as directory:
+                case = Case(
+                    directory,
+                    failures,
+                    named=named,
+                    stage="selection_false",
+                    schema=SCHEMA,
+                    files=["must-not-process.txt"],
+                    responses=['{"value":1}'],
+                    outer_scope=outer_scope,
+                )
+                previous_agent = object()
+                case.manager.current_agent = previous_agent
+                with patch.object(
+                    case.app,
+                    "_validate_response_against_schema",
+                    wraps=case.app._validate_response_against_schema,
+                ) as validate:
+                    case.run()
+                assert isinstance(case.caught, RuntimeError), (
+                    "Job ignored a false selection result",
+                    case.caught,
+                )
+                name = case.created_agents[-1].name
+                assert str(case.caught) == f"Failed to select agent '{name}'"
+                assert case.selection_results == [False]
+                case.manager.select_agent_async.assert_awaited_once_with(name)
+                assert case.manager.current_agent is previous_agent
+                assert case.return_value is None
+                assert not case.file_calls and not case.requests and not case.usages
+                assert not case.stream_closes and not case.token_writes
+                assert not case.token_path.exists()
+                validate.assert_not_called()
+                assert len(case.binds) == len(case.resets) == 1
+                assert case.binds[0][:2] == case.resets[0][:2]
+                assert case.resets[0][2] == outer_scope
+                assert {provider.name for provider in case.providers} == (
+                    {"primary", "analysis", "dedicated"}
+                    if named
+                    else {"primary", "analysis"}
+                )
+                assert all(
+                    provider.close_count == 1 and provider.owner is case.loops[0]
+                    for provider in case.providers
+                )
+                assert case.cached.close_count == 0
+                case.setup.plugin_manager.unload_all.assert_awaited_once()
+                case.manager.close_all_remote_agents.assert_awaited_once()
+                case.manager.close_all_cursor_agents.assert_awaited_once()
+                assert sum(event[0] == "mcp-cleanup" for event in case.events) == 1
+                assert case.events[-1] == ("mcp-cleanup",)
+
+
 def cleanup_and_scope(failures):
     case = run_case(failures, named=True, outer_scope="caller-parent")
     assert case.resets[-1][2] == "caller-parent"
@@ -770,6 +830,7 @@ def main():
         schema_outcomes,
         file_preparation,
         failure_paths,
+        selection_false,
         cleanup_and_scope,
         empty_response_retries,
         local_keepalive,

@@ -552,7 +552,13 @@ class AgentCrewApplication:
                             else:
                                 current_agent.set_custom_system_prompt(schema_prompt)
 
-                        await self.agent_manager.select_agent_async(current_agent.name)
+                        selected = await self.agent_manager.select_agent_async(
+                            current_agent.name
+                        )
+                        if not selected:
+                            raise RuntimeError(
+                                f"Failed to select agent '{current_agent.name}'"
+                            )
 
                         history: list[dict[str, Any]] = []
 
