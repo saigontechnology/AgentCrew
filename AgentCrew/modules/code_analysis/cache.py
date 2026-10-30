@@ -37,6 +37,9 @@ CACHE_DIR_NAME = "analyze_repo_cache"
 MAX_CACHE_ENTRIES = 5
 """Maximum number of cache entries kept per project."""
 
+MAX_CONTEXT_LISTED_ENTRIES = 25
+"""Maximum number of cache entries listed in context."""
+
 SCHEMA_VERSION = 2
 """Schema/format version for cache entries.
 
@@ -539,53 +542,93 @@ class AnalyzeRepoCache:
         self._evict_lru(cache_dir)
 
     def list_valid_entries(self, cwd: str) -> list[dict[str, Any]]:
-        """Return metadata for all readable cache entries in the project at *cwd*.
+        """List readable entries under cwd and its git-root cache if outside cwd.
 
-        Returns at most :data:`MAX_CACHE_ENTRIES` entries, sorted by
-        ``last_accessed_at`` descending (newest/LRU-first).  Each entry
-        contains the exact arguments (``path``, ``exclude_patterns``,
-        ``feature_scope``, ``deep_analysis``) and the opaque ``cache_key``.
-
-        Corrupt or schema-invalid entries (missing args, missing files map,
-        non-dict structure) are silently skipped.
-
-        Performs no LLM or analysis work.
+        Search every ``.agentcrew/analyze_repo_cache`` below cwd without
+        following symlinks. List up to five entries per cache and 25 overall,
+        prioritizing cache-directory coverage before recency when truncating.
         """
-        cache_dir = self._resolve_cache_dir(cwd)
-        if cache_dir is None or not cache_dir.exists():
-            return []
 
-        candidates: list[tuple[str, dict[str, Any]]] = []
-        for entry_path in sorted(cache_dir.rglob("*.json")):
-            try:
-                with entry_path.open("r", encoding="utf-8") as f:
-                    entry = json.load(f)
-                if not isinstance(entry, dict):
-                    continue
-                args = entry.get("args")
-                if not isinstance(args, dict):
-                    continue
-                # Schema v2+: must have a validated files map
-                if not AnalyzeRepoCache._validate_entry_files(entry.get("files")):
-                    continue
-                last_at = entry.get("last_accessed_at", "")
-                candidates.append((last_at, entry))
-            except (json.JSONDecodeError, KeyError, OSError, ValueError, TypeError):
-                logger.debug("Skipping corrupted cache entry: %s", entry_path)
-                continue
+        def log_walk_error(error: OSError) -> None:
+            logger.warning(f"Cannot scan cache directory: {error}")
 
-        def _sort_key(item: tuple[str, dict[str, Any]]) -> tuple[float, str]:
-            ts_str, e = item
+        excluded = {
+            ".git",
+            "node_modules",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "dist",
+            "build",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".mypy_cache",
+            ".tox",
+            ".agentcrew",
+        }
+        cwd_real = os.path.realpath(os.path.abspath(os.path.expanduser(cwd)))
+        cache_dirs: dict[str, Path] = {}
+        git_cache = self._resolve_cache_dir(cwd)
+        if git_cache is not None and git_cache.is_dir():
+            cache_dirs[os.path.realpath(str(git_cache))] = git_cache
+
+        for root, dirs, _ in os.walk(
+            cwd_real, onerror=log_walk_error, followlinks=False
+        ):
+            if ".agentcrew" in dirs:
+                agent_dir = Path(root) / ".agentcrew"
+                cache_dir = agent_dir / CACHE_DIR_NAME
+                if not agent_dir.is_symlink() and not cache_dir.is_symlink():
+                    real_cache = os.path.realpath(str(cache_dir))
+                    try:
+                        inside = os.path.commonpath((cwd_real, real_cache)) == cwd_real
+                    except ValueError:
+                        inside = False
+                    if inside and cache_dir.is_dir():
+                        cache_dirs.setdefault(real_cache, cache_dir)
+            dirs[:] = [name for name in dirs if name not in excluded]
+
+        def sort_key(item: tuple[str, dict[str, Any]]) -> tuple[float, str]:
+            ts_str, entry = item
             try:
                 dt = datetime.fromisoformat(ts_str)
-                return (-dt.timestamp(), e.get("cache_key", ""))
+                return (-dt.timestamp(), entry.get("cache_key", ""))
             except (ValueError, TypeError):
-                return (0.0, e.get("cache_key", ""))
+                return (0.0, entry.get("cache_key", ""))
 
-        candidates.sort(key=_sort_key)
+        candidates = []
+        for directory, cache_dir in cache_dirs.items():
+            entries = self._list_cache_directory_entries(cache_dir, log_walk_error)
+            entries.sort(key=sort_key)
+            candidates.extend(
+                (timestamp, entry, directory)
+                for timestamp, entry in entries[:MAX_CACHE_ENTRIES]
+            )
+
+        candidates.sort(key=lambda item: sort_key((item[0], item[1])))
+        unique = []
+        seen_keys = set()
+        for candidate in candidates:
+            key = candidate[1].get("cache_key", "")
+            if key not in seen_keys:
+                seen_keys.add(key)
+                unique.append(candidate)
+
+        if len(unique) > MAX_CONTEXT_LISTED_ENTRIES:
+            first_by_directory = {}
+            for candidate in unique:
+                first_by_directory.setdefault(candidate[2], candidate)
+            selected = list(first_by_directory.values())[:MAX_CONTEXT_LISTED_ENTRIES]
+            selected_keys = {entry.get("cache_key", "") for _, entry, _ in selected}
+            for candidate in unique:
+                if len(selected) >= MAX_CONTEXT_LISTED_ENTRIES:
+                    break
+                if candidate[1].get("cache_key", "") not in selected_keys:
+                    selected.append(candidate)
+            unique = sorted(selected, key=lambda item: sort_key((item[0], item[1])))
 
         results: list[dict[str, Any]] = []
-        for _, entry in candidates[:MAX_CACHE_ENTRIES]:
+        for _, entry, _ in unique:
             args = entry.get("args", {})
             results.append(
                 {
@@ -596,8 +639,31 @@ class AnalyzeRepoCache:
                     "cache_key": entry.get("cache_key", ""),
                 }
             )
-
         return results
+
+    def _list_cache_directory_entries(
+        self, cache_dir: Path, onerror
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Read and validate entries in one cache directory."""
+        candidates: list[tuple[str, dict[str, Any]]] = []
+        for root, _, files in os.walk(cache_dir, onerror=onerror, followlinks=False):
+            for name in sorted(files):
+                if not name.endswith(".json"):
+                    continue
+                entry_path = Path(root) / name
+                try:
+                    with entry_path.open("r", encoding="utf-8") as f:
+                        entry = json.load(f)
+                    if not isinstance(entry, dict) or not isinstance(
+                        entry.get("args"), dict
+                    ):
+                        continue
+                    if not self._validate_entry_files(entry.get("files")):
+                        continue
+                    candidates.append((entry.get("last_accessed_at", ""), entry))
+                except (json.JSONDecodeError, KeyError, OSError, ValueError, TypeError):
+                    logger.debug(f"Skipping corrupted cache entry: {entry_path}")
+        return candidates
 
     # -- Internal helpers ---------------------------------------------------
 

@@ -1051,6 +1051,162 @@ class TestAnalyzeRepoCache:
         assert len(entries) == 1
         assert entries[0]["path"] == str(git_root)
 
+    def test_list_discovers_nested_cache_and_deduplicates_git_root(
+        self, cache: AnalyzeRepoCache, git_root: Path
+    ) -> None:
+        cache.set(path=str(git_root), files={"root.py": {"hash": "abc"}})
+        nested = git_root / "nested" / "project"
+        nested_cache = nested / ".agentcrew" / "analyze_repo_cache"
+        cache._write_entry(
+            nested_cache,
+            "nested",
+            {
+                "cache_key": "nested",
+                "args": {"path": str(nested)},
+                "files": {"nested.py": {"hash": "abc"}},
+            },
+        )
+        entries = cache.list_valid_entries(str(git_root))
+        assert len(entries) == 2
+        assert {entry["path"] for entry in entries} == {str(git_root), str(nested)}
+
+    def test_list_skips_corrupt_nested_entries_and_pruned_dirs(
+        self, cache: AnalyzeRepoCache, git_root: Path
+    ) -> None:
+        nested = git_root / "nested" / "project"
+        nested_cache = nested / ".agentcrew" / "analyze_repo_cache"
+        cache._write_entry(
+            nested_cache,
+            "valid",
+            {
+                "cache_key": "valid",
+                "args": {"path": str(nested)},
+                "files": {"file.py": {"hash": "abc"}},
+            },
+        )
+        cache._write_entry(
+            nested_cache,
+            "invalid",
+            {
+                "cache_key": "invalid",
+                "args": {"path": str(nested)},
+                "files": {"file.py": {"hash": ""}},
+            },
+        )
+        (nested_cache / "bad.json").write_text("{")
+        skipped_cache = (
+            git_root / "node_modules" / "pkg" / ".agentcrew" / "analyze_repo_cache"
+        )
+        cache._write_entry(
+            skipped_cache,
+            "skipped",
+            {
+                "cache_key": "skipped",
+                "args": {"path": "skipped"},
+                "files": {"file.py": {"hash": "abc"}},
+            },
+        )
+        assert [
+            entry["cache_key"] for entry in cache.list_valid_entries(str(git_root))
+        ] == ["valid"]
+
+    def test_list_continues_after_unreadable_subdirectory(
+        self, cache: AnalyzeRepoCache, git_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache.set(path=str(git_root), files={"root.py": {"hash": "abc"}})
+        blocked = git_root / "blocked"
+        blocked.mkdir()
+        real_scandir = os.scandir
+
+        def scandir(path):
+            if os.fspath(path) == str(blocked):
+                raise PermissionError("unreadable")
+            return real_scandir(path)
+
+        monkeypatch.setattr(os, "scandir", scandir)
+        assert len(cache.list_valid_entries(str(git_root))) == 1
+
+    def test_list_limits_per_directory_and_preserves_directory_coverage(
+        self, cache: AnalyzeRepoCache, git_root: Path
+    ) -> None:
+        for directory in range(6):
+            cache_dir = (
+                git_root / f"project{directory}" / ".agentcrew" / "analyze_repo_cache"
+            )
+            for index in range(6):
+                key = f"{directory}-{index}"
+                cache._write_entry(
+                    cache_dir,
+                    key,
+                    {
+                        "cache_key": key,
+                        "args": {"path": f"project{directory}"},
+                        "files": {"file.py": {"hash": "abc"}},
+                        "last_accessed_at": f"2026-01-{30 - directory:02d}T00:00:0{index}+00:00",
+                    },
+                )
+        entries = cache.list_valid_entries(str(git_root))
+        assert len(entries) == 25
+        assert {entry["path"] for entry in entries} == {f"project{i}" for i in range(6)}
+        assert all(
+            sum(entry["path"] == f"project{i}" for entry in entries) <= 5
+            for i in range(6)
+        )
+        assert entries[-1]["cache_key"] == "5-5"
+
+    def test_list_discovers_cache_without_git_root(
+        self, cache: AnalyzeRepoCache, git_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        nested = git_root / "nested" / "project"
+        cache_dir = nested / ".agentcrew" / "analyze_repo_cache"
+        cache._write_entry(
+            cache_dir,
+            "nested",
+            {
+                "cache_key": "nested",
+                "args": {"path": str(nested)},
+                "files": {"file.py": {"hash": "abc"}},
+            },
+        )
+        monkeypatch.setattr(cache, "_resolve_cache_dir", lambda cwd: None)
+        assert [entry["path"] for entry in cache.list_valid_entries(str(git_root))] == [
+            str(nested)
+        ]
+
+    def test_list_ignores_symlinked_cache_directories(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache = AnalyzeRepoCache()
+        monkeypatch.setattr(cache, "_resolve_cache_dir", lambda cwd: None)
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        external_cache = tmp_path / "external" / "analyze_repo_cache"
+        cache._write_entry(
+            external_cache,
+            "external",
+            {
+                "cache_key": "external",
+                "args": {"path": "external"},
+                "files": {"file.py": {"hash": "abc"}},
+            },
+        )
+        agent_dir = workspace / ".agentcrew"
+        agent_dir.mkdir()
+        (agent_dir / "analyze_repo_cache").symlink_to(
+            external_cache, target_is_directory=True
+        )
+        assert cache.list_valid_entries(str(workspace)) == []
+
+    def test_list_keeps_git_root_cache_from_subdirectory(
+        self, cache: AnalyzeRepoCache, git_root: Path
+    ) -> None:
+        cache.set(path=str(git_root), files={"root.py": {"hash": "abc"}})
+        subdir = git_root / "subdir"
+        subdir.mkdir()
+        assert [entry["path"] for entry in cache.list_valid_entries(str(subdir))] == [
+            str(git_root)
+        ]
+
     # --- Per-record corruption --------------------------------------------
 
     @pytest.mark.asyncio

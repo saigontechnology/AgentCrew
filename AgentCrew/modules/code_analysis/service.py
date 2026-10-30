@@ -843,12 +843,11 @@ class CodeAnalysisService:
         }
 
     def get_cache_entries_for_context(self, cwd: str) -> list[dict[str, Any]]:
-        """Return metadata for all readable cache entries in the project at *cwd*.
+        """List readable caches under cwd and its git-root cache if outside cwd.
 
-        Used by the adaptive context system to inform the agent about
-        previously cached ``analyze_repo`` calls.  Returns all readable
-        entries regardless of file changes, sorted newest-first (max 5).
-        Performs no LLM work.
+        Searches ``.agentcrew/analyze_repo_cache`` directories under cwd.
+        Results are sorted newest-first, with up to five per cache and 25
+        overall. Performs no LLM work.
         """
         return self._analyze_cache.list_valid_entries(cwd)
 
