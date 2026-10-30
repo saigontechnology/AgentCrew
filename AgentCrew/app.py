@@ -273,68 +273,64 @@ class AgentCrewApplication:
         reason_effort: str | None = None,
     ) -> None:
         from AgentCrew.modules.a2a.server import A2AServer
-        from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
-            if not base_url:
-                base_url = f"http://{host}:{port}"
+            with self._host_lifecycle() as runner:
+                if not base_url:
+                    base_url = f"http://{host}:{port}"
 
-            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
-            if runtime_model.provider is None:
-                raise ValueError(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+                runtime_model = self.setup.resolve_runtime_model(provider, model_id)
+                if runtime_model.provider is None:
+                    raise ValueError(
+                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+                    )
+
+                need_memory = bool(memory_path)
+                services = self.setup.setup_services(
+                    runtime_model,
+                    memory_llm=memory_llm,
+                    need_memory=need_memory,
+                    reason_effort=reason_effort,
+                    application_owned_llms=True,
+                    run_async=runner.run,
                 )
 
-            need_memory = bool(memory_path)
-            services = self.setup.setup_services(
-                runtime_model,
-                memory_llm=memory_llm,
-                need_memory=need_memory,
-                reason_effort=reason_effort,
-            )
+                if mcp_config:
+                    os.environ["MCP_CONFIG_PATH"] = mcp_config
 
-            if mcp_config:
-                os.environ["MCP_CONFIG_PATH"] = mcp_config
+                os.environ["AGENTCREW_DISABLE_GUI"] = "true"
 
-            os.environ["AGENTCREW_DISABLE_GUI"] = "true"
+                self.setup.setup_agents(
+                    services,
+                    agent_config,
+                    use_standalone_provider=runtime_model.provider,
+                    runtime_model=runtime_model,
+                    reason_effort=reason_effort,
+                )
 
-            self.setup.setup_agents(
-                services,
-                agent_config,
-                use_standalone_provider=runtime_model.provider,
-                runtime_model=runtime_model,
-                reason_effort=reason_effort,
-            )
+                if self.agent_manager is None:
+                    raise ValueError("Agent manager is not initialized")
 
-            if self.agent_manager is None:
-                raise ValueError("Agent manager is not initialized")
+                self.agent_manager.enforce_transfer = False
 
-            self.agent_manager.enforce_transfer = False
+                server = A2AServer(
+                    agent_manager=self.agent_manager,
+                    host=host,
+                    port=port,
+                    base_url=base_url,
+                    api_key=api_key,
+                    store_type=store_type,
+                    store_options=store_options,
+                )
 
-            server = A2AServer(
-                agent_manager=self.agent_manager,
-                host=host,
-                port=port,
-                base_url=base_url,
-                api_key=api_key,
-                store_type=store_type,
-                store_options=store_options,
-            )
-
-            click.echo(f"Starting A2A server on {host}:{port}")
-            click.echo(
-                f"Available agents: {', '.join(self.agent_manager.agents.keys())}"
-            )
-            server.start()
+                click.echo(f"Starting A2A server on {host}:{port}")
+                click.echo(
+                    f"Available agents: {', '.join(self.agent_manager.agents.keys())}"
+                )
+                runner.run(server.serve())
         except Exception as e:
             logger.exception("Failed to run A2A server")
             click.echo(f"❌ Error: {e!s}", err=True)
-        finally:
-            try:
-                asyncio.run(self.setup.shutdown())
-            except Exception:
-                logger.exception("Failed to shut down application resources")
-            MCPSessionManager.get_instance().cleanup()
 
     def run_acp(
         self,
