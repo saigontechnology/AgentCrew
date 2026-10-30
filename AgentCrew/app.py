@@ -471,176 +471,191 @@ class AgentCrewApplication:
     ) -> str:
         from AgentCrew.modules.agents import LocalAgent, run_agent_loop
         from AgentCrew.modules.llm.model_registry import ModelRegistry
-        from AgentCrew.modules.mcpclient import MCPSessionManager
 
-        job_scope_token = None
         try:
-            runtime_model = self.setup.resolve_runtime_model(provider, model_id)
-            if runtime_model.provider is None:
-                raise ValueError(
-                    "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
-                )
+            with self._host_lifecycle() as runner:
+                runtime_model = self.setup.resolve_runtime_model(provider, model_id)
 
-            need_memory = bool(memory_path)
+                if runtime_model.provider is None:
+                    raise ValueError(
+                        "No LLM API key found. Please set either ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DEEPINFRA_API_KEY, TOGETHER_API_KEY, REFUSELESS_API_KEY, or OPENCODE_API_KEY"
+                    )
 
-            services = self.setup.setup_services(
-                runtime_model,
-                memory_llm=memory_llm,
-                need_memory=need_memory,
-                reason_effort=reason_effort,
-            )
-
-            if mcp_config:
-                os.environ["MCP_CONFIG_PATH"] = mcp_config
-
-            os.environ["AGENTCREW_DISABLE_GUI"] = "true"
-
-            if self.agent_manager is None:
-                raise ValueError("Agent manager is not initialized")
-
-            self.agent_manager.enforce_transfer = False
-            self.agent_manager.one_turn_process = True
-
-            if agent:
-                self.setup.setup_agents(
-                    services,
-                    agent_config,
-                    runtime_model=runtime_model,
+                services = self.setup.setup_services(
+                    runtime_model,
+                    memory_llm=memory_llm,
+                    need_memory=False,
+                    application_owned_llms=True,
+                    run_async=runner.run,
                     reason_effort=reason_effort,
                 )
-                current_agent = self.agent_manager.get_local_agent(agent)
-            else:
-                llm_service = services["llm"]
-                llm_service.clear_tools()
-                current_agent = LocalAgent(
-                    name="job",
-                    description="Lightweight job agent",
-                    llm_service=llm_service,
-                    services=services,
-                    tools=[],
-                )
-                current_agent.set_system_prompt("you are a helpful AI assistant.")
-                self.agent_manager.register_agent(current_agent)
 
-            if isinstance(current_agent, LocalAgent) and current_agent.llm:
-                schema_dict = None
-                if output_schema:
-                    schema_prompt, schema_dict = self._parse_output_schema(
-                        output_schema
+                if mcp_config:
+                    os.environ["MCP_CONFIG_PATH"] = mcp_config
+
+                os.environ["AGENTCREW_DISABLE_GUI"] = "true"
+
+                if self.agent_manager is None:
+                    raise ValueError("Agent manager is not initialized")
+
+                self.agent_manager.enforce_transfer = False
+                self.agent_manager.one_turn_process = True
+
+                if agent:
+                    self.setup.setup_agents(
+                        services,
+                        agent_config,
+                        runtime_model=runtime_model,
+                        reason_effort=reason_effort,
                     )
-                    if "structured_output" in ModelRegistry.get_model_capabilities(
-                        f"{runtime_model.provider}/{runtime_model.model_id}"
-                    ):
-                        current_agent.llm.structured_output = schema_dict
-                    else:
-                        current_agent.set_custom_system_prompt(schema_prompt)
-
-                self.agent_manager.select_agent(current_agent.name)
-
-                history: list[dict[str, Any]] = []
-
-                if files:
-                    from AgentCrew.modules.utils.file_handler import FileHandler
-
-                    file_handler = FileHandler()
-                    all_file_contents: list[dict[str, Any]] = []
-                    for file_path in files:
-                        file_path = os.path.expanduser(file_path.strip())
-                        file_content = file_handler.process_file(file_path)
-                        if file_content:
-                            all_file_contents.append(file_content)
-                    if all_file_contents:
-                        history.append(
-                            {
-                                "role": "user",
-                                "content": all_file_contents,
-                            }
-                        )
-
-                history.append(
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": task}],
-                    }
-                )
-
-                from AgentCrew.modules.agents.tool_result_summary import (
-                    bind_inference_scope,
-                )
-
-                job_scope_token = bind_inference_scope(f"job:{uuid.uuid4()}")
-                max_attempts = 4
-                attempt = 0
-                response = ""
-                token_usage = None
-
-                while attempt < max_attempts:
-                    attempt += 1
-                    response, token_usage = asyncio.run(
-                        run_agent_loop(
-                            agent=current_agent,
-                            history=history,
-                        )
+                    current_agent = self.agent_manager.get_local_agent(agent)
+                else:
+                    llm_service = services["llm"]
+                    llm_service.clear_tools()
+                    current_agent = LocalAgent(
+                        name="job",
+                        description="Lightweight job agent",
+                        llm_service=llm_service,
+                        services=services,
+                        tools=[],
                     )
-                    if not output_schema or not schema_dict:
-                        break
+                    current_agent.set_system_prompt("you are a helpful AI assistant.")
+                    self.agent_manager.register_agent(current_agent)
 
-                    if response.strip() == "":
-                        history.append(
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": "No response was generated. Please try again.",
-                                    }
-                                ],
-                            }
-                        )
-                        continue
-
-                    success, retry_message = self._validate_response_against_schema(
-                        response, schema_dict
+                async def execute_job() -> str:
+                    from AgentCrew.modules.agents.tool_result_summary import (
+                        bind_inference_scope,
+                        reset_inference_scope,
                     )
-                    if success:
-                        break
-                    else:
-                        if retry_message:
-                            history.append(
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": retry_message}
-                                    ],
-                                }
+
+                    job_scope = f"job:{uuid.uuid4()}"
+                    job_scope_token = bind_inference_scope(job_scope)
+                    try:
+                        if (
+                            not isinstance(current_agent, LocalAgent)
+                            or not current_agent.llm
+                        ):
+                            raise ValueError(f"Agent '{agent}' not found")
+
+                        schema_dict = None
+                        if output_schema:
+                            schema_prompt, schema_dict = self._parse_output_schema(
+                                output_schema
                             )
+                            if (
+                                "structured_output"
+                                in ModelRegistry.get_model_capabilities(
+                                    f"{runtime_model.provider}/{runtime_model.model_id}"
+                                )
+                            ):
+                                current_agent.llm.structured_output = schema_dict
+                            else:
+                                current_agent.set_custom_system_prompt(schema_prompt)
 
-                if token_usage_file and token_usage:
-                    from dataclasses import asdict
+                        await self.agent_manager.select_agent_async(current_agent.name)
 
-                    token_usage_path = os.path.expanduser(token_usage_file)
-                    os.makedirs(os.path.dirname(token_usage_path) or ".", exist_ok=True)
-                    with open(token_usage_path, "w") as f:
-                        json.dump(asdict(token_usage), f, indent=2)
+                        history: list[dict[str, Any]] = []
 
-                if not output_schema or not schema_dict:
-                    return response.strip()
-                return self._clean_json_response(response).strip() if response else ""
-            else:
-                raise ValueError(f"Agent '{agent}' not found")
+                        if files:
+                            from AgentCrew.modules.utils.file_handler import FileHandler
 
+                            file_handler = FileHandler()
+                            all_file_contents: list[dict[str, Any]] = []
+                            for file_path in files:
+                                file_path = os.path.expanduser(file_path.strip())
+                                file_content = await file_handler.async_process_file(
+                                    file_path
+                                )
+                                if file_content:
+                                    all_file_contents.append(file_content)
+                            if all_file_contents:
+                                history.append(
+                                    {
+                                        "role": "user",
+                                        "content": all_file_contents,
+                                    }
+                                )
+
+                        history.append(
+                            {
+                                "role": "user",
+                                "content": [{"type": "text", "text": task}],
+                            }
+                        )
+
+                        max_attempts = 4
+                        attempt = 0
+                        response = ""
+                        token_usage = None
+
+                        while attempt < max_attempts:
+                            attempt += 1
+                            response, token_usage = await run_agent_loop(
+                                agent=current_agent,
+                                history=history,
+                                scope_id=job_scope,
+                            )
+                            if not output_schema or not schema_dict:
+                                break
+
+                            if response.strip() == "":
+                                history.append(
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": "No response was generated. Please try again.",
+                                            }
+                                        ],
+                                    }
+                                )
+                                continue
+
+                            success, retry_message = (
+                                self._validate_response_against_schema(
+                                    response, schema_dict
+                                )
+                            )
+                            if success:
+                                break
+                            else:
+                                if retry_message:
+                                    history.append(
+                                        {
+                                            "role": "user",
+                                            "content": [
+                                                {"type": "text", "text": retry_message}
+                                            ],
+                                        }
+                                    )
+
+                        if token_usage_file and token_usage:
+                            from dataclasses import asdict
+
+                            def write_token_usage():
+                                token_usage_path = os.path.expanduser(token_usage_file)
+                                os.makedirs(
+                                    os.path.dirname(token_usage_path) or ".",
+                                    exist_ok=True,
+                                )
+                                with open(token_usage_path, "w") as f:
+                                    json.dump(asdict(token_usage), f, indent=2)
+
+                            await asyncio.to_thread(write_token_usage)
+
+                        if not output_schema or not schema_dict:
+                            return response.strip()
+
+                        return (
+                            self._clean_json_response(response).strip()
+                            if response
+                            else ""
+                        )
+                    finally:
+                        reset_inference_scope(job_scope_token)
+
+                return runner.run(execute_job())
         except Exception:
             logger.exception("Failed to run job")
             raise
-        finally:
-            if job_scope_token is not None:
-                from AgentCrew.modules.agents.tool_result_summary import (
-                    reset_inference_scope,
-                )
-
-                reset_inference_scope(job_scope_token)
-            try:
-                asyncio.run(self.setup.shutdown())
-            except Exception:
-                logger.exception("Failed to shut down application resources")
-            MCPSessionManager.get_instance().cleanup()

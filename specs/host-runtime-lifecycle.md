@@ -3,9 +3,9 @@
 ## Phase 1: shared foundation
 
 This branch starts at `434a7984a647cdc2934b36883bdcec6b567fa434`. The shared
-foundation, A2A adapter, and ACP adapter are implemented and validated. The job
-entry point has not yet been migrated and retains its previous lifecycle
-limitations. Console and GUI behavior are unchanged.
+foundation and A2A/ACP adapters are implemented and validated. The jobs adapter
+is implemented and locally validated, pending architectural review. Console and
+GUI behavior are unchanged.
 
 `ApplicationSetup.setup_services(application_owned_llms=True, run_async=runner.run)`
 creates standalone primary and code-analysis LLM services and tracks them for
@@ -87,11 +87,36 @@ terminal helpers log that failure and clear local tracking. Validation includes
 that case, but does not claim that an absent client confirmed remote terminal
 termination.
 
-## Adapter phase awaiting confirmation
+## Phase 4: jobs adapter
 
-**Jobs:** run async attachment preparation, all schema retries, inference-scope
-binding/reset, and provider cleanup on the same Runner loop. Job migration has
-not started; another architectural review and user confirmation are required.
+`run_job()` enters the host lifecycle once. Setup receives
+`application_owned_llms=True`, `need_memory=False`, and `runner.run` for onboarding.
+The lightweight agent uses the application-owned primary service; configured
+local agents retain dedicated ownership. Cached templates and worker-owned
+clients are not added to the host close list. No plugin activation is added.
+
+A job-local coroutine binds its inference scope and resets its token in the same
+task on every exit. It preserves the scope helper's existing inheritance of an
+already-active caller scope. Agent selection uses the existing async selection
+method. Files are prepared in input order using a lazily imported `FileHandler`
+and `async_process_file()`. Existing grouped user/content file blocks and skipping
+of falsey file results are unchanged. All schema attempts directly await
+`run_agent_loop()` on the same loop and pass the stable job scope.
+
+After attempts finish, the coroutine awaits a local synchronous token-file writer
+via `asyncio.to_thread()`, before final response formatting. The write contents
+and placement relative to attempts/formatting are preserved; disk I/O no longer
+blocks the event loop, and provider I/O never moves to the executor. Application
+shutdown still runs on the owner loop before Runner closure.
+
+Source inspection showed that parts of the initial jobs handoff described a
+different contract than the approved base. The user confirmed preserving the
+actual `d8ba1c65` contracts: a missing named local agent raises `ValueError` (no
+current-agent fallback); four invalid schema attempts return the cleaned last
+response rather than raise; and the usage file retains the flat dataclass for the
+last schema attempt, not a new cross-attempt total. Existing inner empty-response
+retry usage merging, schema parsing/validation, warning messages, fence cleanup,
+public arguments, and CLI behavior remain unchanged.
 
 Adapters must stop accepting work and perform their own protocol-specific drain
 before returning to the shared helper. The helper's final task drain is a safety
@@ -105,9 +130,10 @@ Run from this worktree:
 uv run python scripts/validate_host_lifecycle.py
 uv run python scripts/validate_a2a_lifecycle.py
 uv run python scripts/validate_acp_lifecycle.py
+uv run python scripts/validate_job_lifecycle.py
 uv run python scripts/validate_interactive_runtime.py
-uvx ruff check --statistics AgentCrew/app.py AgentCrew/setup.py AgentCrew/modules/a2a/server.py scripts/validate_host_lifecycle.py scripts/validate_a2a_lifecycle.py AgentCrew/modules/acp/agent.py scripts/validate_acp_lifecycle.py
-uvx ruff format --check AgentCrew/app.py AgentCrew/setup.py AgentCrew/modules/a2a/server.py scripts/validate_host_lifecycle.py scripts/validate_a2a_lifecycle.py AgentCrew/modules/acp/agent.py scripts/validate_acp_lifecycle.py
+uvx ruff check --statistics AgentCrew/app.py AgentCrew/setup.py AgentCrew/modules/a2a/server.py scripts/validate_host_lifecycle.py scripts/validate_a2a_lifecycle.py AgentCrew/modules/acp/agent.py scripts/validate_acp_lifecycle.py scripts/validate_job_lifecycle.py
+uvx ruff format --check AgentCrew/app.py AgentCrew/setup.py AgentCrew/modules/a2a/server.py scripts/validate_host_lifecycle.py scripts/validate_a2a_lifecycle.py AgentCrew/modules/acp/agent.py scripts/validate_acp_lifecycle.py scripts/validate_job_lifecycle.py
 git diff --check
 ```
 
@@ -129,7 +155,8 @@ port conflict, and application entry-point wiring. Its six checks pass on Python
 the deliberately occupied-port diagnostic on stderr are expected; captured loop
 exceptions, unraisables and resource warnings must remain empty.
 
-The ACP harness has nine checks covering persisted new/load/resume/fork sessions,
+The ACP harness has ten checks, including cross-session startup isolation, covering
+persisted new/load/resume/fork sessions,
 nominal prompt cancellation, concurrent global and explicit session close,
 cancelled cleanup waiters, cancellation during MCP discovery, per-step cleanup
 failure continuation, connection clearing, context reset, real-SDK EOF using
@@ -140,18 +167,30 @@ ACP prompts over a retained SDK client/connection and captures loop exceptions,
 unraisables, ResourceWarnings, and post-close GC. Fixture providers, client
 connections, model-controller actions, and MCP discovery are fakes; session
 orchestration, persistence, tool restoration, terminal-release helpers, and the
-SDK HTTP transport are exercised directly. All nine checks pass on Python
+SDK HTTP transport are exercised directly. All ten checks pass on Python
 3.13.3 and Python 3.12.10. The simulated disconnected-client terminal warnings
 are expected.
 
-Job retries/file preparation still need separate implementation and validation.
+The job harness has six groups covering schema outcomes, named/lightweight
+ownership, ordered fake and real ordinary-file processing, scope inheritance and
+reset, setup/selection/provider/schema/output-file/cancellation failures, continued
+cleanup after finalizer failures, existing empty-response retries, and last-attempt
+usage output. It exercises the real agent runner and response-stream contract.
+A local HTTP/1.1 SSE server checks connection reuse across schema attempts through
+the OpenAI SDK's default wrapper. It asserts one exact loop/client identity,
+exactly-once owner-loop closure, untouched cached templates, and empty loop
+exception, unraisable, ResourceWarning, and post-close GC captures. Its six groups
+pass on Python 3.13.3 and Python 3.12.10. File/vision conversion extras and live
+provider calls are not exercised.
+
 Memory-worker LLM cleanup, process-wide cache ownership, live-provider and live
-ACP-editor smoke tests, and GUI remain outside this delivery. The originally
-reported first-ever-stream failure has not been reproduced.
+ACP-editor smoke tests, GUI, and reconciliation with newer main remain residuals.
+The originally reported first-ever-stream failure has not been reproduced.
 No tests from the deprecated `tests/` directory are run.
 
 ## References
 
 - [Python 3.12 Runner](https://docs.python.org/3.12/library/asyncio-runner.html)
 - [Task cancellation](https://docs.python.org/3.12/library/asyncio-task.html#task-cancellation)
+- [Off-loop synchronous I/O](https://docs.python.org/3.12/library/asyncio-task.html#asyncio.to_thread)
 - [Uvicorn async server usage](https://www.uvicorn.org/#config-and-server-instances)
