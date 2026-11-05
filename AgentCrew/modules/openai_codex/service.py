@@ -226,7 +226,9 @@ class OpenAICodexService(OpenAIResponseService):
                     if usage:
                         input_tokens = getattr(usage, "input_tokens", 0)
                         output_tokens = getattr(usage, "output_tokens", 0)
-                        input_tokens_details = getattr(usage, "input_tokens_details", None)
+                        input_tokens_details = getattr(
+                            usage, "input_tokens_details", None
+                        )
                         if input_tokens_details:
                             cached_tokens = getattr(
                                 input_tokens_details, "cached_tokens", 0
