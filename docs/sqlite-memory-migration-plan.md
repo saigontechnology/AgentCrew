@@ -2,9 +2,9 @@
 
 ## Status
 
-**Approved plan. Phases 0/1 PIC-approved; Phase 2 offline migration verified and pending PIC review. No backend cutover or Phase 3 execution.**
+**Phases 0–2 PIC-approved. Phase 3 tooling verified synthetically; Phase 3 BLOCKED on private human review, a genuine Chroma baseline, calibration and untouched holdout.**
 
-This document defines the work needed to replace AgentCrew's ChromaDB memory backend with SQLite and FTS5. It also defines a safe migration script and a repeatable benchmark job. A standalone Phase 1 prototype and Phase 2 offline migration are implemented alongside the existing services; production memory behavior is unchanged.
+This document defines the work needed to replace AgentCrew's ChromaDB memory backend with SQLite and FTS5. It also defines a safe migration script and a repeatable benchmark job. Standalone Phases 1–3 tooling exists alongside the existing services; production memory behavior is unchanged. Phase 3 ran synthetic/fake verification and prepared an explicitly unreviewed private draft only. No private calibration, real holdout, remote call or SQLite tuning occurred. Phase 4 and cutover are not authorized.
 
 ## Approved decisions
 
@@ -603,24 +603,28 @@ Each case should contain:
 
 ```json
 {
-  "case_id": "paraphrase-001",
-  "category": "paraphrase",
-  "query": "What did we decide about xAI and Codex endpoint handling?",
-  "agent_name": "Architect",
-  "current_session_id": "session-current",
+  "schema_version": 1,
+  "synthetic": true,
+  "case_id": "synthetic-example",
+  "categories": ["exact_identifier", "symbol"],
+  "query": "Where is the response_service helper defined?",
+  "agent_name": "SyntheticArchitect",
+  "current_session_id": "synthetic-session-current",
+  "current_cwd": "/synthetic/projects/borealis",
   "from_date": null,
   "to_date": null,
-  "kinds": ["decision", "unresolved"],
-  "expected_memory_ids": ["memory-id-1"],
-  "acceptable_memory_ids": ["memory-id-2"],
-  "excluded_memory_ids": ["memory-id-deleted"],
-  "expected_facts": ["Compatibility remains unresolved"],
-  "expected_cwd": "/home/user/source/AgentCrew",
-  "notes": "Tests technical identifiers and unresolved status"
+  "kinds": [],
+  "expected_memory_ids": ["syn-mem-symbols"],
+  "acceptable_memory_ids": [],
+  "excluded_memory_ids": ["syn-mem-other-agent", "syn-mem-current-session", "syn-mem-deleted"],
+  "expected_facts": ["task_manager.py contains response_service"],
+  "expected_cwds": {"syn-mem-symbols": "/synthetic/projects/atlas"},
+  "must_abstain": false,
+  "notes": "Example schema; CWD is display-only and never scope/rank"
 }
 ```
 
-Keep real benchmark data local and sanitized. Do not commit secrets, credentials, private conversation bodies, or identifying paths. A remote-LLM benchmark must require explicit opt-in because it may send excerpts to a provider.
+Keep real benchmark data local and sanitized. Do not commit secrets, credentials, private conversation bodies, or identifying paths. The benchmark's answer/expansion/reranking HTTP adapter requires explicit opt-in and is restricted to committed synthetic fixtures; private-memory LLM egress is not authorized. Configured query-embedding calls have a separate opt-in and require reviewed, sanitized query attestations. This phase made no real remote calls.
 
 ### Required case categories
 
@@ -670,17 +674,18 @@ Optional and separately reported:
 ### Proposed command
 
 ```bash
-uv run python scripts/benchmark_memory_retrieval.py \
-  --chroma-source ./verification/memory-migration/chroma-copy \
-  --sqlite-source ./memory_db/agentcrew-memory.sqlite3 \
-  --cases ./verification/memory/benchmark-cases.jsonl \
+uv run --no-project --no-config --offline --python "$EXISTING_PYTHON" python \
+  scripts/benchmark_memory_retrieval.py run \
+  --corpus verification/memory/synthetic-corpus.jsonl \
+  --cases verification/memory/benchmark-cases.jsonl \
+  --chroma-source "$SYNTHETIC_CHROMA" --sqlite-source "$SYNTHETIC_SQLITE" \
+  --output "$UNUSED_PRIVATE_OUTPUT" --split synthetic \
   --modes chroma,sqlite,sqlite-expand,sqlite-rerank \
-  --k 5 \
-  --repetitions 5 \
-  --output ./verification/memory/results
+  --embedding-source synthetic-hash --adapter fake --model-call-budget 1000 \
+  --k 5 --warmups 1 --repetitions 3
 ```
 
-Assisted modes should require an additional explicit option such as `--allow-remote-llm`.
+The example is an offline contract simulation only, not a configured Chroma relevance baseline. Inputs/output must be inside the allowed ignored, untracked private workspaces. For actual remote adapters, `--allow-remote-llm` is required and only frozen synthetic fixtures are allowed; configured query embeddings use a separate `--allow-remote-embeddings` gate. Private semantic review, genuine baseline/calibration and an untouched single-use holdout remain mandatory.
 
 ### Retrieval metrics
 
@@ -850,35 +855,37 @@ Do not copy these assumptions:
   - Never point early validation at the live memory directory.
   - Verify re-run and resume behavior.
 
-**Gate:** Standalone Phase 2 checks pass, including source stability, safe paths/symlinks, dry-run non-writing, strict-mode preflight, batch rollback, interruption/restart, metadata/NULL CWD preservation, ledger/checksum mismatch rejection and actual FK/FTS integrity. The retained Phase 0 frozen copy was migrated privately: 407/407 canonical records and ledger rows, 10,937 units/FTS document-size rows, zero unmappable records, one unsupported-XML fallback preserved. Blank legacy session strings are preserved rather than fabricated or discarded; query current-session input remains nonempty. Reports and rollback artifacts remain ignored/private. See `verification/memory/README.md` for commands, aggregate results and limitations. PIC review is pending: do not start Phase 3, authorize cutover or mark MEM-002 complete.
+**Gate:** Standalone Phase 2 checks pass, including source stability, safe paths/symlinks, dry-run non-writing, strict-mode preflight, batch rollback, interruption/restart, metadata/NULL CWD preservation, ledger/checksum mismatch rejection and actual FK/FTS integrity. The retained Phase 0 frozen copy was migrated privately: 407/407 canonical records and ledger rows, 10,937 units/FTS document-size rows, zero unmappable records, one unsupported-XML fallback preserved. Blank legacy session strings are preserved rather than fabricated or discarded; query current-session input remains nonempty. Reports and rollback artifacts remain ignored/private. See `verification/memory/README.md` for commands, aggregate results and limitations. Phase 2 is PIC-approved. Phase 3 tooling is permitted, but its private review/baseline/holdout gates and MEM-002 must pass before further approval; cutover remains unauthorized.
 
 ### Phase 3 — Benchmark job
 
-- [ ] **MEM-300: Implement `scripts/benchmark_memory_retrieval.py`.**
+- [x] **MEM-300: Implement `scripts/benchmark_memory_retrieval.py`.**
   - Support Chroma, deterministic SQLite, expansion, and reranking modes.
   - Keep the same scope and date inputs across modes.
-- [ ] **MEM-301: Add JSONL benchmark-case loading and validation.**
+- [x] **MEM-301: Add JSONL benchmark-case loading and validation.**
   - Reject malformed or unsafe case definitions.
   - Check expected IDs exist in the selected corpus.
-- [ ] **MEM-302: Implement retrieval metrics.**
+- [x] **MEM-302: Implement retrieval metrics.**
   - Recall, precision, MRR, nDCG, abstention, duplicates, lifecycle correctness, and leaks.
-- [ ] **MEM-303: Implement performance and cost metrics.**
+- [x] **MEM-303: Implement performance and cost metrics.**
   - Latency, lock events, model calls, tokens, cost, and payload size.
-- [ ] **MEM-304: Implement result reports.**
+- [x] **MEM-304: Implement result reports.**
   - JSON, Markdown summary, and failure JSONL.
   - Include full reproducibility metadata.
-- [ ] **MEM-305: Add optional end-to-end answer evaluation.**
+- [x] **MEM-305: Add optional end-to-end answer evaluation.**
   - Same provider/model/prompt across backends.
   - Explicit remote-LLM opt-in.
   - Correctness and attribution scoring.
 - [ ] **MEM-306: Establish the Chroma baseline.**
   - Run before tuning SQLite.
   - Store baseline results with case-set checksum.
+  - Adapter and source-policy checks are implemented, but no configured private relevance baseline was run. Synthetic hash embeddings verify the contract only. Per the review decision, no remote calls were made.
 - [ ] **MEM-307: Tune and document SQLite thresholds.**
   - Use benchmark evidence.
   - Do not copy Mercury or Chroma thresholds blindly.
+  - Not started: Phase 1 policy is unchanged. No real calibration, freeze or holdout execution is claimed.
 
-**Gate:** Safety metrics pass and relevance meets the approved baseline before production search changes.
+**Gate — BLOCKED:** `MEM-300–305` tooling is implemented and verified offline on 25 fictional records / 29 cases. The committed aggregate sample is synthetic-only; its hash-vector Chroma simulation is not a real baseline. Deterministic SQLite Recall@5 is 0.9259 with zero synthetic safety leaks/duplicates, consistent with the prior lexical abstentions. A private ignored draft contains 407 records and 32 proposals (16 calibration / 16 holdout), 14 candidate memories and four absent-identifier proposals, all explicitly unreviewed. The gate rejects it before backend execution. Private metrics, configured-Chroma comparison and 407-record p95 are null/not run. `MEM-002`, `MEM-306`, `MEM-307` and Phase 3 remain open; do not start Phase 4. Genuine reviewed calibration must precede tuning and a frozen, single-use real holdout. Proposed targets—not measured passes—are zero leaks/duplicates, CWD-invariant ranks/citations/scores/reasons, Recall@5 at least configured Chroma, Precision@5 within five points, at least 95% no-relevant abstention and local p95 below 100 ms. Code, datasets/backend fingerprints, embedding identity and k/warmup/repeat settings are frozen. Regenerating a freeze, renaming/relabeling cases or changing CWD does not reset the held-question ledger. Corrections require a fresh holdout or invalidation, not deleting the ledger.
 
 ### Phase 4 — Expanded search tool
 

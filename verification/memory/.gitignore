@@ -9,3 +9,5 @@
 !validate_assets.py
 !verify_phase1.py
 !verify_phase2.py
+!verify_phase3.py
+!phase3-synthetic-summary.json

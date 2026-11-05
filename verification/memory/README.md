@@ -1,6 +1,6 @@
-# Memory migration verification: Phases 0–2
+# Memory migration verification: Phases 0–3
 
-This directory freezes baseline evidence and a **synthetic-only** evaluation contract. Phase 0 is PIC-approved. Phase 1 adds standalone verification of an unwired SQLite retrieval prototype in `AgentCrew/modules/memory/`; no production memory backend, write path, tool, startup wiring or model pin changes. The offline Phase 2 migration is implemented and verified below; no formal benchmark runner is implemented. Architect approved Phase 1. Phase 2 awaits PIC review; do not start Phase 3 yet.
+Phases 0–2 are PIC-approved. Phase 3 tooling and synthetic verification are implemented, but **Phase 3 is BLOCKED, not passed**: private human review, a configured Chroma relevance baseline, calibration and real holdout remain unperformed. **MEM-002 stays open; do not start Phase 4 or cut over.** No production setup, search tool, write path, automatic injection, provider or model pin has changed.
 
 ## Phase 1 read-only prototype
 
@@ -85,7 +85,58 @@ Permitted retained-copy aggregate validation also passed: **407 source records �
 
 Rollback remains non-destructive: keep the unchanged original staged source, untouched frozen backup, disposable SDK copy, SQLite candidate, manifest, reports/logs and ledger/checksum evidence. No application was switched to SQLite, so the existing production Chroma path remains unchanged. Do not remove Chroma or copy a candidate over it. Actual cutover/rollback procedures require later phase approval and a fresh paused-writer snapshot. SQL row deletion is not forensic erasure of WAL, pages or backups.
 
-MEM-200 through MEM-204 are verified for this offline tool; PIC sign-off is pending. **MEM-002 remains open until a private, sanitized, locally reviewed real-memory benchmark cohort is evaluated before Phase 3 can pass or cutover can be authorized.** Reading a retained copy for preservation is not that review and does not create or score real-case queries/labels. No formal benchmark, model-assisted retrieval, application startup, deprecated tests, production wiring, `search_memory` change or automatic injection was performed.
+MEM-200 through MEM-204 are verified and PIC-approved for this offline tool. **MEM-002 remains open until a private, sanitized, locally reviewed real-memory benchmark cohort is evaluated before Phase 3 can pass or cutover can be authorized.** Reading a retained copy for preservation is not that review and does not create or score real-case queries/labels. No formal benchmark, model-assisted retrieval, application startup, deprecated tests, production wiring, `search_memory` change or automatic injection was performed.
+
+## Phase 3 tooling — private gate blocked
+
+Files:
+
+- `AgentCrew/modules/memory/benchmark.py`: strict JSON/JSONL schemas, scope/reference/review validation, metrics, bounded adapters and answer-evaluation hooks. Not wired into production search.
+- `scripts/benchmark_memory_retrieval.py`: explicit CLI, isolated Chroma/readonly SQLite backends, reports, private draft preparation, calibration freeze and persistent holdout guard.
+- `verification/memory/verify_phase3.py`: fictional-data checks, fake HTTP (no network), source-policy cap/threshold checks without lifecycle repair, and single-use/freeze verification.
+- `phase3-synthetic-summary.json`: aggregate **synthetic-only** sample. Hash embeddings simulate a contract, not a configured Chroma effectiveness baseline.
+
+### Reproduction
+
+Use the provisioned interpreter offline; install nothing and do not run deprecated tests:
+
+```sh
+uv run --no-project --no-config --offline --python "$EXISTING_PYTHON" python verification/memory/verify_phase3.py
+
+uv run --no-project --no-config --offline --python "$EXISTING_PYTHON" python scripts/benchmark_memory_retrieval.py run \
+  --corpus verification/memory/synthetic-corpus.jsonl \
+  --cases verification/memory/benchmark-cases.jsonl \
+  --sqlite-source "$SYNTHETIC_SQLITE" --chroma-source "$SYNTHETIC_CHROMA" \
+  --output "$UNUSED_PRIVATE_OUTPUT" --modes chroma,sqlite,sqlite-expand,sqlite-rerank \
+  --split synthetic --embedding-source synthetic-hash --adapter fake --answer-eval \
+  --k 5 --warmups 1 --repetitions 3 --model-call-budget 1000
+```
+
+Synthetic sources must implement the committed physical-deletion fixture. The verifier retains matching fictional sources privately. All generated inputs/outputs are ignored, untracked, nonsymlinked private paths; public exceptions are the exact committed synthetic fixtures. Outputs must be unused and non-overlapping. JSON, Markdown, failure JSONL, logs, drafts and ledger markers stay private (0700 workspace / 0600 files); never force-add them.
+
+### Metrics and fidelity
+
+Reports include Recall/Precision@1/3/5/k, MRR, graded nDCG, expected/acceptable coverage, abstention, duplicates, excluded/scope/lifecycle/deletion/unknown-ID leaks, conflict/CWD/provenance, payload size and category aggregates. Precision uses the fixed cutoff denominator; recall uses required IDs. Expected/acceptable default grades are 2/1. Duplicates gain no extra ranking credit; no-positive cases are excluded from recall/MRR means and assessed separately for abstention.
+
+Cold and post-warmup p50/p95, repeat stability, observable busy/lock events and assisted retrieval invocation rates are separate. Model/embedding counters count function invocations, not unobservable transport retries; fake adapters are not models. Tokens are observed subtotals with coverage counts; unknown tokens/costs remain null. Payload size uses normalized hit JSON with full Chroma documents, not byte-identical service XML wrapping. Follow-up context metadata is retained but the query is passed unchanged to both retrieval backends.
+
+Chroma uses a frozen backup and a disposable SDK copy, telemetry disabled and no `ChromaMemoryService`. It mirrors source `n_results=10`, top-three cap, threshold and agent/session/date predicates; unsupported kind/lifecycle semantics are not repaired to labels. Stored document vectors are never query embeddings. Independently generated caches require provenance/configuration/source checks; configured local models must already be cached, or sanitized reviewed queries require explicit `--allow-remote-embeddings`. Do not switch provider/model merely because another model is cached.
+
+Expansion and reranking have structured-output validation, budgets, candidate-ID allowlists and deterministic fallback. Reranking cannot add candidates or override eligibility/deletion. Answer evaluation uses the same bounded prompt/provider/model contract across backends, citation hooks and literal-fact/forbidden-claim proxies; semantic correctness stays null without an explicit local evaluator. Remote LLM options require explicit HTTPS/provider/model/key-env/budget and `--allow-remote-llm`, and are **forbidden for private evidence even with that flag**. Application pins never change. This execution made no remote calls.
+
+### Required private review and untouched holdout
+
+`prepare-review --sqlite-source "$RETAINED_CANDIDATE" --output "$UNUSED_PRIVATE_REVIEW"` creates proposals, not ground truth. The private draft contains **407 records, 32 proposed cases (16 calibration / 16 holdout), 14 candidate memories and four absent-identifier proposals**. Human/PIC review must establish genuine categories, paraphrases, labels, sanitization and any multilingual coverage. No private IDs, agents, sessions, paths, queries, labels, content or maps are committed.
+
+Every real case must explicitly cease being a draft, be reviewed locally, and match a separate `local-human` attestation bound to corpus/case hashes. Until then the loader rejects it **before backend execution**. No review is auto-attested. Reading a retained copy for migration is not relevance evidence. Current private calibration/holdout metrics, configured Chroma comparison and 407-record p95 are **null / not run**.
+
+After genuine calibration, `freeze --calibration-report ... --output ...` seals code, policy, dataset/backend fingerprints, embedding identity and k/warmup/repeat protocol. Holdout requires unchanged inputs, both baselines and a matching freeze. Its locked, persistent ledger consumes each normalized held-out question/scope input—not freeze timestamps or labels. Renaming cases, changing CWD, relabeling, regenerating a freeze, or partial question recycling cannot unlock consumed inputs. Markers are consumed before execution; corrections require a fresh holdout or invalidation, never erasing history. Hashes do not prove semantic novelty or honest review, and this local guard cannot prevent a malicious owner moving/deleting the workspace.
+
+### Current result and remaining gates
+
+Offline synthetic safety checks pass. SQLite Recall@5 is **0.9259**, consistent with 27/29 labeled-ID checks and honest lexical abstentions. The hash-vector Chroma score is a contract simulation, not relative real-memory evidence. No fixture-specific synonyms or real terms/IDs were hard-coded; Phase 1 retrieval policy is unchanged.
+
+Proposed private-holdout targets remain unassessed: zero SQLite leaks/duplicates; CWD-invariant ranks/citations/scores/reasons; Recall@5 at least configured Chroma; Precision@5 within five points; at least 95% no-relevant abstention; and local p95 below 100 ms on 407 records. **MEM-300–305 tooling is implemented; MEM-306 (real baseline), MEM-307 (calibration/tuning/frozen real holdout), MEM-002 and Phase 3 acceptance stay open. Phase 4 must not start.**
 
 ## Frozen evidence
 
@@ -164,7 +215,11 @@ Use this structural template **locally only**, replacing placeholders after auth
 
 ```json
 {
-  "case_id": "local-reviewed-001",
+  "schema_version": 1,
+  "synthetic": false,
+  "case_id": "local-proposal-001",
+  "categories": ["draft_needs_review"],
+  "split": "calibration",
   "query": "Sanitized information need without credentials or private paths",
   "agent_name": "LOCAL_SCOPE_PLACEHOLDER",
   "current_session_id": "LOCAL_SESSION_PLACEHOLDER",
@@ -173,11 +228,14 @@ Use this structural template **locally only**, replacing placeholders after auth
   "excluded_memory_ids": [],
   "expected_facts": [],
   "expected_cwds": {},
+  "must_abstain": true,
+  "draft": true,
+  "query_sanitized": false,
   "reviewed_locally": false
 }
 ```
 
-Real-memory cases remain local and require sanitization, referential checks against their private corpus, and human review. None have been fabricated or derived from raw private conversations in this commit. Consequently **MEM-002 is complete for the synthetic cohort only**; its original real-case labeling requirement remains open. Synthetic coverage alone is not evidence of real-world retrieval improvement or permission to cut over. Architect accepted synthetic completion for Phase 1 only; real-case review remains a Phase 3/pre-cutover requirement.
+Real-memory cases remain local and require sanitization, referential checks against their private corpus, and human review. Phase 3 prepared local proposals from the retained candidate, but their labels are unreviewed suggestions, not accepted ground truth; no real review has been attested. **MEM-002 remains open** for its real-case labeling and benchmarking requirement. Synthetic coverage and private draft generation are not evidence of real-world retrieval improvement or permission to cut over. Architect accepted synthetic completion to unblock the earlier implementation phases only.
 
 Remote model calls remain off by default. The future assisted benchmark requires separate explicit opt-in. Adaptive behaviors, memory authority, provider/model policy, and automatic context injection are unchanged.
 
