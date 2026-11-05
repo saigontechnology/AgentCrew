@@ -2,9 +2,9 @@
 
 ## Status
 
-**Approved plan. Phase 0 baseline and synthetic fixtures recorded; implementation not started.**
+**Approved plan. Phase 0 PIC-approved; Phase 1 read-only prototype verified and pending PIC review. No backend cutover.**
 
-This document defines the work needed to replace AgentCrew's ChromaDB memory backend with SQLite and FTS5. It also defines a safe migration script and a repeatable benchmark job. No production implementation is included in this change.
+This document defines the work needed to replace AgentCrew's ChromaDB memory backend with SQLite and FTS5. It also defines a safe migration script and a repeatable benchmark job. A standalone Phase 1 prototype is implemented alongside the existing services; production memory behavior is unchanged.
 
 ## Approved decisions
 
@@ -44,7 +44,7 @@ This document defines the work needed to replace AgentCrew's ChromaDB memory bac
 
 The original reviewed local snapshot is AgentCrew `main` at `e83a03b79e207d5e5d9a8b8f655e3fa9dbe61428`, with package version `0.23.2` declared in the repository dossier. Python 3.12+ is declared in `pyproject.toml`; the Python 3.8 statement in `CONTRIBUTING.md` is stale.
 
-Phase 0 rechecked implementation baseline `a6c186fde41f7252fb311abd2af8e6d2abde87f1`. The memory service, worker, coordinator and setup have no intervening changes. Aggregate inventory, snapshot limitations, current metadata findings and synthetic fixture contracts are recorded in `verification/memory/README.md` and `verification/memory/baseline.json`. No private source paths or memory contents are committed. MEM-002's synthetic cohort is ready for Architect review; local real-memory labels remain open. Do not begin Phase 1 until the review gate is resolved.
+Phase 0 rechecked implementation baseline `a6c186fde41f7252fb311abd2af8e6d2abde87f1`. The memory service, worker, coordinator and setup have no intervening changes. Aggregate inventory, snapshot limitations, current metadata findings and synthetic fixture contracts are recorded in `verification/memory/README.md` and `verification/memory/baseline.json`. No private source paths or memory contents are committed. Architect approved the Phase 0 baseline and synthetic cohort for Phase 1. MEM-002 remains open for private, sanitized, locally reviewed real-memory cases before Phase 3 can pass or cutover can be authorized. Phase 1 reads no private memory.
 
 AgentCrew uses service composition, async-generator streaming, singleton service/manager patterns, an EventBus, and module-per-tool registration. The memory migration must follow those existing patterns.
 
@@ -790,43 +790,43 @@ Do not copy these assumptions:
   - Record current memory count and actual metadata keys.
 - [ ] **MEM-002: Build the labeled benchmark set.**
   - Synthetic cohort complete: 25 fictional records, 29 cases and 27 required categories, with checksums and standalone validation.
-  - Still open: local sanitized real-memory labels and Architect review of the benchmark/safety labels. No real cases were invented or committed.
+  - Still open until the Phase 3/pre-cutover gate: local sanitized real-memory labels and their Architect review. Synthetic labels are PIC-approved; no real cases were invented or committed.
   - Create sanitized real cases and synthetic edge cases.
   - Label expected, acceptable, and excluded memory IDs.
   - Include all required categories from this document.
 
-**Gate:** The benchmark cases and safety labels are reviewed before retrieval implementation begins.
+**Gate:** Architect reviewed and approved the synthetic cases and safety labels for Phase 1. MEM-002's real-case requirement is deferred to the Phase 3/pre-cutover gate, not waived.
 
 ### Phase 1 — Retrieval contract and read-only prototype
 
-- [ ] **MEM-100: Define structured retrieval types.**
+- [x] **MEM-100: Define structured retrieval types.**
   - Add query, candidate, hit, result, match-reason, and confidence-band types.
   - Keep existing `retrieve_memory()` compatibility.
-- [ ] **MEM-101: Define the SQLite schema and schema-version table.**
+- [x] **MEM-101: Define the SQLite schema and schema-version table.**
   - Include canonical records, units, entities, tags, FTS5, and migration ledger.
   - Include nullable CWD and lifecycle fields.
-- [ ] **MEM-102: Implement `SQLiteMemoryRepository`.**
+- [x] **MEM-102: Implement `SQLiteMemoryRepository`.**
   - Centralize SQL and connection ownership.
   - Enable WAL, foreign keys, busy timeout, and transactional deletion.
   - Add explicit FTS5 capability detection.
-- [ ] **MEM-103: Implement structured-record parsing and unit derivation.**
+- [x] **MEM-103: Implement structured-record parsing and unit derivation.**
   - Parse current XML fields.
   - Preserve canonical input.
   - Fall back safely for malformed records.
   - Keep derivation deterministic and observable.
-- [ ] **MEM-104: Implement deterministic candidate generation.**
+- [x] **MEM-104: Implement deterministic candidate generation.**
   - Hard agent/session/date/status eligibility.
   - Exact IDs, entities, tags, and weighted FTS5.
   - No CWD filtering or boost.
-- [ ] **MEM-105: Implement deterministic rank fusion and abstention.**
+- [x] **MEM-105: Implement deterministic rank fusion and abstention.**
   - Deduplicate and diversify results.
   - Handle active, superseded, and conflicting records.
   - Produce explainable match reasons.
-- [ ] **MEM-106: Implement compact result formatting.**
+- [x] **MEM-106: Implement compact result formatting.**
   - Include IDs, date, CWD, kind, headline, excerpt, reason, confidence, and conflict status.
   - Mark recalled content as untrusted evidence.
 
-**Gate:** Run retrieval-only benchmark cases against the read-only SQLite prototype. Do not change the production backend yet.
+**Gate:** Standalone `verification/memory/verify_phase1.py` passes the schema, parser/fallback, canonical preservation, rollback, FTS deletion, exact lookup, scope/date/status/validity, dedup, conflict, CWD, concurrency and formatter invariants. Synthetic labeled-ID checks pass 27/29; `syn-case-paraphrase` and `syn-case-constraint` abstain (lexical recall misses). These checks do not score semantic expected facts or constitute the formal Phase 3 benchmark. See `verification/memory/README.md` for defaults, limitations and commands. PIC review is pending; do not start Phase 2 or change the production backend yet.
 
 ### Phase 2 — Migration script
 

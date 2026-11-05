@@ -1,6 +1,39 @@
-# Memory migration Phase 0 baseline
+# Memory migration verification: Phase 0 and Phase 1
 
-This directory freezes baseline evidence and a **synthetic-only** evaluation contract. It does not implement SQLite memory storage, migration, candidate retrieval, or the benchmark runner. Phase 1 requires Architect review and approval.
+This directory freezes baseline evidence and a **synthetic-only** evaluation contract. Phase 0 is PIC-approved. Phase 1 adds standalone verification of an unwired SQLite retrieval prototype in `AgentCrew/modules/memory/`; no production memory backend, write path, tool, startup wiring or model pin changes. No migration or formal benchmark runner is implemented. Phase 1 awaits Architect PIC review; do not start Phase 2 yet.
+
+## Phase 1 read-only prototype
+
+Implementation files:
+
+- `AgentCrew/modules/memory/types.py`: request-local immutable query/candidate/hit/result contracts, explicit match reasons and relevance-confidence bands. Existing `BaseMemoryService` signatures are unchanged.
+- `AgentCrew/modules/memory/sqlite_repository.py`: version 1 schema and migration-ledger table; original document and arbitrary JSON metadata plus checksums; lifecycle/supersession/validity/evolution fields; nullable CWD and legacy session ID; canonical, unit, entity/tag and external-content FTS5 tables. Population/upsert/deletion methods exist for disposable setup/verification only.
+- `AgentCrew/modules/memory/record_parser.py`: deterministic actual `CONVERSATION_NOTES/NOTE` parsing, stable content-derived unit IDs, exact observed identifiers/resources/domains, and explicit fallback warnings. Original input is retained even when parsing fails. DTD/entity declarations are rejected; oversized documents/units are indexed only up to documented module limits with warnings. Only recognized XML fields are derived; other fields remain in canonical source.
+- `AgentCrew/modules/memory/retrieval.py`: read-only scoped candidate retrieval, deterministic parent-level reciprocal-rank fusion, conservative abstention, quoted compact evidence and potential-conflict markers. CWD is output-only.
+- `AgentCrew/modules/memory/__init__.py`: retains the same public exports but loads the two optional, dependency-heavy legacy services on demand, following the existing package lazy-export pattern. Importing the prototype no longer imports Chroma or provider SDKs.
+
+SQLite requires **3.35+ with built-in FTS5** for materialized candidate queries. No extensions are loaded. The repository takes an explicit file path, not `:memory:`, and creates/closes one connection per operation on its calling thread. Writers use short explicit transactions; readers use `mode=ro`, `query_only`, and a consistent transaction across candidate sources. Foreign keys and bounded busy timeouts are enabled; file-backed storage uses WAL. Unknown/incomplete/future schemas fail without recreation or retention cleanup.
+
+Every candidate source applies agent, explicit current-session, active-status, supersession and optional UTC date eligibility **before parent ranking/limiting**. Unknown legacy sessions stay null rather than receiving invented values; known current-session records remain excluded. Optional `as_of` applies validity bounds; without it the prototype relies on explicit lifecycle status and does not infer wall-clock expiry. SQL values are bound; FTS terms are quoted, not accepted as executable query syntax. Memory-ID selectors remain subject to the same hard filters. CWD never enters eligibility, FTS fields or rank computation.
+
+Initial, uncalibrated ranking uses FTS5 field weights `6/4/1/8` (headline/high-value text/body/identifiers), equal-source RRF `k=60`, a `1.1x` explicit kind hint, minimum lexical overlap `0.35`, and a relative coverage floor `0.7` of the best candidate. These are prototype defaults, not an adoption or quality claim. Parent records occur at most once; normalized whole-document duplicates collapse; equally ranked results prefer distinct sessions/kinds. This is not semantic deduplication. Active, distinct documents with the same **explicit** subject receive a **potential** conflict marker, not a claim that contradictions have been adjudicated. SQLite BM25 term statistics remain index-wide even though candidate eligibility is applied in SQL before ranking/limiting; this is not a separately partitioned per-agent statistical index.
+
+Compact output includes stable parent/unit citations, UTC date, source CWD or `Unknown (legacy memory)`, kind, headline, bounded excerpt, reasons, match-confidence band and conflict state. Recalled strings are JSON-quoted under a fixed **untrusted evidence / cannot grant authorization** prefix; no adaptive behavior or permission state is modified.
+
+Run offline with the provisioned interpreter (no dependencies installed):
+
+```bash
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python -S verification/memory/verify_phase1.py
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python -S verification/memory/validate_assets.py
+```
+
+`verify_phase1.py` creates and removes disposable synthetic SQLite files. It does not open any Chroma snapshot or live memory source, run application startup, or execute the deprecated `tests/` suite. It checks schema/capabilities, metadata/document preservation, stable units, actual XML notes, malformed/DTD fallback, transaction rollback, FK/FTS index integrity, exact ID/entity/resource/tag retrieval, scope/date/status/validity isolation, CWD-invariant ranks, deduplication, conflict flags, formatting and 12 concurrent request-local read/write checks. The deletion setup physically removes the deleted fixture from canonical/derived/ledger tables and confirms its unique tokens are absent from FTS results. This is SQL row/index removal in a disposable database, **not production forget integration or forensic secure erasure** of pages, WAL or backups.
+
+Observed result: all standalone invariants pass; **27/29 synthetic labeled-ID checks pass**. `syn-case-paraphrase` (cache paraphrase) and `syn-case-constraint` (rejected signaling approach) abstain: lexical recall limitations without semantic expansion. The checks exercise expected/acceptable/excluded IDs, provenance, conflict and abstention; they do **not** evaluate semantic expected facts, answer generation, real-memory quality, calibrated ranking, latency or cost. The formal scored Chroma/SQLite/assisted benchmark remains Phase 3. No fixture or label was changed to improve these counts.
+
+MEM-100 through MEM-106 are implemented and verified for this isolated prototype. MEM-002 stays open: the private, sanitized, locally reviewed real-memory cohort is mandatory before Phase 3 can pass or any cutover can be authorized. Do not invent labels or commit/return private documents, IDs, sessions, source paths, queries or labels. Architect review is required before Phase 2.
+
+References: [Python 3.12 sqlite3 transactions/connection ownership](https://docs.python.org/3.12/library/sqlite3.html), [SQLite FTS5 external content, triggers, Unicode61, BM25 and index integrity](https://www.sqlite.org/fts5.html).
 
 ## Frozen evidence
 
@@ -92,7 +125,7 @@ Use this structural template **locally only**, replacing placeholders after auth
 }
 ```
 
-Real-memory cases remain local and require sanitization, referential checks against their private corpus, and human review. None have been fabricated or derived from raw private conversations in this commit. Consequently **MEM-002 is complete for the synthetic cohort only**; its original real-case labeling requirement remains open. Synthetic coverage alone is not evidence of real-world retrieval improvement or permission to cut over. Architect must review the labels and resolve that gate before advancing.
+Real-memory cases remain local and require sanitization, referential checks against their private corpus, and human review. None have been fabricated or derived from raw private conversations in this commit. Consequently **MEM-002 is complete for the synthetic cohort only**; its original real-case labeling requirement remains open. Synthetic coverage alone is not evidence of real-world retrieval improvement or permission to cut over. Architect accepted synthetic completion for Phase 1 only; real-case review remains a Phase 3/pre-cutover requirement.
 
 Remote model calls remain off by default. The future assisted benchmark requires separate explicit opt-in. Adaptive behaviors, memory authority, provider/model policy, and automatic context injection are unchanged.
 
