@@ -71,21 +71,28 @@ def file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def read_json(path: Path):
+def read_json(path: Path, *, expected_sha256: str | None = None):
     check(path.stat().st_size <= 8_000_000, "json_file_too_large")
+    content = path.read_bytes()
+    check(len(content) <= 8_000_000, "json_file_too_large")
+    check(expected_sha256 is None or hashlib.sha256(content).hexdigest() == expected_sha256,
+          "json_evidence_changed")
     try:
-        return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object,
+        return json.loads(content.decode("utf-8"), object_pairs_hook=unique_object,
                           parse_constant=lambda _: (_ for _ in ()).throw(BenchmarkError("nonfinite_json")))
     except (json.JSONDecodeError, UnicodeError):
         raise BenchmarkError("invalid_json") from None
 
 
-def read_jsonl(path: Path) -> list[dict]:
+def read_jsonl(path: Path, *, expected_sha256: str | None = None) -> list[dict]:
     check(path.is_file() and path.stat().st_size <= 256_000_000, "jsonl_file_missing_or_large")
     rows = []
+    evidence = hashlib.sha256()
     try:
-        with path.open(encoding="utf-8") as stream:
-            for line in stream:
+        with path.open("rb") as stream:
+            for content in stream:
+                evidence.update(content)
+                line = content.decode("utf-8")
                 check(line.strip() and len(line) <= 8_000_000, "invalid_jsonl_line")
                 row = json.loads(line, object_pairs_hook=unique_object,
                                  parse_constant=lambda _: (_ for _ in ()).throw(BenchmarkError("nonfinite_json")))
@@ -94,6 +101,8 @@ def read_jsonl(path: Path) -> list[dict]:
     except (json.JSONDecodeError, UnicodeError):
         raise BenchmarkError("invalid_jsonl") from None
     check(rows and len(rows) <= 100_000, "jsonl_row_count")
+    check(expected_sha256 is None or evidence.hexdigest() == expected_sha256,
+          "jsonl_evidence_changed")
     return rows
 
 
@@ -179,6 +188,7 @@ class Dataset:
     synthetic: bool
     corpus_hash: str
     cases_hash: str
+    review_manifest_hash: str | None = None
 
 
 def load_dataset(corpus: Path, cases: Path, review: Path | None = None) -> Dataset:
@@ -239,9 +249,11 @@ def load_dataset(corpus: Path, cases: Path, review: Path | None = None) -> Datas
             check(paired in ids and paired != case["case_id"], "invalid_cwd_pair")
             other = next(c for c in case_rows if c["case_id"] == paired)
             check(all(case.get(name) == other.get(name) for name in ("query", "agent_name", "current_session_id", "from_date", "to_date", "kinds")), "cwd_pair_scope_changed")
+    review_hash = None
     if not synthetic:
         check(review is not None, "private_review_manifest_missing")
-        manifest = read_json(review)
+        review_hash = file_hash(review)
+        manifest = read_json(review, expected_sha256=review_hash)
         check(type(manifest.get("schema_version")) is int and manifest.get("schema_version") == VERSION
               and manifest.get("reviewed_locally") is True
               and manifest.get("review_method") == "local-human"
@@ -254,9 +266,21 @@ def load_dataset(corpus: Path, cases: Path, review: Path | None = None) -> Datas
         required = {"exact_identifier", "paraphrase", "decision", "preference", "constraint_rejected_approach", "unresolved", "ambiguous_followup", "no_relevant_memory"}
         check(required <= {category for c in case_rows for category in c["categories"]}, "private_category_coverage_incomplete")
         check(sum(c["must_abstain"] for c in case_rows) >= 4, "private_abstention_cases_too_few")
+        for split in ("calibration", "holdout"):
+            split_cases = [case for case in case_rows if case["split"] == split]
+            positive_ids = {memory_id for case in split_cases
+                            for memory_id in case["expected_memory_ids"] + case["acceptable_memory_ids"]}
+            check(len(positive_ids) >= 5, "private_split_topics_too_few")
+            check(sum(case["must_abstain"] for case in split_cases) >= 2,
+                  "private_split_abstention_cases_too_few")
+            categories = {category for case in split_cases for category in case["categories"]}
+            check({"exact_identifier", "paraphrase", "no_relevant_memory", "ambiguous_followup"} <= categories
+                  and bool({"decision", "preference"} & categories)
+                  and bool({"constraint_rejected_approach", "unresolved"} & categories),
+                  "private_split_category_coverage_incomplete")
         check(len({question_key(c, records) for c in case_rows}) == len(case_rows),
               "duplicate_private_question_inputs")
-    return Dataset(records, tuple(rows), tuple(case_rows), synthetic, file_hash(corpus), file_hash(cases))
+    return Dataset(records, tuple(rows), tuple(case_rows), synthetic, file_hash(corpus), file_hash(cases), review_hash)
 
 
 def measure(case: dict, hits: list[dict], records: dict[str, MemoryRecord], k: int) -> dict:

@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,11 +23,12 @@ sys.path.insert(0, str(ROOT))
 from AgentCrew.modules.memory.benchmark import (
     BenchmarkError, Calls, FakeAdapter, POLICY, PROMPT, RemoteJSONAdapter, aggregate,
     digest, encode, evaluate_answer, expand_queries, file_hash, invoke_model, load_dataset,
-    measure, query_from_case, read_jsonl, rerank_hits,
+    measure, query_from_case, read_json, read_jsonl, rerank_hits,
 )
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
 from scripts.benchmark_memory_retrieval import (
-    ASSETS, ChromaBaseline, acceptance, code_identity, private_path, reserve_holdout, signature, synthetic_embedding,
+    ASSETS, ChromaBaseline, acceptance, code_identity, freeze_calibration, input_evidence,
+    private_path, reserve_holdout, run_benchmark, signature, synthetic_embedding,
 )
 from scripts.migrate_chroma_memory_to_sqlite import MigrationError, _private_directory, _write_json as write_json
 from verification.memory.verify_phase1 import record_from_fixture
@@ -89,17 +91,32 @@ def checks_loading(folder, dataset):
     write_jsonl(folder / "fictional-private-class-corpus.jsonl", records)
     write_jsonl(cases, private_cases)
     rejects(lambda: load_dataset(folder / "fictional-private-class-corpus.jsonl", cases))
-    reviewed_fixture = [deepcopy(c) for c in dataset.cases if not c.get("same_ranking_as_case")]
-    abstention_template = next(c for c in dataset.cases if c["must_abstain"])
-    while len(reviewed_fixture) < 32:
-        extra = deepcopy(abstention_template)
-        extra.update(case_id="fictional-review-contract-" + str(len(reviewed_fixture)),
-                     query="Find fictional missing contract nonce " + str(len(reviewed_fixture)),
-                     categories=["no_relevant_memory"])
-        reviewed_fixture.append(extra)
-    for index, case in enumerate(reviewed_fixture):
-        case.update(synthetic=False, reviewed_locally=True, draft=False,
-                    split="calibration" if index < 16 else "holdout", query_sanitized=True)
+    positives = [case for case in dataset.cases
+                 if not case["must_abstain"] and not case.get("same_ranking_as_case")]
+    templates = [next(case for case in positives if category in case["categories"])
+                 for category in ("exact_identifier", "paraphrase", "ambiguous_followup", "preference",
+                                  "decision", "constraint_rejected_approach", "unresolved")]
+    positive_ids = {memory_id for case in templates
+                    for memory_id in case["expected_memory_ids"] + case["acceptable_memory_ids"]}
+    for case in positives:
+        ids = set(case["expected_memory_ids"] + case["acceptable_memory_ids"])
+        if len(templates) < 14 and ids - positive_ids:
+            templates.append(case)
+            positive_ids.update(ids)
+    while len(templates) < 14:
+        templates.append(positives[len(templates) % len(positives)])
+    require(len(positive_ids) >= 10, "Fictional split fixture lacks positive memories")
+    abstention_template = next(case for case in dataset.cases
+                               if case["must_abstain"] and "no_relevant_memory" in case["categories"])
+    reviewed_fixture = []
+    for split in ("calibration", "holdout"):
+        for index, template in enumerate(templates + [abstention_template] * 2):
+            case = deepcopy(template)
+            case.update(case_id=f"fictional-review-contract-{split}-{index}",
+                        query=f"Fictional {split} contract {index}: " + case["query"],
+                        synthetic=False, reviewed_locally=True, draft=False,
+                        split=split, query_sanitized=True)
+            reviewed_fixture.append(case)
     write_jsonl(cases, reviewed_fixture)
     review = folder / "fictional-review-attestation.json"
     write_json(review, {"schema_version": 1, "reviewed_locally": True,
@@ -108,6 +125,9 @@ def checks_loading(folder, dataset):
                         "cases_sha256": file_hash(cases)})
     accepted_fixture = load_dataset(folder / "fictional-private-class-corpus.jsonl", cases, review)
     require(len(accepted_fixture.cases) == 32, "Valid fictional review-contract fixture rejected")
+    require(accepted_fixture.review_manifest_hash == file_hash(review), "Review bytes not captured")
+    checks_split_coverage(folder, dataset, reviewed_fixture, cases, review)
+    checks_input_evidence(folder, accepted_fixture, review)
     duplicate = deepcopy(reviewed_fixture[0])
     duplicate["case_id"] = "fictional-renamed-duplicate-question"
     write_jsonl(cases, reviewed_fixture + [duplicate])
@@ -119,6 +139,139 @@ def checks_loading(folder, dataset):
     alias = folder / "symlink.jsonl"
     alias.symlink_to(corpus)
     rejects(lambda: private_path(alias))
+
+
+def checks_split_coverage(folder, dataset, valid_cases, cases_path, review_path):
+    """Reject split skew using fictional data and refreshed matching attestations."""
+    corpus_path = folder / "fictional-private-class-corpus.jsonl"
+    original_review = json.loads(review_path.read_text())
+
+    def rejected_fixture(rows, reason):
+        write_jsonl(cases_path, rows)
+        attestation = {**original_review, "cases_sha256": file_hash(cases_path)}
+        write_json(review_path, attestation)
+        try:
+            load_dataset(corpus_path, cases_path, review_path)
+        except BenchmarkError as error:
+            require(str(error) == reason, "Wrong split-coverage rejection")
+        else:
+            raise AssertionError("Unrepresentative split accepted")
+
+    target_id = valid_cases[0]["expected_memory_ids"][0]
+    target_agent = dataset.records[target_id].agent_name
+    four_ids = [record.id for record in dataset.records.values()
+                if record.agent_name == target_agent and record.status == "active" and not record.superseded_by][:4]
+    require(len(four_ids) == 4, "Fictional topic-boundary fixture is incomplete")
+
+    def make_positive(case, memory_id=target_id):
+        target = dataset.records[memory_id]
+        case.update(must_abstain=False, expected_memory_ids=[memory_id],
+                    acceptable_memory_ids=[], expected_facts=[],
+                    agent_name=target.agent_name, current_session_id="fictional-unmatched-session",
+                    from_date=None, to_date=None, kinds=[], expected_cwds={memory_id: target.cwd})
+        case["excluded_memory_ids"] = [excluded_id for excluded_id in case["excluded_memory_ids"]
+                                       if excluded_id != memory_id]
+        case.pop("expected_cwd_label", None)
+
+    for split in ("calibration", "holdout"):
+        for missing in ({"exact_identifier"}, {"paraphrase"}, {"no_relevant_memory"}, {"ambiguous_followup"},
+                        {"decision", "preference"}, {"constraint_rejected_approach", "unresolved"}):
+            rows = deepcopy(valid_cases)
+            for case in rows:
+                if case["split"] == split:
+                    case["categories"] = [category for category in case["categories"] if category not in missing]
+                    if not case["categories"]:
+                        case["categories"] = ["fictional_other"]
+            rejected_fixture(rows, "private_split_category_coverage_incomplete")
+        rows = deepcopy(valid_cases)
+        for index, case in enumerate(case for case in rows if case["split"] == split and not case["must_abstain"]):
+            make_positive(case, four_ids[index % len(four_ids)])
+        rejected_fixture(rows, "private_split_topics_too_few")
+        rows = deepcopy(valid_cases)
+        changed = next(case for case in rows if case["split"] == split and case["must_abstain"])
+        make_positive(changed)
+        extra = next(case for case in reversed(rows)
+                     if case["split"] != split and not case["must_abstain"])
+        extra.update(must_abstain=True, expected_memory_ids=[], acceptable_memory_ids=[],
+                     expected_facts=[], expected_cwds={})
+        rejected_fixture(rows, "private_split_abstention_cases_too_few")
+    write_jsonl(cases_path, valid_cases)
+    write_json(review_path, original_review)
+
+
+def checks_input_evidence(folder, dataset, review):
+    """Fictional calibration evidence only; no backend or holdout is executed."""
+    cache = folder / "fictional-query-cache.jsonl"
+    write_jsonl(cache, [{"schema_version": 1, "query_sha256": "0" * 64,
+                        "embedding": [0.5, 0.5], "fixture_only": True}])
+    cache_bytes, review_bytes = cache.read_bytes(), review.read_bytes()
+    report = {**code_identity(), "schema_version": 1, "synthetic": False,
+              "fixture_only": True, "split": "calibration", "selected_cases": 16,
+              "corpus_sha256": dataset.corpus_hash, "cases_sha256": dataset.cases_hash,
+              "sqlite_source_sha256": "1" * 64, "chroma_source_fingerprint": "2" * 64,
+              "collection_sha256": digest("fictional-collection"),
+              "embedding_cache_sha256": file_hash(cache),
+              "review_manifest_sha256": dataset.review_manifest_hash,
+              "k": 5, "warmups": 0, "repetitions": 1, "policy": POLICY,
+              "chroma": {"embedding_source": "cache", "provider": "fictional",
+                         "model": "fictional", "threshold": 0.3},
+              "modes": {name: {"evaluated_cases": 16, "backend_errors": 0}
+                        for name in ("chroma", "sqlite")}}
+    calibration = folder / "fictional-calibration.json"
+    frozen_dir = folder / "fictional-freeze"
+    _private_directory(frozen_dir)
+    write_json(calibration, report)
+    freeze_calibration(calibration, frozen_dir)
+    frozen_path = frozen_dir / "freeze.json"
+    frozen = read_json(frozen_path)
+    require(frozen["protocol"]["embedding_cache_sha256"] == file_hash(cache)
+            and frozen["protocol"]["review_manifest_sha256"] == dataset.review_manifest_hash
+            and frozen["review_manifest_sha256"] == dataset.review_manifest_hash,
+            "Freeze omitted input evidence")
+    args = SimpleNamespace(k=5, warmups=0, repetitions=1, modes="chroma,sqlite",
+                           split="holdout", allow_remote_llm=False,
+                           allow_remote_embeddings=False, embedding_source="cache",
+                           embedding_cache=cache, review_manifest=review,
+                           freeze_manifest=frozen_path, model_call_budget=1,
+                           adapter=None, answer_eval=False,
+                           sqlite_source=folder / "never-open.sqlite3")
+    captured_hash, rows, captured_freeze = input_evidence(args, dataset, ["chroma", "sqlite"])
+    require(captured_hash == file_hash(cache) and len(rows) == 1 and captured_freeze == frozen,
+            "Unchanged cache evidence rejected")
+
+    def rejected_before_execution(current_dataset, expected):
+        with patch("scripts.benchmark_memory_retrieval.SQLiteMemoryRepository") as backend, \
+                patch("scripts.benchmark_memory_retrieval.copy_chroma") as copy_backend, \
+                patch("scripts.benchmark_memory_retrieval._sdk_collection") as sdk, \
+                patch("scripts.benchmark_memory_retrieval.reserve_holdout") as reserve:
+            try:
+                run_benchmark(args, current_dataset, folder / "never-run")
+            except BenchmarkError as error:
+                require(str(error) == expected, "Wrong input-evidence rejection")
+            else:
+                raise AssertionError("Changed evidence was accepted")
+            for operation in (backend, copy_backend, sdk, reserve):
+                operation.assert_not_called()
+
+    write_jsonl(cache, [{"schema_version": 1, "query_sha256": "0" * 64,
+                        "embedding": [0.75, 0.25], "fixture_only": True}])
+    rejected_before_execution(dataset, "frozen_input_evidence_changed")
+    rejects(lambda: read_jsonl(cache, expected_sha256=captured_hash))
+    replacement = folder / "fictional-replacement-cache.jsonl"
+    replacement.write_bytes(cache_bytes + b"\n")
+    replacement.chmod(0o600)
+    replacement.replace(cache)
+    rejected_before_execution(dataset, "frozen_input_evidence_changed")
+    cache.write_bytes(cache_bytes)
+    review.write_bytes(review_bytes + b"\n")
+    rejected_before_execution(dataset, "review_manifest_changed_after_loading")
+    rejects(lambda: read_json(review, expected_sha256=dataset.review_manifest_hash))
+    reloaded = replace(dataset, review_manifest_hash=file_hash(review))
+    rejected_before_execution(reloaded, "frozen_input_evidence_changed")
+    review.write_bytes(review_bytes)
+    args.embedding_source, args.embedding_cache, args.split = "configured", None, "calibration"
+    require(input_evidence(args, dataset, ["chroma", "sqlite"]) == (None, None, None),
+            "Non-cache source retained cache evidence")
 
 
 def checks_metrics(dataset):

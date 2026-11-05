@@ -1,10 +1,12 @@
 {
   "adapter": "offline-fake",
-  "capture_time": "2026-11-05T09:41:52.977774+00:00",
+  "block_reason": "synthetic_only_no_reviewed_real_holdout",
+  "capture_time": "2026-11-05T14:48:36.331187+00:00",
   "cases": 29,
   "cases_sha256": "3b8487e12b693e97483680f4497e90c28a87521c27d14c12cb1bcf73947667b6",
   "corpus_records": 25,
   "corpus_sha256": "4bca5743b3f9c6f7bf1b1b77137fbf119e3b90abe6642b5a64c3cf1e29bd1ccf",
+  "embedding_cache_sha256": null,
   "embedding_source": "synthetic-hash",
   "k": 5,
   "modes": {
@@ -27,7 +29,7 @@
         "remote_model": 0,
         "usage_observed_calls": 0
       },
-      "cold_p95_ms": 2.994362002937123,
+      "cold_p95_ms": 1.8120169988833368,
       "conflict_correct": 0.0,
       "cwd_invariance_failures": 0,
       "deletion_leaks": 0,
@@ -41,8 +43,8 @@
       "no_relevant_abstention": 1.0,
       "no_relevant_case": 0.06896551724137931,
       "observable_sqlite_busy_events": 0,
-      "p50_ms": 1.8100849993061274,
-      "p95_ms": 3.1723919964861125,
+      "p50_ms": 0.9397260146215558,
+      "p95_ms": 1.5697389899287373,
       "payload_bytes": 2.0,
       "precision_at_1": 0.0,
       "precision_at_3": 0.0,
@@ -74,7 +76,7 @@
         "remote_model": 0,
         "usage_observed_calls": 0
       },
-      "cold_p95_ms": 8.13175700022839,
+      "cold_p95_ms": 9.874212002614513,
       "conflict_correct": 1.0,
       "cwd_invariance_failures": 0,
       "cwd_label_correct": 1.0,
@@ -90,8 +92,8 @@
       "no_relevant_abstention": 1.0,
       "no_relevant_case": 0.06896551724137931,
       "observable_sqlite_busy_events": 0,
-      "p50_ms": 5.786833993624896,
-      "p95_ms": 8.090051007457078,
+      "p50_ms": 6.5559420036152005,
+      "p95_ms": 9.82002800446935,
       "payload_bytes": 658.3448275862069,
       "precision_at_1": 0.8620689655172413,
       "precision_at_3": 0.29885057471264365,
@@ -123,7 +125,7 @@
         "remote_model": 0,
         "usage_observed_calls": 0
       },
-      "cold_p95_ms": 8.099930011667311,
+      "cold_p95_ms": 9.853991999989375,
       "conflict_correct": 1.0,
       "cwd_invariance_failures": 0,
       "cwd_label_correct": 1.0,
@@ -139,8 +141,8 @@
       "no_relevant_abstention": 1.0,
       "no_relevant_case": 0.06896551724137931,
       "observable_sqlite_busy_events": 0,
-      "p50_ms": 5.8720019878819585,
-      "p95_ms": 8.36380198597908,
+      "p50_ms": 7.0200559857767075,
+      "p95_ms": 9.758247004356235,
       "payload_bytes": 658.3448275862069,
       "precision_at_1": 0.8620689655172413,
       "precision_at_3": 0.29885057471264365,
@@ -172,7 +174,7 @@
         "remote_model": 0,
         "usage_observed_calls": 0
       },
-      "cold_p95_ms": 8.19372700061649,
+      "cold_p95_ms": 9.711238992167637,
       "conflict_correct": 1.0,
       "cwd_invariance_failures": 0,
       "cwd_label_correct": 1.0,
@@ -188,8 +190,8 @@
       "no_relevant_abstention": 1.0,
       "no_relevant_case": 0.06896551724137931,
       "observable_sqlite_busy_events": 0,
-      "p50_ms": 5.963556002825499,
-      "p95_ms": 8.32684600027278,
+      "p50_ms": 6.940849008969963,
+      "p95_ms": 9.974550019251183,
       "payload_bytes": 658.3448275862069,
       "precision_at_1": 0.8620689655172413,
       "precision_at_3": 0.29885057471264365,
@@ -208,10 +210,10 @@
   "remote_calls": 0,
   "repetitions": 3,
   "reproducibility": {
-    "checkout_commit": "ebcd0b0cfd7749a1ef1947ce1de78e865f415d66",
+    "checkout_commit": "83f283c4cf602d86f33c67c40278e2d0c3797ca3",
     "checkout_dirty": true,
     "chroma_version": "1.5.9",
-    "code_hash": "2384885d7db1a20af197ad7b9c364b2d11b7ceafde49b6b0f76ab11b04029b16",
+    "code_hash": "a189ba96c1e2eadea176f31fe64381ae6430fa3d174fc85ccb477b0cb24588f9",
     "policy": {
       "fts_weights": [
         6,
@@ -229,10 +231,10 @@
     "python": "3.12.10",
     "sqlite_version": "3.47.1"
   },
+  "review_manifest_sha256": null,
   "schema_version": 1,
   "split": "synthetic",
   "status": "blocked",
-  "block_reason": "synthetic_only_no_reviewed_real_holdout",
   "synthetic": true,
   "warmups": 1
 }

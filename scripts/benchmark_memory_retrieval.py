@@ -127,7 +127,8 @@ class ChromaBaseline:
     contract simulation, never relevance evidence about the configured service.
     """
     def __init__(self, collection, dataset: Dataset, source: str, calls: Calls,
-                 allow_remote: bool, cache_path: Path | None, source_hash: str):
+                 allow_remote: bool, cache_path: Path | None, source_hash: str,
+                 *, cache_rows: tuple[dict, ...] | None = None):
         self.collection, self.dataset, self.source, self.calls = collection, dataset, source, calls
         self.allow_remote, self.cache, self.source_hash = allow_remote, {}, source_hash
         self.used = False
@@ -142,8 +143,8 @@ class ChromaBaseline:
         check(set(page["ids"]) == set(expected), "chroma_corpus_id_mismatch")
         for key, document, metadata in zip(page["ids"], page["documents"], page["metadatas"]):
             check(document == expected[key].document and metadata == expected[key].metadata, "chroma_corpus_content_mismatch")
-        if cache_path:
-            for item in read_jsonl(cache_path):
+        if cache_path or cache_rows is not None:
+            for item in cache_rows if cache_rows is not None else read_jsonl(cache_path):
                 check(item.get("schema_version") == 1 and item.get("source_fingerprint") == source_hash,
                       "embedding_cache_source_mismatch")
                 check(item.get("provenance") == "independent-configured-query" and item.get("reviewed_locally") is True,
@@ -252,12 +253,15 @@ def frozen_protocol(report: dict, embedding: dict) -> dict:
             "sqlite_source_sha256": report["sqlite_source_sha256"],
             "chroma_source_fingerprint": report["chroma_source_fingerprint"],
             "collection_sha256": report["collection_sha256"],
+            "embedding_cache_sha256": report["embedding_cache_sha256"],
+            "review_manifest_sha256": report["review_manifest_sha256"],
             "embedding": {key: embedding[key] for key in ("embedding_source", "provider", "model", "threshold")}}
 
 
 def reserve_holdout(freeze: dict, dataset: Dataset, identity: dict) -> str:
     check(freeze.get("schema_version") == 1 and freeze.get("corpus_sha256") == dataset.corpus_hash
           and freeze.get("cases_sha256") == dataset.cases_hash and freeze.get("code_hash") == identity["code_hash"]
+          and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash
           and freeze.get("policy") == POLICY and freeze.get("calibration_complete") is True, "holdout_freeze_mismatch")
     questions = [question_key(case, dataset.records) for case in dataset.cases
                  if case.get("split") == "holdout"]
@@ -279,6 +283,41 @@ def reserve_holdout(freeze: dict, dataset: Dataset, identity: dict) -> str:
     return token
 
 
+def input_evidence(args, dataset: Dataset, modes: list[str]):
+    """Reject changed evidence before backend setup or holdout consumption."""
+    if not dataset.synthetic:
+        check(args.review_manifest is not None and dataset.review_manifest_hash is not None,
+              "private_review_evidence_missing")
+        review = input_path(args.review_manifest)
+        check(file_hash(review) == dataset.review_manifest_hash,
+              "review_manifest_changed_after_loading")
+    cache = None
+    cache_hash = None
+    if args.embedding_source == "cache":
+        check("chroma" in modes and args.embedding_cache is not None,
+              "query_embedding_cache_required")
+        cache = input_path(args.embedding_cache)
+        cache_hash = file_hash(cache)
+    else:
+        check(args.embedding_cache is None, "unused_embedding_cache")
+    freeze = None
+    if args.split == "holdout":
+        check(args.freeze_manifest is not None and {"chroma", "sqlite"} <= set(modes),
+              "holdout_freeze_and_baseline_required")
+        freeze = read_json(input_path(args.freeze_manifest))
+        protocol = freeze.get("protocol") if isinstance(freeze, dict) else None
+        check(isinstance(protocol, dict)
+              and "embedding_cache_sha256" in protocol
+              and "review_manifest_sha256" in protocol,
+              "frozen_input_evidence_missing")
+        check(protocol["embedding_cache_sha256"] == cache_hash
+              and protocol["review_manifest_sha256"] == dataset.review_manifest_hash
+              and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash,
+              "frozen_input_evidence_changed")
+    cache_rows = tuple(read_jsonl(cache, expected_sha256=cache_hash)) if cache is not None else None
+    return cache_hash, cache_rows, freeze
+
+
 def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
     check(1 <= args.k <= 20 and 0 <= args.warmups <= 20 and 1 <= args.repetitions <= 100, "invalid_run_bounds")
     modes = args.modes.split(",")
@@ -293,6 +332,7 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
         check(args.split in {"calibration", "holdout"}, "private_split_required")
         check(not args.allow_remote_llm, "private_evidence_remote_llm_forbidden")
     check(not args.allow_remote_embeddings or args.embedding_source == "configured", "embedding_opt_in_mismatch")
+    cache_hash, cache_rows, freeze = input_evidence(args, dataset, modes)
     check(1 <= args.model_call_budget <= 10_000, "invalid_model_budget")
     assisted = any(mode in {"sqlite-expand", "sqlite-rerank"} for mode in modes) or args.answer_eval
     check(not assisted or args.adapter in {"fake", "remote"}, "explicit_adapter_required")
@@ -315,6 +355,8 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
     report = {
         "schema_version": 1, "started_at": datetime.now(UTC).isoformat(), "synthetic": dataset.synthetic,
         "split": args.split, "corpus_sha256": dataset.corpus_hash, "cases_sha256": dataset.cases_hash,
+        "embedding_cache_sha256": cache_hash,
+        "review_manifest_sha256": dataset.review_manifest_hash,
         "corpus_records": len(dataset.records), "selected_cases": len(selected), **identity,
         "k": args.k, "warmups": args.warmups, "repetitions": args.repetitions,
         "sqlite_source_sha256": sqlite_before, "answer_eval": args.answer_eval,
@@ -334,13 +376,11 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
             check(not _overlap(source, output), "chroma_output_overlap")
             source_hash = copy_chroma(source, output / "chroma")
             collection = stack.enter_context(_sdk_collection(output / "chroma", args.collection))
-            cache = input_path(args.embedding_cache) if args.embedding_cache else None
             chroma = ChromaBaseline(collection, dataset, args.embedding_source, calls,
-                                    args.allow_remote_embeddings, cache, source_hash)
+                                    args.allow_remote_embeddings, None, source_hash,
+                                    cache_rows=cache_rows)
             report["chroma_source_fingerprint"] = source_hash
         if args.split == "holdout":
-            check(args.freeze_manifest is not None and {"chroma", "sqlite"} <= set(modes), "holdout_freeze_and_baseline_required")
-            freeze = read_json(input_path(args.freeze_manifest))
             provider, model = ("voyage", "voyage-4") if os.getenv("VOYAGE_API_KEY") else ("onnx", "all-MiniLM-L6-v2")
             preview = {"embedding_source": args.embedding_source, "provider": provider,
                        "model": model, "threshold": chroma.threshold}
@@ -529,9 +569,22 @@ def freeze_calibration(report_path: Path, output: Path) -> dict:
     check(report.get("chroma", {}).get("embedding_source") in {"configured", "cache"}, "genuine_chroma_baseline_required")
     check(report.get("code_hash") == code_identity()["code_hash"] and report.get("policy") == POLICY, "calibration_code_or_policy_changed")
     check(report.get("k") == 5, "official_calibration_requires_k5")
+    check("embedding_cache_sha256" in report and "review_manifest_sha256" in report,
+          "calibration_input_evidence_missing")
+    cache_source = report["chroma"]["embedding_source"] == "cache"
+    hashes = [report["review_manifest_sha256"]]
+    if cache_source:
+        hashes.append(report["embedding_cache_sha256"])
+    else:
+        check(report["embedding_cache_sha256"] is None, "unused_calibration_cache_hash")
+    check(all(isinstance(value, str) and len(value) == 64
+              and all(char in "0123456789abcdef" for char in value) for value in hashes),
+          "invalid_calibration_evidence_hash")
     frozen = {"schema_version": 1, "calibration_complete": True,
               "protocol": frozen_protocol(report, report["chroma"]), "corpus_sha256": report["corpus_sha256"],
-              "cases_sha256": report["cases_sha256"], "code_hash": report["code_hash"], "policy": POLICY,
+              "cases_sha256": report["cases_sha256"],
+              "review_manifest_sha256": report["review_manifest_sha256"],
+              "code_hash": report["code_hash"], "policy": POLICY,
               "calibration_report_sha256": file_hash(report_path), "frozen_at": datetime.now(UTC).isoformat()}
     _write_json(output / "freeze.json", frozen)
     return {"status": "frozen", "freeze_hash": digest(frozen)}

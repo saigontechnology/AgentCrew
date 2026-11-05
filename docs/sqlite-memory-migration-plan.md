@@ -865,13 +865,14 @@ Do not copy these assumptions:
 - [x] **MEM-301: Add JSONL benchmark-case loading and validation.**
   - Reject malformed or unsafe case definitions.
   - Check expected IDs exist in the selected corpus.
+  - Require each private split to contain at least 15 cases, five distinct positively labeled memory IDs, and two abstention cases. Both splits need exact identifiers, paraphrases, no-relevant cases and ambiguous follow-ups; a decision/preference case; and a constraint/rejected-approach or unresolved case. Existing overall coverage and normalized-question uniqueness remain required.
 - [x] **MEM-302: Implement retrieval metrics.**
   - Recall, precision, MRR, nDCG, abstention, duplicates, lifecycle correctness, and leaks.
 - [x] **MEM-303: Implement performance and cost metrics.**
   - Latency, lock events, model calls, tokens, cost, and payload size.
 - [x] **MEM-304: Implement result reports.**
   - JSON, Markdown summary, and failure JSONL.
-  - Include full reproducibility metadata.
+  - Include full reproducibility metadata, including the exact review-manifest and query-embedding-cache SHA-256 values in loaded evidence, reports, calibration freezes and holdout checks. Cache evidence is null for non-cache sources. Changed attestations and mutated or replaced caches must fail before backend setup or holdout reservation.
 - [x] **MEM-305: Add optional end-to-end answer evaluation.**
   - Same provider/model/prompt across backends.
   - Explicit remote-LLM opt-in.
@@ -885,7 +886,7 @@ Do not copy these assumptions:
   - Do not copy Mercury or Chroma thresholds blindly.
   - Not started: Phase 1 policy is unchanged. No real calibration, freeze or holdout execution is claimed.
 
-**Gate — BLOCKED:** `MEM-300–305` tooling is implemented and verified offline on 25 fictional records / 29 cases. The committed aggregate sample is synthetic-only; its hash-vector Chroma simulation is not a real baseline. Deterministic SQLite Recall@5 is 0.9259 with zero synthetic safety leaks/duplicates, consistent with the prior lexical abstentions. A private ignored draft contains 407 records and 32 proposals (16 calibration / 16 holdout), 14 candidate memories and four absent-identifier proposals, all explicitly unreviewed. The gate rejects it before backend execution. Private metrics, configured-Chroma comparison and 407-record p95 are null/not run. `MEM-002`, `MEM-306`, `MEM-307` and Phase 3 remain open; do not start Phase 4. Genuine reviewed calibration must precede tuning and a frozen, single-use real holdout. Proposed targets—not measured passes—are zero leaks/duplicates, CWD-invariant ranks/citations/scores/reasons, Recall@5 at least configured Chroma, Precision@5 within five points, at least 95% no-relevant abstention and local p95 below 100 ms. Code, datasets/backend fingerprints, embedding identity and k/warmup/repeat settings are frozen. Regenerating a freeze, renaming/relabeling cases or changing CWD does not reset the held-question ledger. Corrections require a fresh holdout or invalidation, not deleting the ledger.
+**Gate — BLOCKED:** `MEM-300–305` tooling is implemented and verified offline on 25 fictional records / 29 cases. The integrity follow-up adds exact input-evidence bindings and representative per-split checks, verified with newly created fictional fixtures only; the ignored private draft was not accessed or attested. The committed aggregate sample is synthetic-only; its hash-vector Chroma simulation is not a real baseline. Deterministic SQLite Recall@5 is 0.9259 with zero synthetic safety leaks/duplicates, consistent with the prior lexical abstentions. A private ignored draft contains 407 records and 32 proposals (16 calibration / 16 holdout), 14 candidate memories and four absent-identifier proposals, all explicitly unreviewed. The gate rejects it before backend execution. Private metrics, configured-Chroma comparison and 407-record p95 are null/not run. `MEM-002`, `MEM-306`, `MEM-307` and Phase 3 remain open; do not start Phase 4. Genuine reviewed calibration must precede tuning and a frozen, single-use real holdout. Proposed targets—not measured passes—are zero leaks/duplicates, CWD-invariant ranks/citations/scores/reasons, Recall@5 at least configured Chroma, Precision@5 within five points, at least 95% no-relevant abstention and local p95 below 100 ms. Code, datasets/backend fingerprints, embedding identity and k/warmup/repeat settings are frozen. Regenerating a freeze, renaming/relabeling cases or changing CWD does not reset the held-question ledger. Corrections require a fresh holdout or invalidation, not deleting the ledger.
 
 ### Phase 4 — Expanded search tool
 
