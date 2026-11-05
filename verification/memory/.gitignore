@@ -8,3 +8,4 @@
 !capture_baseline.py
 !validate_assets.py
 !verify_phase1.py
+!verify_phase2.py

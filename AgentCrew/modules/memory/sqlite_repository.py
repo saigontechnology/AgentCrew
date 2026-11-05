@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, time
+from dataclasses import asdict
 import json
 import math
 from pathlib import Path
@@ -99,7 +100,8 @@ class SQLiteMemoryRepository:
 
     No live conversation state or connection is stored on this object. A search
     obtains all candidate sources and conflict markers within one read snapshot.
-    Write methods exist only to populate/verify the disposable Phase 1 prototype.
+    Write methods support explicit setup and offline migration. They are not
+    wired into automatic production memory storage.
     """
 
     def __init__(
@@ -193,11 +195,20 @@ class SQLiteMemoryRepository:
 
     def upsert_record(self, record: MemoryRecord) -> ParsedMemory:
         """Atomically replace derived indexes without rewriting canonical input."""
+        parsed, values = self._prepare_record(record)
+        with self._transaction(write=True) as connection:
+            self._write_record(connection, record, parsed, values)
+        return parsed
+
+    @staticmethod
+    def _prepare_record(record: MemoryRecord) -> tuple[ParsedMemory, tuple]:
         if any(not isinstance(value, str) or not value.strip() for value in (
             record.id, record.agent_name,
         )):
             raise ValueError("Canonical ID and agent must be explicit")
-        for value in (record.session_id, record.cwd, record.header, record.subject_key):
+        if record.session_id is not None and not isinstance(record.session_id, str):
+            raise ValueError("Canonical legacy session must be text or null")
+        for value in (record.cwd, record.header, record.subject_key):
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ValueError("Optional canonical labels must be nonempty text or null")
         if not isinstance(record.kinds, tuple) or any(not isinstance(kind, str) or not kind for kind in record.kinds):
@@ -224,35 +235,203 @@ class SQLiteMemoryRepository:
             checksum(record.document), metadata_json, checksum(metadata_json),
             parsed.structured_json, json.dumps(record.kinds), json.dumps(parsed.warnings),
         )
+        return parsed, values
+
+    @staticmethod
+    def validate_record(record: MemoryRecord) -> ParsedMemory:
+        """Validate a canonical input without opening or writing a database."""
+        return SQLiteMemoryRepository._prepare_record(record)[0]
+
+    @staticmethod
+    def _write_record(connection, record, parsed, values) -> None:
         assignments = ",".join(f"{name}=excluded.{name}" for name in RECORD_COLUMNS[1:])
-        with self._transaction(write=True) as connection:
+        connection.execute(
+            f"INSERT INTO memory_record ({','.join(RECORD_COLUMNS)}) "
+            f"VALUES ({','.join('?' for _ in values)}) ON CONFLICT(id) DO UPDATE SET {assignments}",
+            values,
+        )
+        connection.execute("DELETE FROM retrieval_unit WHERE memory_id=?", (record.id,))
+        for unit in parsed.units:
             connection.execute(
-                f"INSERT INTO memory_record ({','.join(RECORD_COLUMNS)}) "
-                f"VALUES ({','.join('?' for _ in values)}) ON CONFLICT(id) DO UPDATE SET {assignments}",
-                values,
+                """INSERT INTO retrieval_unit
+                (id,memory_id,kind,source_field,text,ordinal,checksum,title,important,body,identifiers)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                SQLiteMemoryRepository._unit_values(unit),
             )
-            connection.execute("DELETE FROM retrieval_unit WHERE memory_id=?", (record.id,))
-            for unit in parsed.units:
-                bucket = (
-                    "title" if unit.source_field == "HEAD" else
-                    "identifiers" if unit.kind in {"entity", "tag", "resource"} else
-                    "important" if unit.source_field in {"FLOW/OUTCOME", "INSIGHTS/INSIGHT", "CONVERSATION_NOTES/NOTE"} else
-                    "body"
+            for table, entries in (("memory_entity", unit.entities), ("memory_tag", unit.tags)):
+                unique = SQLiteMemoryRepository._exact_values(entries)
+                connection.executemany(
+                    f"INSERT INTO {table}(memory_id,unit_id,value,normalized_value) VALUES (?,?,?,?)",
+                    ((record.id, unit.id, value, normalized) for normalized, value in unique.items()),
                 )
-                connection.execute(
-                    """INSERT INTO retrieval_unit
-                    (id,memory_id,kind,source_field,text,ordinal,checksum,title,important,body,identifiers)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                    (unit.id, unit.memory_id, unit.kind, unit.source_field, unit.text,
-                     unit.ordinal, unit.checksum, *(unit.text if bucket == column else "" for column in ("title", "important", "body", "identifiers"))),
+
+    @staticmethod
+    def _unit_values(unit: RetrievalUnit) -> tuple:
+        bucket = (
+            "title" if unit.source_field == "HEAD" else
+            "identifiers" if unit.kind in {"entity", "tag", "resource"} else
+            "important" if unit.source_field in {
+                "FLOW/OUTCOME", "INSIGHTS/INSIGHT", "CONVERSATION_NOTES/NOTE",
+            } else "body"
+        )
+        return (
+            unit.id, unit.memory_id, unit.kind, unit.source_field, unit.text,
+            unit.ordinal, unit.checksum,
+            *(unit.text if bucket == name else "" for name in (
+                "title", "important", "body", "identifiers",
+            )),
+        )
+
+    @staticmethod
+    def _exact_values(entries: tuple[str, ...]) -> dict[str, str]:
+        return {normalize_text(value): value for value in entries}
+
+    @staticmethod
+    def canonical_checksum(record: MemoryRecord) -> str:
+        """Hash all projected canonical fields with SQLite numeric normalization."""
+        values = asdict(record)
+        for name in ("created_at", "updated_at", "valid_from", "valid_to"):
+            if values[name] is not None:
+                values[name] = float(values[name])
+        if values["evolved_at"] is not None:
+            values["evolved_at"] = str(values["evolved_at"])
+        return checksum(json.dumps(
+            values, sort_keys=True, ensure_ascii=False, allow_nan=False,
+        ))
+
+    def migration_counts(self, source_fingerprint: str) -> dict[str, int]:
+        """Return aggregate ownership counts without exposing IDs or values."""
+        with self._transaction() as connection:
+            result = {
+                table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "memory_record", "migration_ledger", "retrieval_unit",
+                    "memory_entity", "memory_tag", "memory_fts_docsize",
                 )
-                for table, entries in (("memory_entity", unit.entities), ("memory_tag", unit.tags)):
-                    unique = {normalize_text(value): value for value in entries}
-                    connection.executemany(
-                        f"INSERT INTO {table}(memory_id,unit_id,value,normalized_value) VALUES (?,?,?,?)",
-                        ((record.id, unit.id, value, normalized) for normalized, value in unique.items()),
+            }
+            result["foreign_ledger"] = connection.execute(
+                "SELECT count(*) FROM migration_ledger WHERE source_fingerprint!=?",
+                (source_fingerprint,),
+            ).fetchone()[0]
+            result["non_null_cwd"] = connection.execute(
+                "SELECT count(*) FROM memory_record WHERE cwd IS NOT NULL",
+            ).fetchone()[0]
+            result["unitless_active"] = connection.execute(
+                """SELECT count(*) FROM memory_record m WHERE m.status='active'
+                AND NOT EXISTS (SELECT 1 FROM retrieval_unit u WHERE u.memory_id=m.id)""",
+            ).fetchone()[0]
+            return result
+
+    def apply_migration_batch(
+        self, records: list[tuple[MemoryRecord, str]], source_fingerprint: str,
+        *, resume: bool = False, fail_on_parse_error: bool = False,
+    ) -> tuple[int, int]:
+        """Commit canonical/index/ledger rows together, or roll back the entire batch."""
+        if len({record.id for record, _ in records}) != len(records):
+            raise SQLiteMemoryError("Duplicate migration input IDs")
+        prepared = [
+            (record, source_checksum, *self._prepare_record(record))
+            for record, source_checksum in records
+        ]
+        if fail_on_parse_error and any(parsed.warnings for _, _, parsed, _ in prepared):
+            raise SQLiteMemoryError("Strict migration refused parser warnings")
+        inserted = skipped = 0
+        with self._transaction(write=True) as connection:
+            if connection.execute(
+                "SELECT 1 FROM migration_ledger WHERE source_fingerprint!=? LIMIT 1",
+                (source_fingerprint,),
+            ).fetchone():
+                raise SQLiteMemoryError("Destination belongs to another source snapshot")
+            for record, source_checksum, parsed, values in prepared:
+                exists = connection.execute(
+                    "SELECT 1 FROM memory_record WHERE id=?", (record.id,),
+                ).fetchone()
+                ledger = connection.execute(
+                    "SELECT 1 FROM migration_ledger WHERE source_id=?",
+                    (record.id,),
+                ).fetchone()
+                if exists or ledger:
+                    if not resume or not exists or not ledger:
+                        raise SQLiteMemoryError("Unowned or already completed migration record")
+                    self._verify_migrated_record(
+                        connection, record, parsed, source_fingerprint, source_checksum,
                     )
-        return parsed
+                    skipped += 1
+                    continue
+                self._write_record(connection, record, parsed, values)
+                stored = self._record(connection.execute(
+                    "SELECT * FROM memory_record WHERE id=?", (record.id,),
+                ).fetchone())
+                expected = self.canonical_checksum(record)
+                if expected != self.canonical_checksum(stored):
+                    raise SQLiteMemoryError("Canonical projection changed during migration")
+                connection.execute(
+                    "INSERT INTO migration_ledger VALUES (?,?,?,?,?,?)",
+                    (source_fingerprint, record.id, record.id, source_checksum,
+                     expected, datetime.now(UTC).isoformat()),
+                )
+                inserted += 1
+        return inserted, skipped
+
+    def _verify_migrated_record(
+        self, connection, record, parsed, source_fingerprint, source_checksum,
+    ) -> None:
+        row = connection.execute(
+            "SELECT * FROM memory_record WHERE id=?", (record.id,),
+        ).fetchone()
+        ledger = connection.execute(
+            """SELECT * FROM migration_ledger
+            WHERE source_fingerprint=? AND source_id=?""",
+            (source_fingerprint, record.id),
+        ).fetchone()
+        expected = self.canonical_checksum(record)
+        if (
+            row is None or ledger is None or ledger["memory_id"] != record.id
+            or ledger["source_checksum"] != source_checksum
+            or ledger["destination_checksum"] != expected
+            or self.canonical_checksum(self._record(row)) != expected
+            or row["document_checksum"] != checksum(record.document)
+            or row["metadata_checksum"] != checksum(row["metadata_json"])
+            or row["structured_json"] != parsed.structured_json
+            or tuple(json.loads(row["parse_warnings_json"])) != parsed.warnings
+        ):
+            raise SQLiteMemoryError("Migration source/destination checksum mismatch")
+        unit_rows = connection.execute(
+            """SELECT id,memory_id,kind,source_field,text,ordinal,checksum,
+            title,important,body,identifiers FROM retrieval_unit WHERE memory_id=?""",
+            (record.id,),
+        ).fetchall()
+        if {tuple(row) for row in unit_rows} != {
+            self._unit_values(unit) for unit in parsed.units
+        }:
+            raise SQLiteMemoryError("Migration retrieval unit mismatch")
+        for table, attribute in (("memory_entity", "entities"), ("memory_tag", "tags")):
+            actual = connection.execute(
+                f"SELECT unit_id,normalized_value,value FROM {table} WHERE memory_id=?",
+                (record.id,),
+            ).fetchall()
+            expected_entries = {
+                (unit.id, normalized, value)
+                for unit in parsed.units
+                for normalized, value in self._exact_values(getattr(unit, attribute)).items()
+            }
+            if {tuple(row) for row in actual} != expected_entries:
+                raise SQLiteMemoryError("Migration exact-index ownership mismatch")
+
+    def verify_migration_batch(
+        self, records: list[tuple[MemoryRecord, str]], source_fingerprint: str,
+    ) -> int:
+        """Compare every canonical field, parser result, derived row and ledger hash."""
+        prepared = [
+            (record, source_checksum, self.validate_record(record))
+            for record, source_checksum in records
+        ]
+        with self._transaction() as connection:
+            for record, source_checksum, parsed in prepared:
+                self._verify_migrated_record(
+                    connection, record, parsed, source_fingerprint, source_checksum,
+                )
+        return len(prepared)
 
     def delete_record(self, memory_id: str, agent_name: str) -> int:
         """Disposable repository deletion, not a production forgetting service."""

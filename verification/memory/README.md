@@ -1,13 +1,13 @@
-# Memory migration verification: Phase 0 and Phase 1
+# Memory migration verification: Phases 0–2
 
-This directory freezes baseline evidence and a **synthetic-only** evaluation contract. Phase 0 is PIC-approved. Phase 1 adds standalone verification of an unwired SQLite retrieval prototype in `AgentCrew/modules/memory/`; no production memory backend, write path, tool, startup wiring or model pin changes. No migration or formal benchmark runner is implemented. Phase 1 awaits Architect PIC review; do not start Phase 2 yet.
+This directory freezes baseline evidence and a **synthetic-only** evaluation contract. Phase 0 is PIC-approved. Phase 1 adds standalone verification of an unwired SQLite retrieval prototype in `AgentCrew/modules/memory/`; no production memory backend, write path, tool, startup wiring or model pin changes. The offline Phase 2 migration is implemented and verified below; no formal benchmark runner is implemented. Architect approved Phase 1. Phase 2 awaits PIC review; do not start Phase 3 yet.
 
 ## Phase 1 read-only prototype
 
 Implementation files:
 
 - `AgentCrew/modules/memory/types.py`: request-local immutable query/candidate/hit/result contracts, explicit match reasons and relevance-confidence bands. Existing `BaseMemoryService` signatures are unchanged.
-- `AgentCrew/modules/memory/sqlite_repository.py`: version 1 schema and migration-ledger table; original document and arbitrary JSON metadata plus checksums; lifecycle/supersession/validity/evolution fields; nullable CWD and legacy session ID; canonical, unit, entity/tag and external-content FTS5 tables. Population/upsert/deletion methods exist for disposable setup/verification only.
+- `AgentCrew/modules/memory/sqlite_repository.py`: version 1 schema and migration-ledger table; original document and arbitrary JSON metadata plus checksums; lifecycle/supersession/validity/evolution fields; nullable CWD and legacy session ID; canonical, unit, entity/tag and external-content FTS5 tables. Population/upsert/deletion began as disposable Phase 1 setup APIs; Phase 2 shares preparation/writes for explicit offline migration, not automatic production memory storage.
 - `AgentCrew/modules/memory/record_parser.py`: deterministic actual `CONVERSATION_NOTES/NOTE` parsing, stable content-derived unit IDs, exact observed identifiers/resources/domains, and explicit fallback warnings. Original input is retained even when parsing fails. DTD/entity declarations are rejected; oversized documents/units are indexed only up to documented module limits with warnings. Only recognized XML fields are derived; other fields remain in canonical source.
 - `AgentCrew/modules/memory/retrieval.py`: read-only scoped candidate retrieval, deterministic parent-level reciprocal-rank fusion, conservative abstention, quoted compact evidence and potential-conflict markers. CWD is output-only.
 - `AgentCrew/modules/memory/__init__.py`: retains the same public exports but loads the two optional, dependency-heavy legacy services on demand, following the existing package lazy-export pattern. Importing the prototype no longer imports Chroma or provider SDKs.
@@ -31,9 +31,61 @@ uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python
 
 Observed result: all standalone invariants pass; **27/29 synthetic labeled-ID checks pass**. `syn-case-paraphrase` (cache paraphrase) and `syn-case-constraint` (rejected signaling approach) abstain: lexical recall limitations without semantic expansion. The checks exercise expected/acceptable/excluded IDs, provenance, conflict and abstention; they do **not** evaluate semantic expected facts, answer generation, real-memory quality, calibrated ranking, latency or cost. The formal scored Chroma/SQLite/assisted benchmark remains Phase 3. No fixture or label was changed to improve these counts.
 
-MEM-100 through MEM-106 are implemented and verified for this isolated prototype. MEM-002 stays open: the private, sanitized, locally reviewed real-memory cohort is mandatory before Phase 3 can pass or any cutover can be authorized. Do not invent labels or commit/return private documents, IDs, sessions, source paths, queries or labels. Architect review is required before Phase 2.
+MEM-100 through MEM-106 are implemented and verified for this isolated prototype. MEM-002 stays open: the private, sanitized, locally reviewed real-memory cohort is mandatory before Phase 3 can pass or any cutover can be authorized. Do not invent labels or commit/return private documents, IDs, sessions, source paths, queries or labels. Architect approved Phase 1; the Phase 2 review gate below is pending.
 
 References: [Python 3.12 sqlite3 transactions/connection ownership](https://docs.python.org/3.12/library/sqlite3.html), [SQLite FTS5 external content, triggers, Unicode61, BM25 and index integrity](https://www.sqlite.org/fts5.html).
+
+## Phase 2 offline migration
+
+`scripts/migrate_chroma_memory_to_sqlite.py` is a checkout-local operator tool, not a runtime backend switch. It reuses the Phase 0 fingerprint helper and Phase 1 parser/repository. The repository now shares canonical/index preparation between normal setup and **atomic migration batches**, and checks the existing `migration_ledger` before resuming. Schema version stays **1**; there is no automatic schema upgrade or destructive repair.
+
+### Operational contract
+
+1. Stop/pause AgentCrew memory writers **operationally**. The script cannot establish this; reports always say `writers_confirmed_paused: false`. A byte-stable snapshot is evidence, not proof of a paused application or a fresh live-data baseline.
+2. Supply an existing, authorized **private source copy**. Source, destination and work directory must be mutually non-overlapping paths under `verification/memory/local/` or `verification/memory-migration/`, and Git must confirm they are ignored and untracked. Live-source paths outside these roots are rejected. Source trees and path ancestors may not be symlinks. Use an unused work directory and destination for a new run.
+3. Generated private directory modes are `0700`, reports/logs `0600`; do not force-add them. POSIX workspace/destination locks prevent concurrent operator runs and release on process exit. Windows locking code exists but has not been validated on Windows; mode bits alone are not an NTFS ACL guarantee.
+4. Default dry-run copies to a frozen `source-backup/`, then a second `chroma-copy/`. Only the latter is opened through Chroma `get_collection(..., embedding_function=None)`, with telemetry disabled. No `ChromaMemoryService`, get-or-create, embedding/answering model, source SDK connection, retention or source deletion is used. No embeddings enter SQLite.
+5. Source bytes are fingerprinted before/after copying and after processing; backup equality is checked. Snapshot identity binds file bytes, collection, destination token, schema/mapping version and tool/repository/parser hashes. After preflight, logical source/canonical roots also bind the SDK working copy: resuming a tampered copy fails before writes. Tool/parser/repository changes require a fresh run, not a forced checkpoint reuse.
+6. Inspection writes **no destination schema/data and does not open even an existing destination**. Copies/reports in the explicit work directory are expected inspection outputs. `--apply` is the only write authorization. `--verify` requires `--apply`. Reusing a work directory or an existing compatible destination requires `--resume`; unrelated, future/incomplete or unledgered destinations are refused. There is no replacement/force option.
+7. Preserve original IDs, exact document text, and arbitrary actual metadata as JSON plus checksums. Required nonempty agent and finite calendar-supported numeric `date` must be mappable to schema 1; missing/non-text documents, missing required metadata or invalid fields **block the whole preflight**, rather than inventing values or silently skipping records. Source `date` supplies both canonical creation/update projection fields; no migration clock is substituted. Missing optional session/header/evolution fields stay NULL. Blank legacy session strings remain verbatim, distinct from NULL; request-local current-session query validation remains nonempty. Numeric evolution values have a TEXT projection while their original types remain exact in metadata JSON.
+8. All historical canonical CWDs stay NULL, even if arbitrary raw metadata happens to contain a `cwd` key; that metadata is retained unchanged. Do not infer project, subject, kinds or supersession links. An explicit supported `status` is preserved; absent lifecycle metadata defaults to active. Known unsupported lifecycle aliases, or conflicting active/supersession signals, block instead of silently reactivating data.
+9. Parser warnings/fallbacks are counted, with original canonical records retained. `--fail-on-parse-error` is deliberately strict: **any parser warning**, including truncation, prevents destination writes during preflight; it also refuses a permissive snapshot in strict resume mode. No unsupported or malformed document is silently dropped.
+10. Each bounded batch commits canonical rows, derived units/entities/tags/FTS and ledger rows in one SQLite transaction. Resume skips only records whose source hash, all canonical projections, stored checksums, parser result, derived rows and ledger ownership match. Mismatches fail closed, never overwrite completed records. Prior committed batches remain intact after interruption or later failure; a crash during initial schema creation may require operator review and a fresh destination rather than automatic repair.
+
+### Commands and results
+
+With already-provisioned dependencies and a staged private source, use separate sibling paths (not a destination inside the source):
+
+```bash
+SOURCE_COPY=verification/memory/local/staged-source
+DESTINATION=verification/memory/local/migrated.sqlite3
+WORK=verification/memory/local/migration-run
+
+uv run --no-project --no-config --offline --python "$EXISTING_PYTHON" python scripts/migrate_chroma_memory_to_sqlite.py \
+  --source "$SOURCE_COPY" --destination "$DESTINATION" --work-dir "$WORK" --report "$WORK/inspection.json"
+
+uv run --no-project --no-config --offline --python "$EXISTING_PYTHON" python scripts/migrate_chroma_memory_to_sqlite.py \
+  --source "$SOURCE_COPY" --destination "$DESTINATION" --work-dir "$WORK" --report "$WORK/apply.json" \
+  --apply --resume --verify --batch-size 100
+```
+
+Other defined options: `--collection` (default `conversation`, default Chroma tenant/database), explicit `--dry-run`, `--resume`, `--verify`, `--fail-on-parse-error`, `--batch-size` (`1..1000`), and `--report` (a file directly in the owned work directory; default `report.json`). SDK diagnostics and tracebacks go to private `sdk.log`; stdout/error summaries contain only static error codes, hashes and aggregate counts. Do not publish diagnostic logs or source/destination files. The current pinned SDK is stopped using a public close method when available, otherwise its system-stop lifecycle; this fallback is version-sensitive.
+
+Reports contain package/Python/SQLite/Chroma versions, checkout commit/dirty-state plus code hashes, source tree/collection and canonical roots, destination-file fingerprint, counts/warnings and verification state—no raw IDs, documents, metadata values or original source paths. The private snapshot manifest additionally retains file checksums. Physical SQLite fingerprints may vary on re-run; canonical roots and matching per-record ledger checks establish logical equality. Verification checks every source ID, all canonical fields and metadata/checksums, parser/derived ownership, active units, NULL legacy CWD, global source/canonical/ledger counts, SQLite/FK checks and the **actual FTS index** (`integrity-check` against external content), not just the FTS virtual-table row count.
+
+Standalone verification (existing environment; **do not use `-S` here**, because installed Chroma/version metadata is needed):
+
+```bash
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python verification/memory/verify_phase2.py
+```
+
+It builds disposable synthetic Chroma collections with explicitly supplied dummy input embeddings, never a downloaded embedding model. Results: six source records preserved; six verified on apply; repeat resume skipped all six without duplicated rows/indexes; interruption committed two, then restart skipped two and inserted four; one malformed record kept its fallback. Additional checks cover missing optional and blank legacy session preservation, arbitrary actual metadata, strict mode, destination/source/ledger tampering, frozen/working copies, unsupported lifecycle rejection, unknown required metadata, unrelated/future SQLite schemas, whole-batch rollback, concurrent workspace locks/report ownership, safe/ignored paths, symlinks, and simulated unstable copying. Fixtures and generated results stay private/ignored; all inputs are fictional.
+
+Permitted retained-copy aggregate validation also passed: **407 source records → 407 canonical records and 407 ledger rows; 407 independently verified; zero unmappable records; one unsupported-XML fallback preserved; 10,937 units and FTS document-size rows, 31,010 exact-entity rows and 1,497 tag rows; zero foreign-ledger, non-NULL CWD or unitless-active rows**. A repeated verified resume skipped all 407 records, inserted zero, and retained identical canonical roots and index counts. This is the existing Phase 0 frozen copy, not a new claim about the live source. The first inspection correctly blocked blank historical session labels before destination writes; the repository's type-valid legacy-session preservation was corrected and regression-tested, then a fresh private run preserved all records. Failed artifacts are retained rather than silently repurposed.
+
+Rollback remains non-destructive: keep the unchanged original staged source, untouched frozen backup, disposable SDK copy, SQLite candidate, manifest, reports/logs and ledger/checksum evidence. No application was switched to SQLite, so the existing production Chroma path remains unchanged. Do not remove Chroma or copy a candidate over it. Actual cutover/rollback procedures require later phase approval and a fresh paused-writer snapshot. SQL row deletion is not forensic erasure of WAL, pages or backups.
+
+MEM-200 through MEM-204 are verified for this offline tool; PIC sign-off is pending. **MEM-002 remains open until a private, sanitized, locally reviewed real-memory benchmark cohort is evaluated before Phase 3 can pass or cutover can be authorized.** Reading a retained copy for preservation is not that review and does not create or score real-case queries/labels. No formal benchmark, model-assisted retrieval, application startup, deprecated tests, production wiring, `search_memory` change or automatic injection was performed.
 
 ## Frozen evidence
 

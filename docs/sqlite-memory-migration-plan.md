@@ -2,9 +2,9 @@
 
 ## Status
 
-**Approved plan. Phase 0 PIC-approved; Phase 1 read-only prototype verified and pending PIC review. No backend cutover.**
+**Approved plan. Phases 0/1 PIC-approved; Phase 2 offline migration verified and pending PIC review. No backend cutover or Phase 3 execution.**
 
-This document defines the work needed to replace AgentCrew's ChromaDB memory backend with SQLite and FTS5. It also defines a safe migration script and a repeatable benchmark job. A standalone Phase 1 prototype is implemented alongside the existing services; production memory behavior is unchanged.
+This document defines the work needed to replace AgentCrew's ChromaDB memory backend with SQLite and FTS5. It also defines a safe migration script and a repeatable benchmark job. A standalone Phase 1 prototype and Phase 2 offline migration are implemented alongside the existing services; production memory behavior is unchanged.
 
 ## Approved decisions
 
@@ -509,13 +509,15 @@ Convert the existing Chroma `conversation` collection into the new SQLite canoni
 
 ```bash
 uv run python scripts/migrate_chroma_memory_to_sqlite.py \
-  --source ./memory_db \
-  --destination ./memory_db/agentcrew-memory.sqlite3 \
+  --source ./verification/memory/local/staged-source \
+  --destination ./verification/memory/local/migrated.sqlite3 \
   --collection conversation \
-  --work-dir ./verification/memory-migration \
+  --work-dir ./verification/memory/local/migration-run \
   --apply \
   --verify
 ```
+
+The implemented CLI requires source, destination and work directory to be non-overlapping paths inside the ignored private roots `verification/memory/local/` or `verification/memory-migration/`. Stage a source copy while writers are stopped/paused; do not pass the live database. The original example placed the destination inside its source and has been corrected above. The command above performs a new apply; omit `--apply --verify` for default inspection, then use the same work directory with `--apply --resume --verify` to apply its validated snapshot. See `verification/memory/README.md` for complete operational safeguards and rollback guidance.
 
 ### Proposed options
 
@@ -534,7 +536,7 @@ uv run python scripts/migrate_chroma_memory_to_sqlite.py \
 ### Per-record migration flow
 
 1. Read Chroma ID, document, and actual metadata.
-2. Validate required agent/session metadata without inventing missing values.
+2. Validate required agent/date metadata; preserve nullable or blank legacy session labels without inventing replacements.
 3. Store the canonical record with the original ID and document.
 4. Set CWD to `NULL` for legacy records.
 5. Parse structured XML.
@@ -826,29 +828,29 @@ Do not copy these assumptions:
   - Include IDs, date, CWD, kind, headline, excerpt, reason, confidence, and conflict status.
   - Mark recalled content as untrusted evidence.
 
-**Gate:** Standalone `verification/memory/verify_phase1.py` passes the schema, parser/fallback, canonical preservation, rollback, FTS deletion, exact lookup, scope/date/status/validity, dedup, conflict, CWD, concurrency and formatter invariants. Synthetic labeled-ID checks pass 27/29; `syn-case-paraphrase` and `syn-case-constraint` abstain (lexical recall misses). These checks do not score semantic expected facts or constitute the formal Phase 3 benchmark. See `verification/memory/README.md` for defaults, limitations and commands. PIC review is pending; do not start Phase 2 or change the production backend yet.
+**Gate:** Standalone `verification/memory/verify_phase1.py` passes the schema, parser/fallback, canonical preservation, rollback, FTS deletion, exact lookup, scope/date/status/validity, dedup, conflict, CWD, concurrency and formatter invariants. Synthetic labeled-ID checks pass 27/29; `syn-case-paraphrase` and `syn-case-constraint` abstain (lexical recall misses). These checks do not score semantic expected facts or constitute the formal Phase 3 benchmark. See `verification/memory/README.md` for defaults, limitations and commands. Architect PIC approved Phase 1. Production memory behavior remains unchanged; the Phase 2 review gate follows.
 
 ### Phase 2 — Migration script
 
-- [ ] **MEM-200: Implement `scripts/migrate_chroma_memory_to_sqlite.py`.**
+- [x] **MEM-200: Implement `scripts/migrate_chroma_memory_to_sqlite.py`.**
   - Use an isolated source copy.
   - Default to dry-run.
   - Require explicit `--apply` for writes.
   - Preserve IDs, documents, and metadata.
   - Set historical CWD to `NULL`.
-- [ ] **MEM-201: Add idempotent batching and resume support.**
+- [x] **MEM-201: Add idempotent batching and resume support.**
   - Use migration-ledger checksums.
   - Make interrupted batches restartable.
-- [ ] **MEM-202: Add migration verification.**
+- [x] **MEM-202: Add migration verification.**
   - Counts, IDs, checksums, metadata, relationships, FTS rows, and CWD assertions.
-- [ ] **MEM-203: Add migration reports and rollback manifest.**
+- [x] **MEM-203: Add migration reports and rollback manifest.**
   - JSON report with warnings and parse failures.
   - Record source commit/tool versions.
-- [ ] **MEM-204: Validate against a disposable Chroma copy.**
+- [x] **MEM-204: Validate against a disposable Chroma copy.**
   - Never point early validation at the live memory directory.
   - Verify re-run and resume behavior.
 
-**Gate:** Every readable source record is preserved, all discrepancies are reported, and rollback artifacts exist.
+**Gate:** Standalone Phase 2 checks pass, including source stability, safe paths/symlinks, dry-run non-writing, strict-mode preflight, batch rollback, interruption/restart, metadata/NULL CWD preservation, ledger/checksum mismatch rejection and actual FK/FTS integrity. The retained Phase 0 frozen copy was migrated privately: 407/407 canonical records and ledger rows, 10,937 units/FTS document-size rows, zero unmappable records, one unsupported-XML fallback preserved. Blank legacy session strings are preserved rather than fabricated or discarded; query current-session input remains nonempty. Reports and rollback artifacts remain ignored/private. See `verification/memory/README.md` for commands, aggregate results and limitations. PIC review is pending: do not start Phase 3, authorize cutover or mark MEM-002 complete.
 
 ### Phase 3 — Benchmark job
 
