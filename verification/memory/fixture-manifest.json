@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "fixture_version": "1.0.0",
+  "synthetic_only": true,
+  "corpus_file": "synthetic-corpus.jsonl",
+  "cases_file": "benchmark-cases.jsonl",
+  "record_count": 25,
+  "case_count": 29,
+  "required_categories": [
+    "exact_identifier",
+    "paraphrase",
+    "multilingual",
+    "ambiguous_followup",
+    "preference",
+    "decision",
+    "constraint_rejected_approach",
+    "unresolved",
+    "correction_superseded",
+    "active_conflict",
+    "date_filter",
+    "current_session_exclusion",
+    "cross_agent_exclusion",
+    "same_agent_different_cwd",
+    "cwd_not_ranking",
+    "new_cwd_display",
+    "legacy_cwd_display",
+    "deleted_memory",
+    "prompt_injection",
+    "no_relevant_memory",
+    "delegation_transfer",
+    "file_name",
+    "symbol",
+    "model_id",
+    "provider_name",
+    "url",
+    "acronym"
+  ],
+  "synthetic_path_prefix": "/synthetic/projects/",
+  "setup_actions": [
+    {
+      "action_id": "physically_forget_syn_mem_deleted",
+      "operation": "insert_then_physically_forget",
+      "memory_ids": [
+        "syn-mem-deleted"
+      ],
+      "must_verify_absent_from": [
+        "canonical",
+        "retrieval_units",
+        "fts",
+        "entities",
+        "tags"
+      ]
+    }
+  ],
+  "hashes_sha256": {
+    "synthetic-corpus.jsonl": "4bca5743b3f9c6f7bf1b1b77137fbf119e3b90abe6642b5a64c3cf1e29bd1ccf",
+    "benchmark-cases.jsonl": "3b8487e12b693e97483680f4497e90c28a87521c27d14c12cb1bcf73947667b6"
+  }
+}

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Draft for approval. Documentation only.**
+**Approved plan. Phase 0 baseline and synthetic fixtures recorded; implementation not started.**
 
 This document defines the work needed to replace AgentCrew's ChromaDB memory backend with SQLite and FTS5. It also defines a safe migration script and a repeatable benchmark job. No production implementation is included in this change.
 
@@ -42,7 +42,9 @@ This document defines the work needed to replace AgentCrew's ChromaDB memory bac
 
 ## Repository baseline
 
-The reviewed local snapshot is AgentCrew `main` at `e83a03b79e207d5e5d9a8b8f655e3fa9dbe61428`, with package version `0.23.2` declared in the repository dossier. Python 3.12+ is declared in `pyproject.toml`; the Python 3.8 statement in `CONTRIBUTING.md` is stale.
+The original reviewed local snapshot is AgentCrew `main` at `e83a03b79e207d5e5d9a8b8f655e3fa9dbe61428`, with package version `0.23.2` declared in the repository dossier. Python 3.12+ is declared in `pyproject.toml`; the Python 3.8 statement in `CONTRIBUTING.md` is stale.
+
+Phase 0 rechecked implementation baseline `a6c186fde41f7252fb311abd2af8e6d2abde87f1`. The memory service, worker, coordinator and setup have no intervening changes. Aggregate inventory, snapshot limitations, current metadata findings and synthetic fixture contracts are recorded in `verification/memory/README.md` and `verification/memory/baseline.json`. No private source paths or memory contents are committed. MEM-002's synthetic cohort is ready for Architect review; local real-memory labels remain open. Do not begin Phase 1 until the review gate is resolved.
 
 AgentCrew uses service composition, async-generator streaming, singleton service/manager patterns, an EventBus, and module-per-tool registration. The memory migration must follow those existing patterns.
 
@@ -258,7 +260,7 @@ Derive smaller units linked to the canonical record:
 | `FLOW.EXPLORATION` | episode detail |
 | `FLOW.OUTCOME` | decision or outcome |
 | `INSIGHT` | fact or insight |
-| actionable `CONVERSATION_NOTE` | preference, constraint, correction, workaround, or unresolved |
+| actionable `CONVERSATION_NOTES.NOTE` | preference, constraint, correction, workaround, or unresolved |
 | `ENTITY` | exact entity |
 | `DOMAIN` | tag |
 | `RESOURCE` | exact resource identifier |
@@ -775,15 +777,20 @@ Do not copy these assumptions:
 
 ### Phase 0 — Approval and baseline
 
-- [ ] **MEM-000: Approve this plan.**
+- [x] **MEM-000: Approve this plan.**
+  - Approved for phased execution; Architect reviews each phase before the next starts.
   - Confirm the phased scope and file names.
   - Confirm that automatic context injection remains deferred.
   - Confirm that CWD remains display-only provenance.
-- [ ] **MEM-001: Freeze a migration baseline.**
+- [x] **MEM-001: Freeze a migration baseline.**
+  - Aggregate baseline and reproducible collector: `verification/memory/`; private frozen backup and SDK working copy remain ignored.
+  - Byte stability was verified during capture; writers must still be stopped/paused for the future migration.
   - Record AgentCrew commit, package version, Python version, Chroma version, and SQLite version.
   - Back up the live Chroma directory before any migration work.
   - Record current memory count and actual metadata keys.
 - [ ] **MEM-002: Build the labeled benchmark set.**
+  - Synthetic cohort complete: 25 fictional records, 29 cases and 27 required categories, with checksums and standalone validation.
+  - Still open: local sanitized real-memory labels and Architect review of the benchmark/safety labels. No real cases were invented or committed.
   - Create sanitized real cases and synthetic edge cases.
   - Label expected, acceptable, and excluded memory IDs.
   - Include all required categories from this document.

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-11-05T03:58:46.173075+00:00",
+  "implementation_baseline_commit": "a6c186fde41f7252fb311abd2af8e6d2abde87f1",
+  "checkout_commit_at_capture": "bc4c252774f7b758f582e0f53be92b52e0a11ea1",
+  "capture_script_sha256": "fb31b0d2ff03f02fc2479427d5cd20281a7ba09c684a3106cc90e1f1b329cf60",
+  "package_version": "0.23.2",
+  "python_requirement": ">=3.12",
+  "runtime_python": "3.12.10",
+  "installed_chromadb": "1.5.9",
+  "locked_chromadb": "1.5.9",
+  "runtime_sqlite": "3.47.1",
+  "fts5_available": true,
+  "source_selector": "MEMORYDB_PATH",
+  "collection_name": "conversation",
+  "record_count": 407,
+  "inspected_metadata_records": 407,
+  "metadata_keys": [
+    "agent",
+    "date",
+    "header",
+    "session_id",
+    "type"
+  ],
+  "snapshot_integrity_check": "ok",
+  "source_bytes_stable_during_copy_and_inventory": true,
+  "copied_files_match_source_before_sdk_open": true,
+  "chroma_sdk_used_only_on_copy": true,
+  "source_values_or_paths_recorded": false,
+  "writers_confirmed_paused": false,
+  "inventory_only_not_migration_or_retrieval_benchmark": true
+}

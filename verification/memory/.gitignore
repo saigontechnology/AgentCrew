@@ -1,0 +1,9 @@
+*
+!.gitignore
+!README.md
+!baseline.json
+!fixture-manifest.json
+!synthetic-corpus.jsonl
+!benchmark-cases.jsonl
+!capture_baseline.py
+!validate_assets.py

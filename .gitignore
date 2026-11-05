@@ -70,3 +70,6 @@ config.json
 generate
 chrome_user_data/
 .agentcrew
+
+# Private memory migration workspace from the migration plan
+/verification/memory-migration/
