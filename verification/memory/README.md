@@ -178,9 +178,33 @@ Only `SQLiteMemoryRepository.candidates` changes at runtime. Exact entity/tag so
 
 Run `verification/memory/verify_exact_lookup.py` with the provisioned offline interpreter. Its fictional legacy-SQL oracle compares candidate and complete result signatures, tests ties/Unicode/filters/limits, verifies real index-led plans, and reports broad-term/selective-scope timings without treating noisy microbenchmarks as adoption evidence. Existing standalone verifiers remain required; deprecated `tests/` are not run.
 
-One authorized matched A/B used disposable consistent clones and only the same 16 calibration cases: k=5, one warmup, three repetitions, unchanged Phase 1 policy and no adapters. Both variants made 96 calls; **192/192** rank/citation/score/reason signatures matched the saved baseline. Recall@1 remained 0.8571, Recall@3/@5 1.0, MRR 0.9286, nDCG 0.9473 and fixed-denominator Precision@5 0.175. Both abstentions were correct; observed safety errors, duplicates, CWD failures and backend errors remained zero.
+#### Evidence reconciliation (documentation only; no rerun)
 
-Matched warm p50 improved **230.97 → 16.86 ms**, but p95 was **665.74 → 655.21 ms** (cold p95 **667.59 → 657.46 ms**). Across 96 calls per variant, entity execute time was **24,475.99 → 731.62 ms**, tag **15,485.42 → 159.18 ms**, and unchanged FTS **15,499.83 → 15,702.58 ms**. FTS still dominates the slow tail; **p95 <100 ms is not achieved**. These are a single sequential, instrumented matched comparison, not controlled disk-cold results or a genuine Chroma comparison. Fictional broad-term/tight-scope timings showed small roughly 1–5% regressions; index-led global matches can cost more for broad terms or highly selective parent scopes. FTS and late hydration are explicitly deferred. Original candidate/review bytes were preserved; private reports remain ignored.
+The earlier documentation mixed timing claims that cannot be attributed to its linked reports. The three SHA-256 values supplied in the preceding handoff could not be located in the retained private workspaces: combined `aebd09dfaf3b0a87c36725fbd43828af8fbc0664d303f5fe0c5914ba26e627ef`, baseline `7338a7b37668452518b3a5613dd5be39e5b8bba8423acfd6614f10ede484df92`, and optimized `36103954987b1c168a6de115798f7b5630f7190e57f50daa92bd28e3c70b0022`. Their former numeric claims are withdrawn, not explained away as rounding, changed denominators or profiler overhead. No cause for the missing hash attribution has been established, and no measurement was rerun or raw report rewritten to fill the gap.
+
+A separately identified, retained chain is internally verifiable: its combined report references the exact hashes of both variant reports, and its aggregate metrics equal those variant reports. Its baseline repository hash also matches the recorded committed source. **This is the currently inspectable evidence, not a silent replacement of the unavailable handoff hash set; that provenance gap remains for PIC review.**
+
+| Retained artifact role | Verified SHA-256 |
+| --- | --- |
+| Combined A/B | `2d58c279b17596a3edc712e3abe73e5a4f5c56910b01ce49334cad7c28e838ea` |
+| Baseline variant | `1031454fb4412ee0c81e3a38901d2db78b64a59a37d50eea30d282f0076f9a81` |
+| Optimized variant | `2b2c625ad1fb06aef86c9d6faf948b66bdb59be73308c7ce45fa63e415fa34aa` |
+| Retained A/B harness, inspected but not executed during reconciliation | `aeed635c3b015d30d86ef6b96468b2f480c2d849af24773ca3c538c664185795` |
+
+That chain records separate consistent clones, fixed old-then-new order, the same 16 calibration cases, k=5, one warmup and three repetitions. There are **96 retrieval invocations per variant / 192 total**: 16 first calls, 16 warmups, 48 measured repetitions and 16 CWD probes. All **192/192** rank/citation/score/reason checks match the saved baseline. Recall@1 is 0.8571, Recall@3/@5 1.0, MRR 0.9286, graded nDCG 0.9473 and fixed-denominator Precision@5 0.175. Both abstentions are correct; observed excluded/scope/lifecycle/deletion/unknown-ID leaks, duplicates, backend/busy errors, CWD failures and repeat changes are zero. These are recorded calibration checks, not holdout evidence or phase acceptance.
+
+| Metric from this retained chain (milliseconds) | Baseline | Optimized | Sample / boundary |
+| --- | ---: | ---: | --- |
+| Warm p50 | 428.86 | 96.88 | 48 measured retrieval calls per variant |
+| Warm p95 | 1237.77 | 655.52 | Same 48 measured calls; warmups excluded |
+| First-call (“cold”) p95 | 1228.86 | 618.70 | 16 first calls, one per case; not controlled disk-cold I/O |
+| Entity `Cursor.execute` wall total | 24475.99 | 731.62 | 96 entity statements per variant across all retrieval phases |
+| Tag `Cursor.execute` wall total | 15485.42 | 159.18 | 96 tag statements per variant across all retrieval phases |
+| FTS `Cursor.execute` wall total | 15499.83 | 15702.58 | 96 FTS statements per variant across all retrieval phases |
+
+SQL-stage totals are cumulative instrumented `Cursor.execute` wall time, not latency percentiles, per-call averages, or inclusive coordinator totals. `fetchall` is timed separately: entity 65.25→65.49 ms, tag 5.22→3.82 ms, FTS 1352.91→1397.19 ms. Execute intervals end before the harness captures one EXPLAIN per exact family, so plan capture is excluded from those SQL totals but can add to first-call/end-to-end latency. Timer/counter bookkeeping is present. Controls/conflict and setup statements are tracked separately; they are not added to the entity/tag/FTS totals. Harness inspection found no cProfile phase in this A/B. These definitions do not reconcile the unavailable handoff values; the latency and execute/fetch measurements must not be substituted for one another.
+
+The retained observations support faster exact lookup, but **optimized warm p95 655.52 ms still fails the proposed <100 ms target**. FTS SQL was unchanged and its execute total did not improve. Original candidate/review preservation and zero holdout/model/embedding/network invocations are recorded in the combined report. This is one sequential, instrumented comparison with cache/order and fixed-clone effects, not an interleaved statistical experiment, a genuine Chroma comparison or a disk-cold benchmark. Previously reported fictional broad-term/tight-scope roughly 1–5% regressions remain a separate caveat, not a measurement from this private chain. FTS and late hydration remain deferred; no gates or checked tasks change through this reconciliation.
 
 ### Current result and remaining gates
 
