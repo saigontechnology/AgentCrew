@@ -11,4 +11,5 @@
 !verify_phase2.py
 !verify_phase3.py
 !verify_migration_operator.py
+!verify_exact_lookup.py
 !phase3-synthetic-summary.json

@@ -461,7 +461,11 @@ class SQLiteMemoryRepository:
     def candidates(
         self, query: MemoryQuery, exact_values: tuple[str, ...], fts_expression: str,
     ) -> CandidateBatch:
-        """Filter every source before its parent ranking and limit, in one snapshot."""
+        """Filter before ranking/limits; exact indexes drive fenced inner joins.
+
+        CROSS JOIN keeps normalized-value lookups ahead of unit/parent payload
+        joins without changing eligibility, source-detail selection or ranking.
+        """
         scope, scope_values = self._eligibility(query)
         candidates = []
         with self._transaction() as connection:
@@ -470,17 +474,25 @@ class SQLiteMemoryRepository:
                 sources.append((CandidateSource.MEMORY_ID, "", "1", [], "m.id", "0"))
             if exact_values:
                 placeholders = ",".join("?" for _ in exact_values)
-                for source, table in ((CandidateSource.ENTITY, "memory_entity"), (CandidateSource.TAG, "memory_tag")):
-                    sources.append((source, f"JOIN {table} x ON x.unit_id=u.id", f"x.normalized_value IN ({placeholders})", list(exact_values), "x.value", "0"))
+                for source, table, index in (
+                    (CandidateSource.ENTITY, "memory_entity", "exact_entity"),
+                    (CandidateSource.TAG, "memory_tag", "exact_tag"),
+                ):
+                    sources.append((source, f"{table} x INDEXED BY {index}", f"x.normalized_value IN ({placeholders})", list(exact_values), "x.value", "0"))
             if fts_expression:
                 sources.append((CandidateSource.FTS, "JOIN memory_fts ON memory_fts.rowid=u.rowid", "memory_fts MATCH ?", [fts_expression], "'Unicode FTS5 field match'", "bm25(memory_fts,6.0,4.0,1.0,8.0)"))
             for source, join, predicate, values, detail, score in sources:
+                if source in (CandidateSource.ENTITY, CandidateSource.TAG):
+                    from_clause = f"""{join}
+                    CROSS JOIN retrieval_unit u ON u.id=x.unit_id
+                    CROSS JOIN memory_record m ON m.id=u.memory_id"""
+                else:
+                    from_clause = f"retrieval_unit u JOIN memory_record m ON m.id=u.memory_id {join}"
                 sql = f"""WITH matches AS MATERIALIZED (
                     SELECT m.*,u.id AS unit_id,u.kind AS unit_kind,u.source_field,
                     u.text AS unit_text,u.ordinal,u.checksum AS unit_checksum,
                     {detail} AS source_detail,{score} AS source_score
-                    FROM retrieval_unit u JOIN memory_record m ON m.id=u.memory_id
-                    {join} WHERE {scope} AND ({predicate})
+                    FROM {from_clause} WHERE {scope} AND ({predicate})
                 ), ranked AS (
                     SELECT *,row_number() OVER (
                         PARTITION BY id ORDER BY source_score,
