@@ -1,6 +1,6 @@
 # Memory migration verification: Phases 0–3
 
-Phases 0–2 are PIC-approved. The private cohort is reviewed and SQLite-only calibration is measured, but **Phase 3 is BLOCKED, not passed**: the genuine Chroma comparison, performance target, freeze and untouched holdout remain unresolved. The narrow exact-lookup performance implementation is pending PIC review. **MEM-002 stays open; do not start Phase 4 or cut over.** No production setup, search tool, write path, automatic injection, provider or model pin has changed.
+Phases 0–2 are PIC-approved. The private cohort is reviewed and SQLite-only calibration is measured, but **Phase 3 is BLOCKED, not passed**: the genuine Chroma comparison, performance target, freeze and untouched holdout remain unresolved. The narrow exact-lookup performance implementation and evidence reconciliation are PIC-approved (2026-11-06), not Phase 3 approval. **MEM-002 stays open; Phases 4–5 have not started and are not authorized; do not cut over.** No production setup, search tool, write path, automatic injection, provider or model pin has changed.
 
 ## Phase 1 read-only prototype
 
@@ -31,7 +31,7 @@ uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python
 
 Observed result: all standalone invariants pass; **27/29 synthetic labeled-ID checks pass**. `syn-case-paraphrase` (cache paraphrase) and `syn-case-constraint` (rejected signaling approach) abstain: lexical recall limitations without semantic expansion. The checks exercise expected/acceptable/excluded IDs, provenance, conflict and abstention; they do **not** evaluate semantic expected facts, answer generation, real-memory quality, calibrated ranking, latency or cost. The formal scored Chroma/SQLite/assisted benchmark remains Phase 3. No fixture or label was changed to improve these counts.
 
-MEM-100 through MEM-106 are implemented and verified for this isolated prototype. MEM-002 stays open: the private, sanitized, locally reviewed real-memory cohort is mandatory before Phase 3 can pass or any cutover can be authorized. Do not invent labels or commit/return private documents, IDs, sessions, source paths, queries or labels. Architect approved Phase 1; the Phase 2 review gate below is pending.
+MEM-100 through MEM-106 are implemented and verified for this isolated prototype. MEM-002 stays open: the private, sanitized, locally reviewed real-memory cohort is mandatory before Phase 3 can pass or any cutover can be authorized. Do not invent labels or commit/return private documents, IDs, sessions, source paths, queries or labels. Architect approved Phase 1; Phase 2 approval is recorded below.
 
 References: [Python 3.12 sqlite3 transactions/connection ownership](https://docs.python.org/3.12/library/sqlite3.html), [SQLite FTS5 external content, triggers, Unicode61, BM25 and index integrity](https://www.sqlite.org/fts5.html).
 
@@ -178,11 +178,21 @@ Only `SQLiteMemoryRepository.candidates` changes at runtime. Exact entity/tag so
 
 Run `verification/memory/verify_exact_lookup.py` with the provisioned offline interpreter. Its fictional legacy-SQL oracle compares candidate and complete result signatures, tests ties/Unicode/filters/limits, verifies real index-led plans, and reports broad-term/selective-scope timings without treating noisy microbenchmarks as adoption evidence. Existing standalone verifiers remain required; deprecated `tests/` are not run.
 
-#### Evidence reconciliation (documentation only; no rerun)
+#### Architect/PIC sign-off — 2026-11-06
+
+Architect/PIC approved `ed105f601debbe8634bee0357f841e633c4a1213` (exact entity/tag lookup only) and `66fccf66624d642ca07ad24f3fb99eb7c2318bee` (documentation reconciliation); no runtime fix was required. The separately retained chain below is accepted as supporting evidence for this narrow patch **with the unresolved historical attribution gap**, not as Phase 3 acceptance or a universal speedup. The withdrawn hashes and former claims remain unsupported.
+
+Completed offline verification used provisioned Python 3.12.10 / SQLite 3.47.1: `validate_assets.py`, `verify_phase1.py`, `verify_exact_lookup.py`, `verify_phase2.py`, `verify_phase3.py` and `verify_migration_operator.py` all exited 0. The exact verifier passed 151 candidate/full-result comparisons and two index-led plans, including scope-before-cap, ties, Unicode, concurrency, read-only, foreign-key and derived-deletion checks. Independent capture matched 24 SQL statements and bound-parameter tuples against the actual committed baseline. The two existing fictional lexical misses remain 27/29, not a new regression.
+
+Retained artifact hashes, variant links, code/input/review bindings and aggregate dictionaries were checked; 25 quality/safety aggregates per variant were independently recomputed without mismatches. All 16 final calibration signatures match the saved baseline and both variants. Historical 192/192 call checks are corroborated by the inspected harness, not replayed by this review; raw timing samples were unavailable, so historical p95s were linked and checked, not independently rederived. No private A/B harness, private holdout, live/original source database, model/embedding call, application startup, dependency installation or deprecated `tests/` suite was run. Fictional Phase 3 checks exercised only simulated holdout-gate mechanics. No historical report was rewritten.
+
+The user confirmed the existing phase order: resolve the genuine comparator, performance and frozen untouched-holdout gates before Phase 4. MEM-306, MEM-307, MEM-002 and Phase 3 acceptance remain open; Phases 4–5 have not started and are not authorized, and production remains on Chroma.
+
+#### Evidence reconciliation (documentation only; no private benchmark rerun)
 
 The earlier documentation mixed timing claims that cannot be attributed to its linked reports. The three SHA-256 values supplied in the preceding handoff could not be located in the retained private workspaces: combined `aebd09dfaf3b0a87c36725fbd43828af8fbc0664d303f5fe0c5914ba26e627ef`, baseline `7338a7b37668452518b3a5613dd5be39e5b8bba8423acfd6614f10ede484df92`, and optimized `36103954987b1c168a6de115798f7b5630f7190e57f50daa92bd28e3c70b0022`. Their former numeric claims are withdrawn, not explained away as rounding, changed denominators or profiler overhead. No cause for the missing hash attribution has been established, and no measurement was rerun or raw report rewritten to fill the gap.
 
-A separately identified, retained chain is internally verifiable: its combined report references the exact hashes of both variant reports, and its aggregate metrics equal those variant reports. Its baseline repository hash also matches the recorded committed source. **This is the currently inspectable evidence, not a silent replacement of the unavailable handoff hash set; that provenance gap remains for PIC review.**
+A separately identified, retained chain is internally verifiable: its combined report references the exact hashes of both variant reports, and its aggregate metrics equal those variant reports. Its baseline repository hash also matches the recorded committed source. **This is the currently inspectable evidence, not a silent replacement of the unavailable handoff hash set. PIC accepted it only for the narrow patch sign-off above; the historical provenance gap remains unresolved.**
 
 | Retained artifact role | Verified SHA-256 |
 | --- | --- |
@@ -309,7 +319,7 @@ Use this structural template **locally only**, replacing placeholders after auth
 }
 ```
 
-Real-memory cases remain local and require sanitization, referential checks against their private corpus, and human review. Phase 3 prepared local proposals from the retained candidate, but their labels are unreviewed suggestions, not accepted ground truth; no real review has been attested. **MEM-002 remains open** for its real-case labeling and benchmarking requirement. Synthetic coverage and private draft generation are not evidence of real-world retrieval improvement or permission to cut over. Architect accepted synthetic completion to unblock the earlier implementation phases only.
+Real-memory cases remain local and require sanitization, referential checks against their private corpus, and human review. The approved cohort now contains **408 records and 32 reviewed cases (16 calibration / 16 holdout)**: Architect adjudicated the AI-assisted proposals, and the user approved the labels, sanitization and transparent local-human attestation. Newly generated proposals still require their own review; they do not inherit that approval. This reviewed cohort is distinct from the **407-record preservation snapshot**. Reviewed labels and SQLite-only calibration are not benchmark acceptance: **MEM-002 remains open** until the required real-case benchmarking gate passes, alongside MEM-306/MEM-307 and Phase 3 acceptance. The genuine Chroma comparison, performance target, freeze and untouched holdout remain unresolved. Synthetic coverage, draft generation and the narrow patch sign-off do not authorize Phases 4–5 or cutover.
 
 Remote model calls remain off by default. The future assisted benchmark requires separate explicit opt-in. Adaptive behaviors, memory authority, provider/model policy, and automatic context injection are unchanged.
 
