@@ -39,7 +39,43 @@ References: [Python 3.12 sqlite3 transactions/connection ownership](https://docs
 
 `scripts/migrate_chroma_memory_to_sqlite.py` is a checkout-local operator tool, not a runtime backend switch. It reuses the Phase 0 fingerprint helper and Phase 1 parser/repository. The repository now shares canonical/index preparation between normal setup and **atomic migration batches**, and checks the existing `migration_ledger` before resuming. Schema version stays **1**; there is no automatic schema upgrade or destructive repair.
 
-### Operational contract
+### One-command operator entry point
+
+**You do not need an existing SQLite source.** Your input is the existing **Chroma persistence directory** containing `chroma.sqlite3`. `scripts/migrate_memory.py` stages it, runs the existing migration inspection, and—only with `--apply`—returns a newly created, verified SQLite candidate as `sqlite_source`.
+
+Stop AgentCrew and every process writing its memory first. `--writers-paused` is your attestation; the script cannot detect that writers are stopped. With the existing provisioned interpreter, run from this implementation checkout (the example assumes the original `AgentCrew` checkout is its sibling):
+
+```bash
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python scripts/migrate_memory.py --source ../AgentCrew/memory_db --writers-paused --apply --prepare-review
+```
+
+Replace the source with your actual Chroma directory. Source paths are resolved against your shell's working directory; output locations are anchored to this implementation worktree. The entry point is Python, not a Bash alias, so the invocation is also usable from fish and other shells with an appropriate interpreter path. No dependencies are installed by the command.
+
+- Omit `--apply --prepare-review` (or use `--inspect-only`) to inspect without creating any SQLite destination. Inspection still stages private copies and writes reports. `sqlite_source` is null until a verified apply succeeds.
+- If `--source` is omitted, an existing `MEMORYDB_PATH` is accepted only when a different valid `./memory_db` is not also present. Otherwise a valid `./memory_db` is the default. Conflicting candidates, an empty environment value, or a missing default require an explicit source; there is no silent fallback to another database.
+- All runs use a fresh ignored `verification/memory-migration/<run-id>/` with `staged-source/`, `candidate.sqlite3`, `migration/`, `operator.json` and private diagnostics. `--run-id` optionally selects a fresh label (letters/digits/underscore/hyphen, at most 64 characters). Existing labels, symlinks, tracked source paths, overlap and unsafe output locations are refused. Directories are `0700`; manifests/reports are `0600`.
+- Source-tree validation and stable copying are shared with the low-level tool. Only the staged source is passed to its inspection and apply/resume/verify APIs. The live source is never opened with Chroma SDK; original and staged bytes are checked again before completion. No retention, deletion, embeddings or LLM calls run.
+- `--collection` defaults to `conversation`; `--batch-size` is `1..1000` (default 100); `--fail-on-parse-error` delegates the existing strict warning/fallback policy. `--prepare-review` requires `--apply` and delegates the existing draft generator only after verified migration. It requires at least 14 eligible records; a review-stage error leaves the verified candidate and reports intact. Omit review preparation if you only need migration.
+- Successful local JSON names `sqlite_source` and, when requested, `review_directory`, alongside counts and `review_status: unreviewed_proposals`. These paths are for your local use; do not publish private files. No memory text, record IDs, agents, sessions, queries, labels or credentials are printed. `reviewed_locally` remains false; no human attestation is created.
+- Errors contain only `status`, the failing `stage`, and an exact static `reason`, for example `writer_attestation / writers_paused_attestation_required` or `source_resolution / ambiguous_source_requires_explicit_source`. Unexpected errors expose only their class name. Detailed tracebacks remain in private `operator.log`.
+
+The wrapper is deliberately fresh-run-only, not a second resume implementation. After interruption, keep all artifacts and recover through the existing low-level command against the run's unchanged staged source and work directory:
+
+```bash
+uv run --no-project --no-config --offline --python "$EXISTING_PYTHON" python scripts/migrate_chroma_memory_to_sqlite.py --source "$RUN/staged-source" --destination "$RUN/candidate.sqlite3" --work-dir "$RUN/migration" --apply --resume --verify
+```
+
+`RUN` is the local run directory you selected/generated. Do not re-run the wrapper with that label or delete backups to bypass guards. Checkpoints are code-bound: resume with the exact matching tool version; shared-helper extraction does not silently upgrade checkpoints from earlier commits. A successful recovery can use the returned candidate with the existing `prepare-review` command and a fresh review output.
+
+Standalone fictional-only verification:
+
+```bash
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python verification/memory/verify_migration_operator.py
+```
+
+The verifier covers inspect-only non-writing, 25-record verified apply, 32 draft-only review proposals, required pause attestation, default ambiguity, strict parsing, static error stages, safe/fresh/ignored paths, symlinks, Git tracking, source stability, and an interrupted batch followed by underlying resume (five skipped, 20 inserted). No existing private draft or live source is used. Production stays on Chroma; Phase 3's private gates and Phase 4 remain blocked.
+
+### Low-level operational contract
 
 1. Stop/pause AgentCrew memory writers **operationally**. The script cannot establish this; reports always say `writers_confirmed_paused: false`. A byte-stable snapshot is evidence, not proof of a paused application or a fresh live-data baseline.
 2. Supply an existing, authorized **private source copy**. Source, destination and work directory must be mutually non-overlapping paths under `verification/memory/local/` or `verification/memory-migration/`, and Git must confirm they are ignored and untracked. Live-source paths outside these roots are rejected. Source trees and path ancestors may not be symlinks. Use an unused work directory and destination for a new run.

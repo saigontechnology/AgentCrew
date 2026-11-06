@@ -86,6 +86,32 @@ def _ignored(path: Path) -> None:
         raise MigrationError("private_path_is_tracked")
 
 
+def validate_source_tree(value: Path) -> Path:
+    """Validate a read-only Chroma input without constructing a Chroma client."""
+    source = _path(value)
+    if not source.is_dir() or not (source / "chroma.sqlite3").is_file():
+        raise MigrationError("source_is_not_a_chroma_directory")
+    for path in source.rglob("*"):
+        if path.is_symlink() or not (path.is_file() or path.is_dir()):
+            raise MigrationError("unsupported_source_tree_entry")
+    return source
+
+
+def copy_stable_source(source: Path, destination: Path) -> dict:
+    """Copy a validated source into a fresh, ignored private directory."""
+    source = validate_source_tree(source)
+    destination = _path(destination)
+    _ignored(destination)
+    if destination.exists() or _overlap(source, destination):
+        raise MigrationError("unsafe_snapshot_destination")
+    before = fingerprint(source)
+    _private_directory(destination.parent)
+    shutil.copytree(source, destination)
+    if fingerprint(source) != before or fingerprint(destination) != before:
+        raise MigrationError("source_unstable_during_copy")
+    return before
+
+
 def validate_options(options: MigrationOptions) -> MigrationOptions:
     source, destination, work = (_path(value) for value in (
         options.source, options.destination, options.work_dir,
@@ -107,11 +133,7 @@ def validate_options(options: MigrationOptions) -> MigrationOptions:
         raise MigrationError("invalid_collection")
     if options.verify and not options.apply:
         raise MigrationError("verification_requires_apply")
-    if not (source / "chroma.sqlite3").is_file():
-        raise MigrationError("source_is_not_a_chroma_directory")
-    for path in source.rglob("*"):
-        if path.is_symlink() or not (path.is_file() or path.is_dir()):
-            raise MigrationError("unsupported_source_tree_entry")
+    validate_source_tree(source)
     if destination.exists() and (not destination.is_file() or not options.resume):
         raise MigrationError("destination_requires_explicit_resume")
     if work.exists() and (not work.is_dir() or not options.resume):
@@ -243,8 +265,8 @@ def _snapshot(options: MigrationOptions) -> tuple[str, dict]:
     else:
         if options.resume or backup.exists() or working.exists():
             raise MigrationError("unsafe_snapshot_destination")
-        shutil.copytree(options.source, backup)
-        if fingerprint(options.source) != source_files or fingerprint(backup) != source_files:
+        copied = copy_stable_source(options.source, backup)
+        if copied != source_files or fingerprint(options.source) != source_files:
             raise MigrationError("source_unstable_during_copy")
         shutil.copytree(backup, working)
         if fingerprint(working) != source_files:

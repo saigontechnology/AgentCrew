@@ -483,7 +483,23 @@ Do not automatically inject these results into the prompt in the first release. 
 
 ## Migration script specification
 
-### Proposed file
+### Recommended operator entry point
+
+`scripts/migrate_memory.py` is a thin, cross-platform orchestration entry point. The operator supplies a **Chroma directory**, not an existing SQLite source. After explicit `--writers-paused --apply`, the wrapper stages an unchanged private copy, delegates inspection then apply/resume/verify to the existing migrator, and returns the new candidate filename as `sqlite_source`. Inspection is the default and returns a null `sqlite_source` without creating a destination.
+
+Example from the implementation checkout, with the original AgentCrew checkout as its sibling:
+
+```bash
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python scripts/migrate_memory.py --source ../AgentCrew/memory_db --writers-paused --apply --prepare-review
+```
+
+The caller must stop writers; attestation is not automatic detection. An omitted source is allowed only for an unambiguous existing `MEMORYDB_PATH` or `./memory_db`; conflicting candidates require explicit selection. Each invocation claims a fresh ignored `verification/memory-migration/<run-id>/`, refuses unsafe/tracked/symlink/overlapping paths, shares stable-copy validation with the migrator, and never opens the live source with the SDK. Final local output contains aggregate counts and the candidate/review paths, never records or credentials. Error output exposes only the failing stage and static error code.
+
+Optional review preparation delegates the existing `prepare-review` path after verified apply and generates **unreviewed proposals only** in a fresh ignored directory. No review flag is set true, no human attestation is created, no benchmark or remote call runs, and no production backend changes. The wrapper does not implement a second resume path: retain interrupted artifacts and use the low-level `--resume --apply --verify` flow with the exact matching code version. Fresh-run guards and code-bound checkpoints must not be bypassed.
+
+Standalone `verification/memory/verify_migration_operator.py` verifies fictional inspect/apply/review, pause and path guards, source stability, strict parsing, static errors, and interrupted underlying resume. Phase 3 private acceptance and Phase 4 remain blocked. See `verification/memory/README.md` for the operator contract, layout and recovery command.
+
+### Low-level file
 
 `scripts/migrate_chroma_memory_to_sqlite.py`
 
@@ -499,7 +515,7 @@ Convert the existing Chroma `conversation` collection into the new SQLite canoni
 - Do not instantiate `ChromaMemoryService` for export because its initialization path can recreate an incompatible collection.
 - Do not delete or update Chroma records.
 - Default to inspection/dry-run behavior; require an explicit `--apply` action to write the destination.
-- Refuse to overwrite an existing destination unless `--resume` or an explicit replacement option is used.
+- Refuse to overwrite an existing destination. `--resume` permits only matching compatible migration state; there is no force/replacement option.
 - Use transactions and an idempotent migration ledger.
 - Preserve raw IDs, documents, and metadata.
 - Emit a manifest with counts and checksums.
