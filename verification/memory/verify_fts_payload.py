@@ -29,6 +29,8 @@ REFERENCE_SHA256 = "ee27d5124cecdab95b1b805479426dfd361c969435e7d60b6e6df9600205
 
 WORDS_REFERENCE_COMMIT = "1fb71933ad0df24af162413726df4c7bbe138577"
 WORDS_REFERENCE_SHA256 = "d273dfc068cc9f129689308217707fa6c183b683031c2ddf7f34f4ce5cb8763e"
+ENTITY_REFERENCE_COMMIT = "b6d262d680590066a7e2d218c58a22068f8abcd7"
+ENTITY_REFERENCE_SHA256 = "7533666b35ca9f39aedf0f90d0bebed26dd5a2990e153ed3fc9b84ec5dfa65b6"
 
 
 def committed_reference(commit, path, expected_sha256, name):
@@ -67,9 +69,9 @@ def check_words(reference):
     return len(samples)
 
 
-def compare(current, reference, query, expression, coordinator_reference):
-    actual = current.candidates(query, (), expression)
-    require(actual == reference.candidates(query, (), expression), "Full candidate DTO mismatch")
+def compare(current, reference, query, expression, coordinator_reference, *, exact_values=()):
+    actual = current.candidates(query, exact_values, expression)
+    require(actual == reference.candidates(query, exact_values, expression), "Full candidate DTO mismatch")
     result = MemorySearchCoordinator(current).search(query)
     require(result == MemorySearchCoordinator(reference).search(query),
             "Coordinator ranks/citations/scores/reasons/conflicts changed")
@@ -156,6 +158,136 @@ def check_snapshot(path):
             "Next operation did not observe committed writes")
 
 
+def check_entity_snapshot(path):
+    writer = SQLiteMemoryRepository(path)
+    before = MemoryRecord("entity-snapshot-a", "EntitySnapshotAgent", "past",
+                          "<MEMORY><HEAD>Snapshot_Entity</HEAD><FLOW><OUTCOME>Snapshot_Entity old</OUTCOME></FLOW></MEMORY>",
+                          1767225600, 1767225600, {"synthetic": True}, subject_key="entity-snapshot-subject")
+    second = replace(before, id="entity-snapshot-b", session_id=None)
+    writer.upsert_record(before)
+    writer.upsert_record(second)
+    writes = []
+
+    class EntityHookConnection:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def execute(self, sql, parameters=()):
+            cursor = self.connection.execute(sql, parameters)
+            if "WITH matches AS MATERIALIZED" in sql and "memory_entity x" in sql and not writes:
+                writes.append(True)
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    executor.submit(writer.upsert_record, replace(second, document=second.document.replace("old", "new"))).result(timeout=10)
+            return cursor
+
+    class EntityHookRepository(SQLiteMemoryRepository):
+        @contextmanager
+        def _transaction(self, *, write=False, create=False):
+            with super()._transaction(write=write, create=create) as connection:
+                yield EntityHookConnection(connection)
+
+    query = MemoryQuery("Snapshot_Entity", "EntitySnapshotAgent", "current")
+    reader = EntityHookRepository(path, read_only=True)
+    snapshot = reader.candidates(query, ("snapshot_entity",), "")
+    require(len(snapshot.candidates) == 2 and all(candidate.record.document == before.document for candidate in snapshot.candidates),
+            "ENTITY hydration lost its operation snapshot")
+    require("entity-snapshot-subject" not in snapshot.conflicting_subjects, "ENTITY conflict scan changed snapshots")
+    following = reader.candidates(query, ("snapshot_entity",), "")
+    require(len(following.candidates) == 2 and "entity-snapshot-subject" in following.conflicting_subjects
+            and any(candidate.record.document != before.document for candidate in following.candidates),
+            "Following ENTITY operation missed committed writes")
+
+
+def check_entity_reference(path, current, variants, coordinator_reference):
+    legacy_class = committed_reference(ENTITY_REFERENCE_COMMIT, "AgentCrew/modules/memory/sqlite_repository.py",
+                                       ENTITY_REFERENCE_SHA256, "_entity_payload_reference").SQLiteMemoryRepository
+    reference = legacy_class(path, read_only=True)
+    writer = SQLiteMemoryRepository(path)
+    padding = "fictional wide canonical payload " * 32
+    notes = "".join(f"<NOTE>Payload_Entity unit{number} {padding}</NOTE>" for number in range(14))
+    document = ("<MEMORY><HEAD>Payload_Entity fixture</HEAD><FLOW><OUTCOME>Payload_Entity outcome</OUTCOME></FLOW>"
+                f"<CONVERSATION_NOTES>{notes}</CONVERSATION_NOTES></MEMORY>")
+    for number in range(24):
+        writer.upsert_record(MemoryRecord(f"entity-payload-{number:03}", "EntityPayloadAgent", "past", document,
+                                         1767225600, 1767225600, {"synthetic": True}))
+    with writer._transaction(write=True) as connection:
+        for value in ("Fixture_Tie_Entity_A", "Fixture_Tie_Entity_B"):
+            connection.execute("INSERT INTO memory_entity(memory_id,unit_id,value,normalized_value) "
+                               "SELECT memory_id,id,?,? FROM retrieval_unit WHERE memory_id IN ('tie-outcome','tie-unit')",
+                               (value, value.casefold()))
+    combinations = (("alpha_code",), ("alpha_code", "beta_code"), ("alpha_code", "alpha_code"),
+                    ("tiếng_việt", "café_model", "strasse_api"), ("absent_identifier",), ())
+    comparisons = 0
+    for query in variants:
+        for exact in combinations:
+            compare(current, reference, query, _query_parts(query.query)[1], coordinator_reference, exact_values=exact)
+            comparisons += 1
+    payload = MemoryQuery("Payload_Entity", "EntityPayloadAgent", "current")
+    for query in (payload, replace(payload, candidate_limit=1), replace(payload, candidate_limit=3),
+                  replace(payload, candidate_limit=500),
+                  replace(payload, memory_ids=("entity-payload-023",), candidate_limit=1)):
+        compare(current, reference, query, '"Payload_Entity"', coordinator_reference, exact_values=("payload_entity",))
+        comparisons += 1
+    scoped = current.candidates(replace(payload, memory_ids=("entity-payload-023",), candidate_limit=1), ("payload_entity",), "")
+    require(all(candidate.record.id == "entity-payload-023" for candidate in scoped.candidates)
+            and sum(candidate.reason.source == CandidateSource.ENTITY for candidate in scoped.candidates) == 1,
+            "ENTITY cap ran before scope")
+    tie_query = MemoryQuery("Fixture_Tie_Entity_A", "ExactAgent", "current")
+    tie_values = ("fixture_tie_entity_b", "fixture_tie_entity_a")
+    ties = current.candidates(tie_query, tie_values, "")
+    by_id = {candidate.record.id: candidate for candidate in ties.candidates}
+    require(by_id["tie-outcome"].unit.source_field == "FLOW/OUTCOME", "ENTITY outcome tie changed")
+    require(all(candidate.reason.detail == "Fixture_Tie_Entity_A" for candidate in ties.candidates), "ENTITY source-detail tie changed")
+    with current._transaction() as connection:
+        expected = connection.execute("SELECT min(id) FROM retrieval_unit WHERE memory_id='tie-unit'").fetchone()[0]
+    require(by_id["tie-unit"].unit.id == expected, "ENTITY ordinal/unit-ID tie changed")
+    compare(current, reference, tie_query, "", coordinator_reference, exact_values=tie_values)
+    comparisons += 1
+
+    class LegacyPlans(PlanRepository, legacy_class):
+        candidates = legacy_class.candidates
+
+    captured, old = PlanRepository(path, read_only=True), LegacyPlans(path, read_only=True)
+    raw_checks = 0
+    unchanged_families = set()
+    entity_columns = set()
+    raw_variants = ((payload, ("payload_entity",), '"Payload_Entity"'),
+                    (variants[0], ("alpha_code", "beta_code"), _query_parts(variants[0].query)[1]),
+                    (replace(variants[0], memory_ids=("exact-047",)), ("alpha_code",), '"Alpha_Code"'),
+                    (tie_query, tie_values, ""))
+    for query, exact, expression in raw_variants:
+        captured.statements.clear()
+        old.statements.clear()
+        captured.candidates(query, exact, expression)
+        old.candidates(query, exact, expression)
+        require(len(captured.statements) == len(old.statements), "ENTITY source family count changed")
+        for (new_sql, new_args), (old_sql, old_args) in zip(captured.statements, old.statements):
+            require(new_args == old_args, "ENTITY bound parameters changed")
+            if "memory_entity x" not in new_sql:
+                require(" ".join(new_sql.split()) == " ".join(old_sql.split()), "Non-ENTITY SQL changed")
+                unchanged_families.add("fts" if "memory_fts MATCH" in new_sql else "tag" if "memory_tag x" in new_sql else "memory_id")
+            with current._transaction() as connection:
+                actual = [{key: row[key] for key in row.keys() if key != "parent_rank"}
+                          for row in connection.execute(new_sql, new_args)]
+                expected_rows = [{key: row[key] for key in row.keys() if key != "parent_rank"}
+                                 for row in connection.execute(old_sql, old_args)]
+                require(actual == expected_rows, "ENTITY raw payload/source detail/score changed")
+                if "memory_entity x" in new_sql:
+                    entity_columns.add(next(row[3] for row in connection.execute("EXPLAIN " + new_sql, new_args)
+                                            if row[1] == "OpenEphemeral"))
+            raw_checks += 1
+    require(entity_columns == {6}, "ENTITY intermediate payload is not six ranking keys")
+    require(unchanged_families == {"fts", "tag", "memory_id"}, "Unaffected family SQL coverage missing")
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(lambda query: compare(current, reference, query, _query_parts(query.query)[1],
+                                               coordinator_reference, exact_values=("alpha_code", "beta_code")), variants))
+    check_entity_snapshot(path)
+    return {"entity_reference_commit": ENTITY_REFERENCE_COMMIT, "entity_reference_sha256": ENTITY_REFERENCE_SHA256,
+            "entity_candidate_and_coordinator_comparisons": comparisons, "entity_concurrent_comparisons": len(variants),
+            "entity_raw_sql_checks": raw_checks, "entity_materialized_columns": 6,
+            "entity_concurrent_snapshot_checked": True, "non_entity_sql_unchanged": sorted(unchanged_families)}
+
+
 def main():
     reference_class = reference_repository()
     words_reference = committed_reference(WORDS_REFERENCE_COMMIT, "AgentCrew/modules/memory/retrieval.py",
@@ -227,8 +359,8 @@ def main():
             require(len(captured.statements) == len(old_plans.statements), "Source family count changed")
             for (new_sql, new_args), (old_sql, old_args) in zip(captured.statements, old_plans.statements):
                 require(new_args == old_args, "Bound parameters changed")
-                if not expression:
-                    require(" ".join(new_sql.split()) == " ".join(old_sql.split()), "Non-FTS SQL changed")
+                if not expression and "memory_entity x" not in new_sql:
+                    require(" ".join(new_sql.split()) == " ".join(old_sql.split()), "Unaffected SQL changed")
                 with current._transaction() as connection:
                     actual = [dict(row) for row in connection.execute(new_sql, new_args)]
                     expected_rows = [{key: row[key] for key in row.keys() if key != "parent_rank"}
@@ -260,13 +392,15 @@ def main():
         require(all("fictional_alias_probe" not in candidate.record.metadata
                     for candidate in current.candidates(base, ("alpha_code",), '"Alpha_Code"').candidates), "Metadata mutation leaked across operations")
         check_snapshot(path)
-        print(json.dumps({"status": "passed", "reference_commit": REFERENCE_COMMIT, "reference_sha256": REFERENCE_SHA256,
+        entity_checks = check_entity_reference(path, current, variants, reference_coordinator)
+        print(json.dumps({"status": "passed", **entity_checks, "reference_commit": REFERENCE_COMMIT, "reference_sha256": REFERENCE_SHA256,
                           "candidate_and_coordinator_comparisons": comparisons, "concurrent_comparisons": len(variants),
                           "raw_sql_score_payload_checks": raw_checks, "materialized_match_columns": columns,
                           "concurrent_writer_snapshot_checked": True,
                           "words_reference_commit": WORDS_REFERENCE_COMMIT, "words_reference_sha256": WORDS_REFERENCE_SHA256,
                           "word_set_equivalence_and_mutation_cases": words_checks,
-                          "prior_coordinator_comparisons": comparisons + len(variants),
+                          "prior_coordinator_comparisons": comparisons + len(variants)
+                          + entity_checks["entity_candidate_and_coordinator_comparisons"] + entity_checks["entity_concurrent_comparisons"],
                           "mutable_metadata_aliasing_checked": True, "private_cases_executed": 0, "remote_calls": 0}, sort_keys=True))
 
 

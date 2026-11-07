@@ -465,7 +465,7 @@ class SQLiteMemoryRepository:
 
         CROSS JOIN keeps normalized-value lookups ahead of unit/parent payload
         joins without changing eligibility, source-detail selection or ranking.
-        FTS materializes ranking keys only, then hydrates the capped parents
+        FTS and ENTITY materialize ranking keys only, then hydrate capped parents
         within the same snapshot; BM25 stays in its original MATCH context.
         """
         scope, scope_values = self._eligibility(query)
@@ -492,9 +492,10 @@ class SQLiteMemoryRepository:
                     from_clause = f"retrieval_unit u JOIN memory_record m ON m.id=u.memory_id {join}"
                 payload = """m.*,u.id AS unit_id,u.kind AS unit_kind,u.source_field,
                     u.text AS unit_text,u.ordinal,u.checksum AS unit_checksum"""
+                late_hydration = source in (CandidateSource.FTS, CandidateSource.ENTITY)
                 projection = (
                     "m.id,u.id AS unit_id,u.source_field,u.ordinal"
-                    if source == CandidateSource.FTS else payload
+                    if late_hydration else payload
                 )
                 sql = f"""WITH matches AS MATERIALIZED (
                     SELECT {projection},
@@ -506,7 +507,7 @@ class SQLiteMemoryRepository:
                         CASE WHEN source_field='FLOW/OUTCOME' THEN 0 ELSE 1 END,ordinal,unit_id,source_detail
                     ) AS parent_rank FROM matches
                 )"""
-                if source == CandidateSource.FTS:
+                if late_hydration:
                     sql += f""", selected AS MATERIALIZED (
                         SELECT * FROM ranked WHERE parent_rank=1
                         ORDER BY source_score,id,unit_id LIMIT ?
