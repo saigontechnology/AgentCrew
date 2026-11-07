@@ -1,6 +1,6 @@
 # Memory migration verification: Phases 0–3
 
-Phases 0–2 are PIC-approved. The private cohort is reviewed and SQLite-only calibration is measured, but **Phase 3 is BLOCKED, not passed**: MEM-306 primary Voyage-4 operational calibration and bounded FTS payload patch `424d963` are PIC-approved (2026-11-07); performance target (latest paired SQLite p95 126.20 ms), freeze and untouched holdout remain unresolved; the subsequent ASCII-only lexical patch `0558610` is PIC-approved (2026-11-07), not broad statistical speedup proof or Phase 3 acceptance. The narrow exact-lookup performance implementation and evidence reconciliation are PIC-approved (2026-11-06), not Phase 3 approval. **MEM-002 stays open; Phases 4–5 have not started and are not authorized; do not cut over.** No production setup, search tool, write path, automatic injection, provider or model pin has changed.
+Phases 0–2 are PIC-approved. The private cohort is reviewed and SQLite-only calibration is measured, but **Phase 3 is BLOCKED, not passed**: MEM-306 primary Voyage-4 operational calibration and bounded FTS payload patch `424d963` are PIC-approved (2026-11-07); freeze and untouched holdout remain unresolved; the subsequent ENTITY-only patch `3d56bb2` is pending PIC with calibration p95 70.75 ms but a 25.5% median regression, not Phase 3 acceptance; the subsequent ASCII-only lexical patch `0558610` is PIC-approved (2026-11-07), not broad statistical speedup proof or Phase 3 acceptance. The narrow exact-lookup performance implementation and evidence reconciliation are PIC-approved (2026-11-06), not Phase 3 approval. **MEM-002 stays open; Phases 4–5 have not started and are not authorized; do not cut over.** No production setup, search tool, write path, automatic injection, provider or model pin has changed.
 
 ## Phase 1 read-only prototype
 
@@ -171,6 +171,37 @@ After genuine calibration, `freeze --calibration-report ... --output ...` seals 
 Coverage is required **within each calibration and holdout split**, not just across the cohort: at least 15 cases, five distinct positively labeled memory IDs (expected or acceptable), and two abstention cases. Each split must cover `exact_identifier`, `paraphrase`, `no_relevant_memory`, and `ambiguous_followup`; at least one of `decision`/`preference`; and at least one of `constraint_rejected_approach`/`unresolved`. Existing overall coverage and distinct normalized-question requirements still apply. These checks do not edit or attest the private draft.
 
 Reports, calibration freezes and holdout checks bind `review_manifest_sha256` and `embedding_cache_sha256` to exact input bytes. The cache hash is explicitly null for non-cache sources, and synthetic runs have no review-attestation hash. Altered attestations and mutated or replaced caches are rejected before backend setup or holdout reservation. The cache rows used by the backend come from the checksum-validated snapshot, not a later reread of the mutable input file.
+
+### Local milestone 3 — ENTITY-only late hydration (2026-11-07)
+
+PIC approved `0558610` before this runtime slice; MEM-306 closure and the FTS approval remain intact. One low-overhead SQLite-only diagnostic pass retrieved the approved 16 calibration cases on a disposable copy under network namespace/audit isolation. It used no cProfile or extra normalization pass: lexical classification observes the NFD result already produced. Native execute totals were ENTITY 111.69 ms, TAG 23.98 ms, FTS 193.15 ms and conflict 8.27 ms; ASCII lexical work was 26.72 ms/884 calls and Unicode 140.09 ms/244 calls. In the three slowest instrumented operations, ENTITY execute totaled 66.89 ms versus FTS 57.61 ms. These diagnostics include instrumentation and overlapping phases, not acceptance samples.
+
+A fictional reproduction against the actual committed repository showed 2,496 eligible ENTITY hits and 29→6 materialized columns. Three fixed-order samples observed mean execute 515.71→27.40 ms, with identical selected fields/scores; tight-scope and empty-hit samples also improved. This justified **one ENTITY-only correction** in `3d56bb2`: reuse the approved late-hydration path, keeping eligibility/index joins before parent ranking/cap and full hydration/conflicts in the same operation-owned snapshot. FTS, TAG and MEMORY_ID SQL/bindings, lexical behavior, schema/index/tokenizer/weights/limits/validation and all policy knobs are unchanged. There is no cache/pool or service rollout.
+
+Exactly one matched before/after calibration pair used clean committed code, fresh copies, the same 16 cases/cache, k=5, warmup=1, repetitions=3 and first-call/CWD probes. Chroma precedes SQLite and baseline precedes patch. Each backend/run made 96 retrieval invocations (48 measured); network/model/embedding/remote API events were zero.
+
+| Backend | Warm p50 before→after (ms) | Warm p95 before→after (ms) | First-call p95 before→after (ms) |
+| --- | ---: | ---: | ---: |
+| SQLite | 27.33→34.30 | 114.81→70.75 | 121.32→73.61 |
+| Chroma cached-vector control | 4.19→4.04 | 5.53→5.86 | 7.67→8.90 |
+
+**The SQLite median regressed 25.5%.** The tail improved and the proposed p95 predicate is true on this calibration run, but this is a mixed result requiring PIC review, not an unqualified speedup. The unchanged Chroma control also varies; cause is unknown. No rerun was selected for a better number, and no sample is pooled with prior milestones. These are cached-vector retrieval timings, not live Voyage latency or controlled disk-cold measurements.
+
+All 32 saved final hit arrays/per-case metric dictionaries and non-timing mode metrics match exactly. This is not a claim that every intermediate call's output was persisted. Both backends retain Recall@5=1 and fixed Precision@5=.175; all previous ranking/abstention/diagnostic values remain unchanged. Two Chroma abstention quality failures/run remain in the private failure artifacts, not misclassified as backend errors. Backend/busy/leak/duplicate/repeat/CWD events are zero. All seven proposed calibration predicates are true, but overall acceptance remains false: no final-cache freeze or held-out evaluation occurred.
+
+The focused verifier retains its FTS/lexical/mutation checks and adds **120 current-commit ENTITY candidate/coordinator comparisons**, **19 concurrent ENTITY comparisons**, **12 raw SQL/payload/score checks**, six-column materialization, source-detail/unit ties, before-cap scope, and a concurrent-writer ENTITY hydration/conflict snapshot check. It pins actual `b6d262d` source `7533666b…`, not a rewritten old oracle. All existing 151 exact-lookup comparisons and two index-led plans pass. Old exact-index microtimings are mixed and are not this patch's before/after timing evidence.
+
+Two diagnostic helper preflights stopped before retrieval (import/API-shape errors); one had validated the combined case file. Fictional helper setup/SQL-construction preflights and a calibration-wrapper identity-check ordering error are also preserved. The latter stopped before benchmark execution; the actual pair ran once in a fresh pair directory. Together, profiling and the actual pair performed four full-loader passes: 128 object validations, including 64 validation occurrences for the same 16 held-out objects. Only calibration cases were retrieved/scored: 16 diagnostic plus 384 matched-run invocations. No held-out semantic evaluation, transmission, ledger/reservation, labels/sanitization changes or freeze occurred.
+
+| Inspectable evidence | SHA-256 |
+| --- | --- |
+| Safe milestone aggregate | `c6772c06baddf3f77f5456166491d6ad7650f76767b5e33764bc00bb55cee091` |
+| Baseline raw aggregate | `7e34d4ae0b1c703e872ccfded364adc53458ccc52832435016686a9fb57babbd` |
+| Postpatch raw aggregate | `4166213ad6a91863887b8bb785a4a7e5f8afc324bfac0dab7b94166eea832270` |
+| Before→after seven-file code identity | `8db3323128c89b7650c4ed6ccefa024f1a0645155a8ff32c4c705ff009dfa583` → `e080056682dd617f04e9a1e2505201944ae4cf607966a8f32d8f8be6e032faf9` |
+| Postpatch repository source | `19be89d14a34af4ec47736d64c4fb54ea84131d7fa0c1a3bb95393a8da6d9e34` |
+
+Original source/current candidate state, approved corpus/cases/review/cache, optional comparator and prior milestone receipts remain conserved. The historical empty-WAL gap remains unexplained and was not repaired; no live 410-record source or optional comparator was used. **`3d56bb2` is pending PIC. MEM-307/MEM-002 and Phase 3 remain open/blocked; Phases 4–5 and cutover remain unauthorized.** Next is PIC review of the correctness evidence and median/tail tradeoff, not another automatic optimization. Any future held-vector route still requires separate informed egress consent, a NEW immutable combined cache preserving the current 16 entries, final calibration bound to that exact cache, then freeze/single-use holdout. None of that sequence ran here.
 
 ### Local milestone 2 — tail profile and ASCII-only lexical bypass (2026-11-07)
 
