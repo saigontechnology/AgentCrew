@@ -1,6 +1,37 @@
 # Memory migration verification: Phases 0–3
 
-Phases 0–2 are PIC-approved. The private cohort is reviewed and SQLite-only calibration is measured, but **Phase 3 is BLOCKED, not passed**: MEM-306 primary Voyage-4 operational calibration and bounded FTS payload patch `424d963` are PIC-approved (2026-11-07); freeze and untouched holdout remain unresolved; the subsequent ENTITY-only patch `3d56fe8` is PIC-approved (2026-11-07), accepting warm median 27.326447→34.302914 ms (+25.530092%) and warm p95 114.810110→70.745843 ms on one calibration pair, not Phase 3 acceptance; the subsequent ASCII-only lexical patch `0558610` is PIC-approved (2026-11-07), not broad statistical speedup proof or Phase 3 acceptance. The narrow exact-lookup performance implementation and evidence reconciliation are PIC-approved (2026-11-06), not Phase 3 approval. **MEM-002 stays open; Phases 4–5 have not started and are not authorized; do not cut over.** No production setup, search tool, write path, automatic injection, provider or model pin has changed.
+Phases 0–2 are PIC-approved. The private cohort is reviewed and SQLite-only calibration is measured, but **Phase 3 is BLOCKED, not passed**: MEM-306 primary Voyage-4 operational calibration and bounded FTS payload patch `424d963` are PIC-approved (2026-11-07); the authorized single-use holdout failed Recall@5 and is pending PIC, not accepted; the subsequent ENTITY-only patch `3d56fe8` is PIC-approved (2026-11-07), accepting warm median 27.326447→34.302914 ms (+25.530092%) and warm p95 114.810110→70.745843 ms on one calibration pair, not Phase 3 acceptance; the subsequent ASCII-only lexical patch `0558610` is PIC-approved (2026-11-07), not broad statistical speedup proof or Phase 3 acceptance. The narrow exact-lookup performance implementation and evidence reconciliation are PIC-approved (2026-11-06), not Phase 3 approval. **MEM-002 stays open; Phases 4–5 have not started and are not authorized; do not cut over.** No production setup, search tool, write path, automatic injection, provider or model pin has changed.
+
+### Authorized Phase 3 sequence — failed holdout, pending PIC (2026-11-07)
+
+The user approved one Voyage-4 embedding batch for the 16 sanitized holdout queries and confirmed freezing the current policy only if the new-cache calibration passed. The new combined cache preserves the original 16 calibration vectors and adds 16 holdout vectors. It does not rewrite the old calibration cache. The comparison is the current configured Voyage-4 operational baseline on the retained 408-record cohort, not historical-encoder proof or the live 410-record source.
+
+One Voyage `Client.embed` call used model `voyage-4` and the wrapper's omitted task, dimension, dtype, and normalization settings. Retries and redirects were disabled. The response reported model `voyage-4`, HTTP 200, and 397 tokens. Dollar cost was not returned. Counters were one SDK embedding call, one API-resource call, and one HTTP adapter send. No documents, labels, or calibration queries were sent. No second generation ran.
+
+Calibration used the existing harness once, under network-namespace isolation: modes `chroma,sqlite`, split calibration, k=5, warmup=1, repetitions=3, and the new cache. It evaluated 16 cases per mode with zero embedding, model, or remote calls. All proposed gates passed. SQLite warm p50/p95 were 31.51/77.78 ms; Recall@5 was 1 and fixed Precision@5 was .175. Chroma cached-vector p95 was 5.16 ms. The harness acceptance status stayed blocked because this split was calibration, not holdout. The unchanged policy was then frozen against that exact report.
+
+Holdout ran once through the harness and was consumed before execution. It must not be retried. SQLite warm p50/p95 were 30.41/64.66 ms, so the p95 gate passed. Precision@5 was .1625 versus Chroma .175, within 5 percentage points. Abstention, leak, duplicate, and backend-error gates passed. **Recall@5 failed: SQLite 0.9285714285714286 < Chroma 1.0.** Overall acceptance is false. Phase 3, MEM-307, and MEM-002 stay open. Phases 4–5 did not start.
+
+| Gate | Calibration | Holdout |
+| --- | --- | --- |
+| Zero scope/session/deletion/lifecycle leaks | pass | pass |
+| Zero duplicate hits | pass | pass |
+| Recall@5 >= Chroma | pass | **fail** |
+| Precision@5 within 5 percentage points | pass | pass |
+| No-relevant abstention >= 95% | pass | pass |
+| SQLite warm p95 < 100 ms | pass | pass |
+| Zero backend errors | pass | pass |
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Safe sequence aggregate | `c4c95e59049e4827e844a2e1a1668958c82b790597162cce876f7863ea8f37a2` |
+| Combined query cache | `f6cb3feafb3cbcf26060d4535d117c50192a788c8bbc40e09862724aab86d0ed` |
+| Preserved calibration-only cache | `594666c408277d34253d778421f229f6d48a1d46b5404b7f9b2dd8be04ad7d22` |
+| Calibration report | `e902ffecb513a5836aaf00c4ccc79bfdea228cee15b1e1f102f1e9dfe5a360b1` |
+| Freeze digest | `188a5aece2d547ab5bf3d671a1782d3319e4d7e4ff864c9d6bcb287b88b89626` |
+| Holdout report | `791037a77a14c878f8fc399aa9e599ea228f2ad3e386af3f3fcf8deab0a05fca` |
+
+These timings are cached-vector retrieval, not live API latency or controlled disk-cold measurements. Original corpus, cases, review, retained source, candidate database, old cache, and optional comparator hashes were unchanged. Production remains Chroma.
 
 ## Phase 1 read-only prototype
 
@@ -164,7 +195,7 @@ Expansion and reranking have structured-output validation, budgets, candidate-ID
 
 `prepare-review --sqlite-source "$RETAINED_CANDIDATE" --output "$UNUSED_PRIVATE_REVIEW"` creates proposals, not ground truth. The approved private cohort contains **408 records and 32 reviewed cases (16 calibration / 16 holdout), 14 positive memories and four abstention cases**. Architect adjudicated the AI-assisted semantic proposals and the user explicitly approved their labels, sanitization and transparent local-human attestation. No private case data is committed. No private IDs, agents, sessions, paths, queries, labels, content or maps are committed.
 
-Every real case must explicitly cease being a draft, be reviewed locally, and match a separate `local-human` attestation bound to corpus/case hashes. The loaded dataset retains the exact SHA-256 of the validated attestation bytes. Until review is complete the loader rejects the cohort **before backend execution**. No review is auto-attested. Reading a retained copy for migration is not relevance evidence. SQLite-only calibration is recorded below. The configured Chroma comparison and real holdout remain **null / not run**; no threshold tuning or freeze has occurred.
+Every real case must explicitly cease being a draft, be reviewed locally, and match a separate `local-human` attestation bound to corpus/case hashes. The loaded dataset retains the exact SHA-256 of the validated attestation bytes. Until review is complete the loader rejects the cohort **before backend execution**. No review is auto-attested. Reading a retained copy for migration is not relevance evidence. SQLite-only calibration is recorded below. The configured Chroma comparison was later run from the combined Voyage-4 cache. The single-use holdout failed its Recall@5 gate and is pending PIC; no threshold tuning occurred.
 
 After genuine calibration, `freeze --calibration-report ... --output ...` seals code, policy, dataset/backend fingerprints, embedding identity and k/warmup/repeat protocol. Holdout requires unchanged inputs, both baselines and a matching freeze. Its locked, persistent ledger consumes each normalized held-out question/scope input—not freeze timestamps or labels. Renaming cases, changing CWD, relabeling, regenerating a freeze, or partial question recycling cannot unlock consumed inputs. Markers are consumed before execution; corrections require a fresh holdout or invalidation, never erasing history. Hashes do not prove semantic novelty or honest review, and this local guard cannot prevent a malicious owner moving/deleting the workspace.
 
@@ -458,7 +489,7 @@ Use this structural template **locally only**, replacing placeholders after auth
 }
 ```
 
-Real-memory cases remain local and require sanitization, referential checks against their private corpus, and human review. The approved cohort now contains **408 records and 32 reviewed cases (16 calibration / 16 holdout)**: Architect adjudicated the AI-assisted proposals, and the user approved the labels, sanitization and transparent local-human attestation. Newly generated proposals still require their own review; they do not inherit that approval. This reviewed cohort is distinct from the **407-record preservation snapshot**. Reviewed labels and SQLite-only calibration are not benchmark acceptance: **MEM-002 remains open** until the required real-case benchmarking gate passes, alongside MEM-307 and Phase 3 acceptance. The primary operational Chroma comparison is now PIC-established under MEM-306; performance target, freeze and untouched holdout remain unresolved. Synthetic coverage, draft generation and the narrow patch sign-off do not authorize Phases 4–5 or cutover.
+Real-memory cases remain local and require sanitization, referential checks against their private corpus, and human review. The approved cohort now contains **408 records and 32 reviewed cases (16 calibration / 16 holdout)**: Architect adjudicated the AI-assisted proposals, and the user approved the labels, sanitization and transparent local-human attestation. Newly generated proposals still require their own review; they do not inherit that approval. This reviewed cohort is distinct from the **407-record preservation snapshot**. Reviewed labels and SQLite-only calibration are not benchmark acceptance: **MEM-002 remains open** until the required real-case benchmarking gate passes, alongside MEM-307 and Phase 3 acceptance. The primary operational Chroma comparison is now PIC-established under MEM-306. The later combined-cache calibration passed the proposed p95 gate, but the single-use holdout failed Recall@5 and remains pending PIC. Synthetic coverage, draft generation and the narrow patch sign-off do not authorize Phases 4–5 or cutover.
 
 Remote model calls remain off by default. The future assisted benchmark requires separate explicit opt-in. Adaptive behaviors, memory authority, provider/model policy, and automatic context injection are unchanged.
 
