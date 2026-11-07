@@ -465,6 +465,8 @@ class SQLiteMemoryRepository:
 
         CROSS JOIN keeps normalized-value lookups ahead of unit/parent payload
         joins without changing eligibility, source-detail selection or ranking.
+        FTS materializes ranking keys only, then hydrates the capped parents
+        within the same snapshot; BM25 stays in its original MATCH context.
         """
         scope, scope_values = self._eligibility(query)
         candidates = []
@@ -488,9 +490,14 @@ class SQLiteMemoryRepository:
                     CROSS JOIN memory_record m ON m.id=u.memory_id"""
                 else:
                     from_clause = f"retrieval_unit u JOIN memory_record m ON m.id=u.memory_id {join}"
+                payload = """m.*,u.id AS unit_id,u.kind AS unit_kind,u.source_field,
+                    u.text AS unit_text,u.ordinal,u.checksum AS unit_checksum"""
+                projection = (
+                    "m.id,u.id AS unit_id,u.source_field,u.ordinal"
+                    if source == CandidateSource.FTS else payload
+                )
                 sql = f"""WITH matches AS MATERIALIZED (
-                    SELECT m.*,u.id AS unit_id,u.kind AS unit_kind,u.source_field,
-                    u.text AS unit_text,u.ordinal,u.checksum AS unit_checksum,
+                    SELECT {projection},
                     {detail} AS source_detail,{score} AS source_score
                     FROM {from_clause} WHERE {scope} AND ({predicate})
                 ), ranked AS (
@@ -498,7 +505,18 @@ class SQLiteMemoryRepository:
                         PARTITION BY id ORDER BY source_score,
                         CASE WHEN source_field='FLOW/OUTCOME' THEN 0 ELSE 1 END,ordinal,unit_id,source_detail
                     ) AS parent_rank FROM matches
-                ) SELECT * FROM ranked WHERE parent_rank=1
+                )"""
+                if source == CandidateSource.FTS:
+                    sql += f""", selected AS MATERIALIZED (
+                        SELECT * FROM ranked WHERE parent_rank=1
+                        ORDER BY source_score,id,unit_id LIMIT ?
+                    ) SELECT {payload},s.source_detail,s.source_score
+                    FROM selected s
+                    JOIN memory_record m ON m.id=s.id
+                    JOIN retrieval_unit u ON u.id=s.unit_id
+                    ORDER BY s.source_score,s.id,s.unit_id"""
+                else:
+                    sql += """ SELECT * FROM ranked WHERE parent_rank=1
                 ORDER BY source_score,id,unit_id LIMIT ?"""
                 rows = connection.execute(sql, (*scope_values, *values, query.candidate_limit)).fetchall()
                 for rank, row in enumerate(rows, 1):

@@ -12,4 +12,5 @@
 !verify_phase3.py
 !verify_migration_operator.py
 !verify_exact_lookup.py
+!verify_fts_payload.py
 !phase3-synthetic-summary.json
