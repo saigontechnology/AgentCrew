@@ -31,8 +31,12 @@ def _bounded(text: str, limit: int) -> str:
 
 
 def _words(text: str) -> set[str]:
+    """Remove nonspacing marks; normalized ASCII needs no category scan."""
     normalized = unicodedata.normalize("NFD", normalize_text(text))
-    folded = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    folded = (
+        normalized if normalized.isascii() else
+        "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    )
     return {word for word in re.findall(r"[^\W_]+", folded) if word not in STOP_WORDS}
 
 
