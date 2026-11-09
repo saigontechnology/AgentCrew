@@ -68,6 +68,53 @@ uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python
 
 The existing exact-lookup verifier prints incidental fictional timings; these are not calibration or performance evidence for this change. The full Phase 3 verifier is not run because it exercises ledger reservation and additional benchmark paths; only its input-evidence contract is checked separately with fresh fictional artifacts. No private corpus/cache/trace, existing consumed ledger, private measurement, threshold selection/tuning, embeddings, real freeze, holdout execution/retry, dependency installation, network, application startup, push/merge, rollout, or Phase 4 runs in this slice. Historical failed holdout evidence above is unchanged. **Phase 3, MEM-002 and MEM-307 remain BLOCKED/open; production stays Chroma, and Phases 4–5 remain unauthorized.** Architect artifact review is required before sign-off.
 
+
+### Calibration-only loading/provenance correction — code-only (2026-11-09)
+
+The earlier preflight correctly stopped before private input access: `--split calibration` selected cases only **after** the full-cohort loader had opened and validated both splits. The explicit `--dataset-scope calibration-only` route now calls `load_calibration_dataset()` **before case parsing**. It reads only the supplied calibration export, corpus, split-specific review, and parent **review manifest**. It does not open the original combined cases, follow paths mentioned in manifests, generate an export, or generate/upgrade an attestation. The default `full-cohort` route keeps all existing whole-cohort and holdout checks. Both routes share per-case validation and hash-checked snapshot reads, so parsed bytes and reported hashes cannot silently describe different versions.
+
+**Real-input checklist for a later separately authorized operation:**
+
+1. Supply the original reviewed corpus unchanged, a separate calibration-only JSONL export, its separately completed local-human split review, and the original reviewed parent manifest. Whether these real artifacts exist is **unknown**; this code-only slice did not inventory or prepare them.
+2. A genuinely authorized human must attest that the export contains **all and only** the original calibration rows, with each case's bytes, labels, and query-sanitization state preserved. The tool does not establish the truth of this attestation or independently prove inclusion. Merely naming a parent SHA is **not cryptographic subset proof**. No heldout objects may be inspected to manufacture this export under the current permission.
+3. The split review must bind the actual corpus/export bytes and original parent-review/combined-case identities. The supplied parent review must itself carry the existing `schema_version: 1`, `reviewed_locally: true`, `review_method: local-human`, `corpus_sha256`, and original combined `cases_sha256` fields. A calibration-only review cannot serve as its own full-cohort parent. No original review or labels are rewritten.
+4. Every exported case must be private-schema-1, `split: calibration`, locally reviewed and non-draft, with valid scope/date/lifecycle/reference/CWD/provenance labels and boolean sanitization fields. Holdout/combined inputs are rejected, **not filtered**. Duplicate normalized questions and invalid CWD-pair references are rejected. Minimum coverage remains 15 cases, five positively labeled memory IDs, two abstentions; exact identifier, paraphrase, no-relevant-memory and ambiguous-followup categories; decision-or-preference plus rejected-constraint-or-unresolved coverage.
+5. Use the explicit scope only with `--split calibration`, `--review-manifest "$SPLIT_REVIEW"`, and `--parent-review-manifest "$PARENT_REVIEW"`. `--cases` denotes the separate export, never the combined cohort. No freeze manifest is accepted in this mode. This describes the input contract, **not permission to run it now**.
+
+Illustrative split-review shape only — the placeholders are intentionally invalid hashes, not a usable review or human attestation:
+
+```json
+{
+  "schema_version": 1,
+  "artifact_type": "reviewed-calibration-export",
+  "dataset_scope": "calibration-only",
+  "split": "calibration",
+  "reviewed_locally": true,
+  "review_method": "local-human",
+  "membership_reviewed_locally": true,
+  "calibration_rows_complete": true,
+  "case_bytes_preserved": true,
+  "labels_and_sanitization_preserved": true,
+  "case_count": 16,
+  "corpus_sha256": "<actual unchanged corpus SHA-256>",
+  "cases_sha256": "<actual calibration-export SHA-256>",
+  "parent_review_manifest_sha256": "<actual original reviewed manifest SHA-256>",
+  "parent_cases_sha256": "<original combined-case SHA-256 from parent review>"
+}
+```
+
+The report's `dataset_scope` is `calibration-only`; its `cases_sha256` and `calibration_export_sha256` identify the **actual export**, never impersonate the combined cohort. `review_manifest_sha256` identifies the split review; `parent_review_manifest_sha256` and `parent_cases_sha256` identify the original provenance. Parent/split-review mutations after loading fail before backend setup. Existing query-cache, document-vector-cache and explicit SQLite semantic-policy binding remain intact. These source files are already included in `code_identity()`.
+
+Limited datasets/reports cannot enter holdout reservation, freeze creation/protocol, or Phase 3 acceptance, even if someone changes the requested split. Supporting a future freeze/holdout protocol for this format is deliberately deferred, not silently inferred from an old freeze. This does not authorize a consumed holdout retry or close Phase 3.
+
+Run only the disposable fictional verifier (no benchmark, model, embedding, private inputs, freeze, or ledger operations):
+
+```bash
+unshare --user --map-root-user --net env -i PATH="$PATH" HOME="$HOME" UV_OFFLINE=1 uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python -S verification/memory/verify_calibration_loader.py
+```
+
+It checks genuine-shaped **fictional** split provenance, no combined-case opening on the explicit route, malformed/missing review fields, wrong hashes, snapshot mutation, strict case/split coverage, rejection before mocked backends/reservation, freeze/acceptance barriers and existing full-cohort validation. Tests validate contracts, not real human-review authenticity. No real input discovery/preparation, private measurement, cutoff-grid registration/selection, embedding generation, real freeze, holdout/ledger access, startup, dependencies, rollout, or Phases 4–5 occurred. Retrieval/provider/model/policy defaults are unchanged. **Architect must review this source slice before any private-data work; the earlier bounded calibration authorization remains paused.** Phase 3, MEM-002 and MEM-307 stay blocked/open; production remains Chroma and the consumed holdout remains sealed.
+
 ## Phase 1 read-only prototype
 
 Implementation files:

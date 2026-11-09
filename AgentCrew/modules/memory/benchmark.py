@@ -6,7 +6,7 @@ operator attestation, never something the benchmark generates or assumes.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
 import hashlib
 import json
@@ -236,13 +236,26 @@ class Dataset:
     corpus_hash: str
     cases_hash: str
     review_manifest_hash: str | None = None
+    dataset_scope: str = "full-cohort"
+    parent_review_manifest_hash: str | None = None
+    parent_cases_hash: str | None = None
 
 
-def load_dataset(corpus: Path, cases: Path, review: Path | None = None) -> Dataset:
-    rows, case_rows = read_jsonl(corpus), read_jsonl(cases)
+def _validated_dataset(
+    corpus: Path, cases: Path, *, required_split: str | None = None,
+    corpus_hash: str | None = None, cases_hash: str | None = None,
+) -> Dataset:
+    corpus_hash = corpus_hash if corpus_hash is not None else file_hash(corpus)
+    cases_hash = cases_hash if cases_hash is not None else file_hash(cases)
+    rows = read_jsonl(corpus, expected_sha256=corpus_hash)
+    case_rows = read_jsonl(cases, expected_sha256=cases_hash)
     check(all(type(r.get("schema_version")) is int and r["schema_version"] == VERSION for r in rows + case_rows), "unsupported_schema_version")
     synthetic = rows[0].get("synthetic")
     check(type(synthetic) is bool and all(r.get("synthetic") is synthetic for r in rows + case_rows), "mixed_or_missing_privacy_class")
+    if required_split is not None:
+        check(synthetic is False, "calibration_export_must_be_private")
+        check(all(case.get("split") == required_split for case in case_rows),
+              "calibration_export_must_contain_only_calibration")
     records = {}
     for row in rows:
         record = record_from_row(row)
@@ -296,6 +309,27 @@ def load_dataset(corpus: Path, cases: Path, review: Path | None = None) -> Datas
             check(paired in ids and paired != case["case_id"], "invalid_cwd_pair")
             other = next(c for c in case_rows if c["case_id"] == paired)
             check(all(case.get(name) == other.get(name) for name in ("query", "agent_name", "current_session_id", "from_date", "to_date", "kinds")), "cwd_pair_scope_changed")
+    return Dataset(records, tuple(rows), tuple(case_rows), synthetic, corpus_hash, cases_hash)
+
+
+def _validate_private_split(case_rows: tuple[dict, ...], split: str) -> None:
+    split_cases = [case for case in case_rows if case["split"] == split]
+    positive_ids = {memory_id for case in split_cases
+                    for memory_id in case["expected_memory_ids"] + case["acceptable_memory_ids"]}
+    check(len(positive_ids) >= 5, "private_split_topics_too_few")
+    check(sum(case["must_abstain"] for case in split_cases) >= 2,
+          "private_split_abstention_cases_too_few")
+    categories = {category for case in split_cases for category in case["categories"]}
+    check({"exact_identifier", "paraphrase", "no_relevant_memory", "ambiguous_followup"} <= categories
+          and bool({"decision", "preference"} & categories)
+          and bool({"constraint_rejected_approach", "unresolved"} & categories),
+          "private_split_category_coverage_incomplete")
+
+
+def load_dataset(corpus: Path, cases: Path, review: Path | None = None) -> Dataset:
+    """Load the full cohort, including its unchanged mandatory holdout checks."""
+    dataset = _validated_dataset(corpus, cases)
+    records, case_rows, synthetic = dataset.records, dataset.cases, dataset.synthetic
     review_hash = None
     if not synthetic:
         check(review is not None, "private_review_manifest_missing")
@@ -304,8 +338,8 @@ def load_dataset(corpus: Path, cases: Path, review: Path | None = None) -> Datas
         check(type(manifest.get("schema_version")) is int and manifest.get("schema_version") == VERSION
               and manifest.get("reviewed_locally") is True
               and manifest.get("review_method") == "local-human"
-              and manifest.get("corpus_sha256") == file_hash(corpus)
-              and manifest.get("cases_sha256") == file_hash(cases), "private_review_attestation_invalid")
+              and manifest.get("corpus_sha256") == dataset.corpus_hash
+              and manifest.get("cases_sha256") == dataset.cases_hash, "private_review_attestation_invalid")
         calibration = [c for c in case_rows if c["split"] == "calibration"]
         holdout = [c for c in case_rows if c["split"] == "holdout"]
         check(len(calibration) >= 15 and len(holdout) >= 15, "private_cohort_too_small")
@@ -314,20 +348,63 @@ def load_dataset(corpus: Path, cases: Path, review: Path | None = None) -> Datas
         check(required <= {category for c in case_rows for category in c["categories"]}, "private_category_coverage_incomplete")
         check(sum(c["must_abstain"] for c in case_rows) >= 4, "private_abstention_cases_too_few")
         for split in ("calibration", "holdout"):
-            split_cases = [case for case in case_rows if case["split"] == split]
-            positive_ids = {memory_id for case in split_cases
-                            for memory_id in case["expected_memory_ids"] + case["acceptable_memory_ids"]}
-            check(len(positive_ids) >= 5, "private_split_topics_too_few")
-            check(sum(case["must_abstain"] for case in split_cases) >= 2,
-                  "private_split_abstention_cases_too_few")
-            categories = {category for case in split_cases for category in case["categories"]}
-            check({"exact_identifier", "paraphrase", "no_relevant_memory", "ambiguous_followup"} <= categories
-                  and bool({"decision", "preference"} & categories)
-                  and bool({"constraint_rejected_approach", "unresolved"} & categories),
-                  "private_split_category_coverage_incomplete")
+            _validate_private_split(case_rows, split)
         check(len({question_key(c, records) for c in case_rows}) == len(case_rows),
               "duplicate_private_question_inputs")
-    return Dataset(records, tuple(rows), tuple(case_rows), synthetic, file_hash(corpus), file_hash(cases), review_hash)
+    return replace(dataset, review_manifest_hash=review_hash)
+
+
+def _sha256(value) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def load_calibration_dataset(
+    corpus: Path, cases: Path, review: Path, parent_review: Path,
+) -> Dataset:
+    """Load a separately human-attested export; never open original case objects.
+
+    Hash linkage identifies the parent review, not a cryptographic membership
+    proof. The split-specific human attestation explicitly supplies that trust.
+    No exporter or review-attestation generator is provided here.
+    """
+    review_hash = file_hash(review)
+    manifest = read_json(review, expected_sha256=review_hash)
+    check(isinstance(manifest, dict)
+          and type(manifest.get("schema_version")) is int and manifest.get("schema_version") == VERSION
+          and manifest.get("artifact_type") == "reviewed-calibration-export"
+          and manifest.get("dataset_scope") == "calibration-only"
+          and manifest.get("split") == "calibration"
+          and manifest.get("reviewed_locally") is True
+          and manifest.get("review_method") == "local-human"
+          and all(manifest.get(key) is True for key in (
+              "membership_reviewed_locally", "calibration_rows_complete",
+              "case_bytes_preserved", "labels_and_sanitization_preserved")),
+          "calibration_export_attestation_invalid")
+    check(all(_sha256(manifest.get(key)) for key in (
+        "corpus_sha256", "cases_sha256", "parent_review_manifest_sha256", "parent_cases_sha256")),
+        "calibration_export_hashes_invalid")
+    parent_hash = manifest["parent_review_manifest_sha256"]
+    parent = read_json(parent_review, expected_sha256=parent_hash)
+    check(isinstance(parent, dict) and type(parent.get("schema_version")) is int and parent.get("schema_version") == VERSION
+          and parent.get("reviewed_locally") is True and parent.get("review_method") == "local-human"
+          and parent.get("dataset_scope", "full-cohort") == "full-cohort"
+          and parent.get("artifact_type") != "reviewed-calibration-export"
+          and manifest["parent_cases_sha256"] != manifest["cases_sha256"]
+          and parent.get("corpus_sha256") == manifest["corpus_sha256"]
+          and parent.get("cases_sha256") == manifest["parent_cases_sha256"],
+          "calibration_parent_review_invalid")
+    dataset = _validated_dataset(
+        corpus, cases, required_split="calibration", corpus_hash=manifest["corpus_sha256"],
+        cases_hash=manifest["cases_sha256"],
+    )
+    check(type(manifest.get("case_count")) is int and manifest["case_count"] == len(dataset.cases),
+          "calibration_export_count_mismatch")
+    check(len(dataset.cases) >= 15, "calibration_export_too_small")
+    _validate_private_split(dataset.cases, "calibration")
+    check(len({question_key(case, dataset.records) for case in dataset.cases}) == len(dataset.cases),
+          "duplicate_private_question_inputs")
+    return replace(dataset, review_manifest_hash=review_hash, dataset_scope="calibration-only",
+                   parent_review_manifest_hash=parent_hash, parent_cases_hash=manifest["parent_cases_sha256"])
 
 
 def measure(case: dict, hits: list[dict], records: dict[str, MemoryRecord], k: int) -> dict:

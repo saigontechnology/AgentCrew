@@ -57,6 +57,17 @@ uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python
 
 The existing exact-lookup verifier prints incidental fictional timings; these are not calibration or performance evidence for this change. The full Phase 3 verifier is not run because it exercises ledger reservation and additional benchmark paths; only its input-evidence contract is checked separately with fresh fictional artifacts. No private corpus/cache/trace, existing consumed ledger, private measurement, threshold selection/tuning, embeddings, real freeze, holdout execution/retry, dependency installation, network, application startup, push/merge, rollout, or Phase 4 runs in this slice. Historical failed holdout evidence above is unchanged. **Phase 3, MEM-002 and MEM-307 remain BLOCKED/open; production stays Chroma, and Phases 4–5 remain unauthorized.** Architect artifact review is required before sign-off.
 
+
+### Calibration-only provenance/loading — code-only review gate (2026-11-09)
+
+The preflight blocker was a harness contract, not a measured calibration failure: the full loader required and validated both splits before `--split calibration` could select cases. The approved correction adds explicit `--dataset-scope calibration-only` routing before case parsing, using only a separate export, original corpus, split-specific local-human attestation and original parent **review manifest**. It never opens the combined cases or auto-generates an export/review. Shared strict validators preserve scope/date/lifecycle/labels, duplicate-question/CWD-pair rules, calibration minimums and all original full-cohort/holdout requirements. Hash-checked reads bind parsed bytes to recorded identities.
+
+A parent SHA identifies provenance, not subset membership proof. A genuinely authorized human must separately attest all-and-only calibration membership/completeness and preservation of case bytes, labels and sanitization; the code cannot establish the truth of that attestation. Existence and provenance of any real export remain **unknown**. See [verification README: calibration-only loading/provenance correction](../verification/memory/README.md#calibration-only-loadingprovenance-correction--code-only-2026-11-09) for fields and the fictional-only verification command.
+
+Reports distinguish export/split-review identities from original combined-case/parent-review identities and mark `dataset_scope: calibration-only`. Limited reports/datasets cannot enter freeze, holdout reservation or Phase 3 acceptance; future protocol support is deferred. Existing semantic qualification, lexical thresholds, RRF, candidate caps, Chroma comparator/provider/model and cache evidence bindings are unchanged.
+
+This approval is source plus disposable fictional verification **only**. No private discovery/preparation or measurement is authorized in this slice; the prior bounded measurement authorization remains paused pending Architect source/provenance review. No cutoff selection, embeddings, real freeze, consumed holdout/ledger access, rollout or Phases 4–5. Historical evidence/receipts remain unchanged. Phase 3, MEM-002 and MEM-307 stay blocked/open; production stays Chroma.
+
 ## Goals
 
 1. Replace ChromaDB persistence and vector retrieval with SQLite-backed structured memory and FTS5 search.

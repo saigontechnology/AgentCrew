@@ -14,4 +14,5 @@
 !verify_exact_lookup.py
 !verify_fts_payload.py
 !verify_semantic_candidates.py
+!verify_calibration_loader.py
 !phase3-synthetic-summary.json

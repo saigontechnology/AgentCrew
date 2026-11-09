@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT))
 from AgentCrew.modules.memory.benchmark import (
     BenchmarkError, Calls, Dataset, FakeAdapter, POLICY, PROMPT, RemoteJSONAdapter,
     aggregate, check, digest, encode, evaluate_answer, expand_queries, file_hash,
-    cached_query_vector, load_dataset, local_document_vectors, measure, percentile,
+    cached_query_vector, load_calibration_dataset, load_dataset, local_document_vectors, measure, percentile,
     query_from_case, read_json, read_jsonl, record_from_row, rerank_hits,
     scope_eligible, lifecycle_eligible, question_key,
 )
@@ -250,7 +250,35 @@ def copy_chroma(source: Path, work: Path) -> str:
     return digest(before)
 
 
+def load_run_dataset(args, corpus: Path, cases: Path, review: Path | None) -> Dataset:
+    """Choose the explicit artifact contract before parsing any case file."""
+    scope = getattr(args, "dataset_scope", "full-cohort")
+    parent_review = getattr(args, "parent_review_manifest", None)
+    if scope == "calibration-only":
+        check(args.split == "calibration" and args.freeze_manifest is None,
+              "calibration_only_run_required")
+        check(review is not None and parent_review is not None,
+              "calibration_export_reviews_required")
+        return load_calibration_dataset(corpus, cases, review, input_path(parent_review))
+    check(scope == "full-cohort" and parent_review is None, "invalid_dataset_scope_inputs")
+    return load_dataset(corpus, cases, review)
+
+
+def dataset_evidence(dataset: Dataset) -> dict:
+    return {"dataset_scope": dataset.dataset_scope,
+            "calibration_export_sha256": dataset.cases_hash if dataset.dataset_scope == "calibration-only" else None,
+            "parent_review_manifest_sha256": dataset.parent_review_manifest_hash,
+            "parent_cases_sha256": dataset.parent_cases_hash}
+
+
+def _full_cohort_report(report: dict) -> bool:
+    return report.get("dataset_scope", "full-cohort") == "full-cohort" and all(
+        report.get(key) is None for key in (
+            "calibration_export_sha256", "parent_review_manifest_sha256", "parent_cases_sha256"))
+
+
 def frozen_protocol(report: dict, embedding: dict) -> dict:
+    check(_full_cohort_report(report), "calibration_only_freeze_unsupported")
     return {"k": report["k"], "warmups": report["warmups"], "repetitions": report["repetitions"],
             "sqlite_source_sha256": report["sqlite_source_sha256"],
             "chroma_source_fingerprint": report["chroma_source_fingerprint"],
@@ -263,6 +291,8 @@ def frozen_protocol(report: dict, embedding: dict) -> dict:
 
 
 def reserve_holdout(freeze: dict, dataset: Dataset, identity: dict) -> str:
+    check(dataset.dataset_scope == "full-cohort" and dataset.parent_review_manifest_hash is None
+          and dataset.parent_cases_hash is None, "calibration_only_holdout_forbidden")
     check(freeze.get("schema_version") == 1 and freeze.get("corpus_sha256") == dataset.corpus_hash
           and freeze.get("cases_sha256") == dataset.cases_hash and freeze.get("code_hash") == identity["code_hash"]
           and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash
@@ -289,6 +319,20 @@ def reserve_holdout(freeze: dict, dataset: Dataset, identity: dict) -> str:
 
 def input_evidence(args, dataset: Dataset, modes: list[str]):
     """Reject changed evidence before backend setup or holdout consumption."""
+    scope = getattr(dataset, "dataset_scope", "full-cohort")
+    check(scope in {"full-cohort", "calibration-only"}
+          and getattr(args, "dataset_scope", scope) == scope, "dataset_scope_mismatch")
+    if scope == "calibration-only":
+        check(args.split == "calibration" and args.freeze_manifest is None,
+              "calibration_only_run_required")
+        parent = getattr(args, "parent_review_manifest", None)
+        check(parent is not None and dataset.parent_review_manifest_hash is not None,
+              "calibration_export_reviews_required")
+        parent_path = input_path(parent)
+        check(file_hash(parent_path) == dataset.parent_review_manifest_hash,
+              "calibration_parent_review_changed_after_loading")
+    else:
+        check(getattr(args, "parent_review_manifest", None) is None, "invalid_dataset_scope_inputs")
     if not dataset.synthetic:
         check(args.review_manifest is not None and dataset.review_manifest_hash is not None,
               "private_review_evidence_missing")
@@ -386,6 +430,7 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
         "document_vector_cache_sha256": vector_hash,
         "sqlite_semantic_policy": asdict(semantic_policy),
         "review_manifest_sha256": dataset.review_manifest_hash,
+        **dataset_evidence(dataset),
         "corpus_records": len(dataset.records), "selected_cases": len(selected), **identity,
         "k": args.k, "warmups": args.warmups, "repetitions": args.repetitions,
         "sqlite_source_sha256": sqlite_before, "answer_eval": args.answer_eval,
@@ -522,13 +567,15 @@ def acceptance(report: dict) -> dict:
         "local_p95_below_100ms": sqlite.get("p95_ms") < 100 if sqlite.get("p95_ms") is not None else None,
     }
     genuine = report.get("chroma", {}).get("embedding_source") in {"configured", "cache"}
-    passed = not report["synthetic"] and report["split"] == "holdout" and available and genuine and all(value is True for value in tests.values())
+    passed = _full_cohort_report(report) and not report["synthetic"] and report["split"] == "holdout" and available and genuine and all(value is True for value in tests.values())
     return {"targets_are_proposed": True, "tests": tests, "passed": passed,
-            "status": "passed" if passed else "blocked", "private_real_gate": not report["synthetic"]}
+            "status": "passed" if passed else "blocked", "private_real_gate": not report["synthetic"] and _full_cohort_report(report),
+            "dataset_scope": report.get("dataset_scope", "full-cohort")}
 
 
 def markdown_summary(report: dict) -> str:
     lines = ["# Memory benchmark (private report)", "", "Proposed gates; not production/cutover approval.", "",
+             "Dataset scope: " + report.get("dataset_scope", "full-cohort"), "",
              "| Mode | Evaluated | Recall@5 | Precision@5 | p95 ms | Errors |", "|---|---:|---:|---:|---:|---:|"]
     for mode, row in report["modes"].items():
         lines.append(f"| {mode} | {row.get('evaluated_cases', 0)} | {row.get('recall_at_5')} | {row.get('precision_at_5')} | {row.get('p95_ms')} | {row['backend_errors']} |")
@@ -593,6 +640,7 @@ def draft_review(sqlite_source: Path, output: Path) -> dict:
 
 def freeze_calibration(report_path: Path, output: Path) -> dict:
     report = read_json(report_path)
+    check(_full_cohort_report(report), "calibration_only_freeze_unsupported")
     check(report.get("schema_version") == 1 and report.get("synthetic") is False and report.get("split") == "calibration", "real_calibration_report_required")
     check(all(report.get("modes", {}).get(mode, {}).get("evaluated_cases") == report.get("selected_cases")
               and not report["modes"][mode].get("backend_errors") for mode in ("chroma", "sqlite")), "calibration_baseline_unavailable")
@@ -638,6 +686,9 @@ def main() -> int:
     run.add_argument("--split", choices=("synthetic", "calibration", "holdout"), required=True)
     for name in ("k", "warmups", "repetitions"):
         run.add_argument("--" + name, type=int, required=True)
+    run.add_argument("--dataset-scope", choices=("full-cohort", "calibration-only"), default="full-cohort",
+                     help="Calibration-only requires a separate reviewed export, never combined case filtering.")
+    run.add_argument("--parent-review-manifest", type=Path)
     run.add_argument("--review-manifest", type=Path)
     run.add_argument("--freeze-manifest", type=Path)
     run.add_argument("--chroma-source", type=Path)
@@ -682,9 +733,13 @@ def main() -> int:
                 inputs.append(private_path(args.chroma_source))
             if args.document_vector_cache:
                 inputs.append(input_path(args.document_vector_cache))
-            output = new_output(args.output, inputs)
             review = input_path(args.review_manifest) if args.review_manifest else None
-            dataset = load_dataset(corpus, cases, review)
+            if review is not None:
+                inputs.append(review)
+            if args.parent_review_manifest is not None:
+                inputs.append(input_path(args.parent_review_manifest))
+            output = new_output(args.output, inputs)
+            dataset = load_run_dataset(args, corpus, cases, review)
             report = run_benchmark(args, dataset, output)
             result = {"status": report["acceptance"]["status"], "synthetic": dataset.synthetic,
                       "selected_cases": report["selected_cases"], "modes": {mode: {key: value for key, value in metrics.items() if key != "per_category"} for mode, metrics in report["modes"].items()},
