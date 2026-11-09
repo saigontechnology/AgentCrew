@@ -68,6 +68,12 @@ Reports distinguish export/split-review identities from original combined-case/p
 
 This approval is source plus disposable fictional verification **only**. No private discovery/preparation or measurement is authorized in this slice; the prior bounded measurement authorization remains paused pending Architect source/provenance review. No cutoff selection, embeddings, real freeze, consumed holdout/ledger access, rollout or Phases 4–5. Historical evidence/receipts remain unchanged. Phase 3, MEM-002 and MEM-307 stay blocked/open; production stays Chroma.
 
+### Confined extraction method — code/fictional milestone (2026-11-09)
+
+The preparation dependency now has an explicit operator method in `scripts/extract_memory_calibration.py`, pending Architect/PIC safety review **before private execution**. It requires an identified expected source digest, no-follow read-only access, syntax-only top-level split routing with exact escaped-key handling/duplicate rejection, raw calibration byte/newline/order preservation, double-pass identity checks and private atomic no-replace output. The scanner constructs no heldout payload objects; scanning/hashing still necessarily touches heldout bytes and therefore requires exact boundary clearance. See the [verification README](../verification/memory/README.md#calibration-extractor-method--fictional-review-milestone-2026-11-09) for limits, trust boundaries and fictional verifier.
+
+This source slice does not extract private data, authenticate parent lineage, supply genuine human review, register cutoffs, measure calibration, freeze, access a consumed holdout/ledger or alter production. A mechanical extraction receipt is never a completed split attestation. Existing strict loader/retrieval policies and historical evidence remain intact. The next milestone is direct method review; Phase 3 remains blocked/open and rollout/Phases 4–5 remain unauthorized.
+
 ## Goals
 
 1. Replace ChromaDB persistence and vector retrieval with SQLite-backed structured memory and FTS5 search.

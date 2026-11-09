@@ -76,7 +76,8 @@ def write_text(path: Path, value: str) -> None:
 
 
 def code_identity() -> dict:
-    files = [Path(__file__), ROOT / "AgentCrew/modules/memory/benchmark.py",
+    files = [Path(__file__), ROOT / "scripts/extract_memory_calibration.py",
+             ROOT / "AgentCrew/modules/memory/benchmark.py",
              ROOT / "AgentCrew/modules/memory/retrieval.py", ROOT / "AgentCrew/modules/memory/sqlite_repository.py",
              ROOT / "AgentCrew/modules/memory/record_parser.py", ROOT / "AgentCrew/modules/memory/types.py",
              ROOT / "AgentCrew/modules/memory/voyageai_ef.py"]
