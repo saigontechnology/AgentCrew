@@ -35,6 +35,7 @@ from AgentCrew.modules.memory.benchmark import (
     query_from_case, read_json, read_jsonl, record_from_row, rerank_hits,
     scope_eligible, lifecycle_eligible, question_key,
 )
+from AgentCrew.modules.memory.types import SQLiteSemanticPolicy
 from AgentCrew.modules.memory.retrieval import MemorySearchCoordinator
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
 from scripts.migrate_chroma_memory_to_sqlite import (
@@ -93,8 +94,8 @@ def signature(hits: list[dict]):
     return [{key: hit.get(key) for key in ("memory_id", "citation", "score", "reasons")} for hit in hits]
 
 
-def sqlite_hits(coordinator, case, k: int, query_vector=None) -> list[dict]:
-    result = coordinator.search(query_from_case(case, k, query_vector))
+def sqlite_hits(coordinator, case, k: int, query_vector=None, semantic_policy=None) -> list[dict]:
+    result = coordinator.search(query_from_case(case, k, query_vector, semantic_policy))
     return [{**asdict(hit), "citation": hit.citation, "cwd_label": hit.cwd if hit.cwd is not None else "Unknown (legacy memory)"} for hit in result.hits]
 
 
@@ -255,6 +256,8 @@ def frozen_protocol(report: dict, embedding: dict) -> dict:
             "chroma_source_fingerprint": report["chroma_source_fingerprint"],
             "collection_sha256": report["collection_sha256"],
             "embedding_cache_sha256": report["embedding_cache_sha256"],
+            "document_vector_cache_sha256": report["document_vector_cache_sha256"],
+            "sqlite_semantic_policy": report["sqlite_semantic_policy"],
             "review_manifest_sha256": report["review_manifest_sha256"],
             "embedding": {key: embedding[key] for key in ("embedding_source", "provider", "model", "threshold")}}
 
@@ -301,6 +304,16 @@ def input_evidence(args, dataset: Dataset, modes: list[str]):
         cache_hash = file_hash(cache)
     else:
         check(args.embedding_cache is None, "unused_embedding_cache")
+    vector_path = None
+    vector_hash = None
+    if getattr(args, "document_vector_cache", None) is not None:
+        check(any(mode.startswith("sqlite") for mode in modes), "unused_document_vector_cache")
+        vector_path = input_path(args.document_vector_cache)
+        vector_hash = file_hash(vector_path)
+    try:
+        semantic_policy = SQLiteSemanticPolicy(getattr(args, "sqlite_semantic_max_distance", None))
+    except ValueError:
+        raise BenchmarkError("invalid_sqlite_semantic_policy") from None
     freeze = None
     if args.split == "holdout":
         check(args.freeze_manifest is not None and {"chroma", "sqlite"} <= set(modes),
@@ -309,14 +322,21 @@ def input_evidence(args, dataset: Dataset, modes: list[str]):
         protocol = freeze.get("protocol") if isinstance(freeze, dict) else None
         check(isinstance(protocol, dict)
               and "embedding_cache_sha256" in protocol
-              and "review_manifest_sha256" in protocol,
+              and "review_manifest_sha256" in protocol
+              and "document_vector_cache_sha256" in protocol
+              and "sqlite_semantic_policy" in protocol,
               "frozen_input_evidence_missing")
         check(protocol["embedding_cache_sha256"] == cache_hash
               and protocol["review_manifest_sha256"] == dataset.review_manifest_hash
-              and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash,
+              and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash
+              and protocol["document_vector_cache_sha256"] == vector_hash
+              and protocol["sqlite_semantic_policy"] == asdict(semantic_policy),
               "frozen_input_evidence_changed")
     cache_rows = tuple(read_jsonl(cache, expected_sha256=cache_hash)) if cache is not None else None
-    return cache_hash, cache_rows, freeze
+    document_vectors = local_document_vectors(
+        read_jsonl(vector_path, expected_sha256=vector_hash)
+    ) if vector_path is not None else None
+    return cache_hash, cache_rows, freeze, vector_hash, document_vectors, semantic_policy
 
 
 def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
@@ -333,7 +353,7 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
         check(args.split in {"calibration", "holdout"}, "private_split_required")
         check(not args.allow_remote_llm, "private_evidence_remote_llm_forbidden")
     check(not args.allow_remote_embeddings or args.embedding_source == "configured", "embedding_opt_in_mismatch")
-    cache_hash, cache_rows, freeze = input_evidence(args, dataset, modes)
+    cache_hash, cache_rows, freeze, vector_hash, document_vectors, semantic_policy = input_evidence(args, dataset, modes)
     check(1 <= args.model_call_budget <= 10_000, "invalid_model_budget")
     assisted = any(mode in {"sqlite-expand", "sqlite-rerank"} for mode in modes) or args.answer_eval
     check(not assisted or args.adapter in {"fake", "remote"}, "explicit_adapter_required")
@@ -350,15 +370,12 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
     repository = SQLiteMemoryRepository(sqlite_source, read_only=True)
     assert_candidate(repository, dataset)
     sqlite_before = file_hash(sqlite_source)
-    if args.document_vector_cache is not None:
-        vector_path = input_path(args.document_vector_cache)
-        document_vectors = local_document_vectors(read_jsonl(vector_path))
-        if document_vectors:
-            destination = output / "sqlite-semantic-candidate.sqlite3"
-            with closing(sqlite3.connect(sqlite_source.resolve().as_uri() + "?mode=ro", uri=True)) as origin, closing(sqlite3.connect(destination)) as target:
-                origin.backup(target)
-            repository = SQLiteMemoryRepository(destination)
-            repository.copy_local_document_vectors(document_vectors)
+    if document_vectors:
+        destination = output / "sqlite-semantic-candidate.sqlite3"
+        with closing(sqlite3.connect(sqlite_source.resolve().as_uri() + "?mode=ro", uri=True)) as origin, closing(sqlite3.connect(destination)) as target:
+            origin.backup(target)
+        repository = SQLiteMemoryRepository(destination)
+        repository.copy_local_document_vectors(document_vectors)
     identity = code_identity()
     calls = Calls()
     coordinator = MemorySearchCoordinator(repository)
@@ -366,6 +383,8 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
         "schema_version": 1, "started_at": datetime.now(UTC).isoformat(), "synthetic": dataset.synthetic,
         "split": args.split, "corpus_sha256": dataset.corpus_hash, "cases_sha256": dataset.cases_hash,
         "embedding_cache_sha256": cache_hash,
+        "document_vector_cache_sha256": vector_hash,
+        "sqlite_semantic_policy": asdict(semantic_policy),
         "review_manifest_sha256": dataset.review_manifest_hash,
         "corpus_records": len(dataset.records), "selected_cases": len(selected), **identity,
         "k": args.k, "warmups": args.warmups, "repetitions": args.repetitions,
@@ -406,7 +425,7 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
             by_id, scores = {}, defaultdict(float)
             for text in queries:
                 vector = cached_query_vector(cache_rows, text)
-                for rank, hit in enumerate(sqlite_hits(coordinator, {**case, "query": text}, args.k, vector), 1):
+                for rank, hit in enumerate(sqlite_hits(coordinator, {**case, "query": text}, args.k, vector, semantic_policy), 1):
                     key = hit["memory_id"]
                     check(scope_eligible(dataset.records[key], case) and lifecycle_eligible(dataset.records[key]), "assisted_scope_violation")
                     by_id.setdefault(key, hit)
@@ -580,10 +599,18 @@ def freeze_calibration(report_path: Path, output: Path) -> dict:
     check(report.get("chroma", {}).get("embedding_source") in {"configured", "cache"}, "genuine_chroma_baseline_required")
     check(report.get("code_hash") == code_identity()["code_hash"] and report.get("policy") == POLICY, "calibration_code_or_policy_changed")
     check(report.get("k") == 5, "official_calibration_requires_k5")
-    check("embedding_cache_sha256" in report and "review_manifest_sha256" in report,
+    check(all(key in report for key in ("embedding_cache_sha256", "review_manifest_sha256",
+                                        "document_vector_cache_sha256", "sqlite_semantic_policy")),
           "calibration_input_evidence_missing")
+    try:
+        check(asdict(SQLiteSemanticPolicy(**report["sqlite_semantic_policy"])) == report["sqlite_semantic_policy"],
+              "invalid_sqlite_semantic_policy")
+    except (TypeError, ValueError):
+        raise BenchmarkError("invalid_sqlite_semantic_policy") from None
     cache_source = report["chroma"]["embedding_source"] == "cache"
     hashes = [report["review_manifest_sha256"]]
+    if report["document_vector_cache_sha256"] is not None:
+        hashes.append(report["document_vector_cache_sha256"])
     if cache_source:
         hashes.append(report["embedding_cache_sha256"])
     else:
@@ -618,6 +645,8 @@ def main() -> int:
     run.add_argument("--embedding-source", choices=("disabled", "cache", "configured", "synthetic-hash"))
     run.add_argument("--embedding-cache", type=Path)
     run.add_argument("--document-vector-cache", type=Path)
+    run.add_argument("--sqlite-semantic-max-distance", type=float,
+                     help="Explicit SQLite-only cosine cutoff; unset disables semantics. Not a calibrated default.")
     run.add_argument("--allow-remote-embeddings", action="store_true")
     run.add_argument("--allow-remote-llm", action="store_true")
     run.add_argument("--adapter", choices=("fake", "remote"))

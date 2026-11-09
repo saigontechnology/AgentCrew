@@ -17,13 +17,15 @@ from typing import Any
 
 from .record_parser import normalize_text
 from .sqlite_repository import SQLiteMemoryRepository
-from .types import MemoryQuery, MemoryRecord
+from .types import MemoryQuery, MemoryRecord, SQLiteSemanticPolicy
 
 VERSION = 1
 UNKNOWN_CWD = "Unknown (legacy memory)"
 POLICY = {
-    "name": "phase1-unchanged", "fts_weights": [6, 4, 1, 8], "rrf_k": 60,
+    "name": "qualified-sqlite-signals-v1", "fts_weights": [6, 4, 1, 8], "rrf_k": 60,
     "kind_weight": 1.1, "min_overlap": 0.35, "relative_coverage": 0.7,
+    "sqlite_semantic": {"metric": "cosine_distance", "admission": "explicit-cutoff-before-rrf",
+                        "default_max_distance": None, "cross_source_tie": "diversity-then-stable-id"},
 }
 CASE_KEYS = frozenset({
     "schema_version", "synthetic", "case_id", "categories", "query", "agent_name",
@@ -134,7 +136,10 @@ def record_from_row(row: dict) -> MemoryRecord:
     return record
 
 
-def query_from_case(case: dict, k: int, query_vector: tuple[float, ...] | None = None) -> MemoryQuery:
+def query_from_case(
+    case: dict, k: int, query_vector: tuple[float, ...] | None = None,
+    semantic_policy: SQLiteSemanticPolicy | None = None,
+) -> MemoryQuery:
     try:
         return MemoryQuery(
             query=case["query"], agent_name=case["agent_name"],
@@ -142,6 +147,7 @@ def query_from_case(case: dict, k: int, query_vector: tuple[float, ...] | None =
             from_date=date.fromisoformat(case["from_date"]) if case.get("from_date") else None,
             to_date=date.fromisoformat(case["to_date"]) if case.get("to_date") else None,
             kinds=tuple(case["kinds"]), limit=k, query_vector=query_vector,
+            semantic_policy=semantic_policy if semantic_policy is not None else SQLiteSemanticPolicy(),
         )
     except (KeyError, TypeError, ValueError):
         raise BenchmarkError("invalid_case_query_scope") from None

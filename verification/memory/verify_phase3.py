@@ -211,6 +211,8 @@ def checks_input_evidence(folder, dataset, review):
               "sqlite_source_sha256": "1" * 64, "chroma_source_fingerprint": "2" * 64,
               "collection_sha256": digest("fictional-collection"),
               "embedding_cache_sha256": file_hash(cache),
+              "document_vector_cache_sha256": None,
+              "sqlite_semantic_policy": {"max_distance": None},
               "review_manifest_sha256": dataset.review_manifest_hash,
               "k": 5, "warmups": 0, "repetitions": 1, "policy": POLICY,
               "chroma": {"embedding_source": "cache", "provider": "fictional",
@@ -235,7 +237,8 @@ def checks_input_evidence(folder, dataset, review):
                            freeze_manifest=frozen_path, model_call_budget=1,
                            adapter=None, answer_eval=False,
                            sqlite_source=folder / "never-open.sqlite3")
-    captured_hash, rows, captured_freeze = input_evidence(args, dataset, ["chroma", "sqlite"])
+    captured_hash, rows, captured_freeze, vector_hash, vectors, policy = input_evidence(args, dataset, ["chroma", "sqlite"])
+    require(vector_hash is None and vectors is None and policy.max_distance is None, "Absent vector policy changed")
     require(captured_hash == file_hash(cache) and len(rows) == 1 and captured_freeze == frozen,
             "Unchanged cache evidence rejected")
 
@@ -270,7 +273,7 @@ def checks_input_evidence(folder, dataset, review):
     rejected_before_execution(reloaded, "frozen_input_evidence_changed")
     review.write_bytes(review_bytes)
     args.embedding_source, args.embedding_cache, args.split = "configured", None, "calibration"
-    require(input_evidence(args, dataset, ["chroma", "sqlite"]) == (None, None, None),
+    require(input_evidence(args, dataset, ["chroma", "sqlite"])[:5] == (None, None, None, None, None),
             "Non-cache source retained cache evidence")
 
 

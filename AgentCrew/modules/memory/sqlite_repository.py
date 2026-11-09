@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, time
 from dataclasses import asdict
+import heapq
 import json
 import math
 from pathlib import Path
@@ -585,58 +586,61 @@ class SQLiteMemoryRepository:
     def _semantic_candidates(
         self, connection: sqlite3.Connection, query: MemoryQuery, scope: str, scope_values: list,
     ) -> list[MemoryCandidate]:
-        if query.query_vector is None:
+        if query.query_vector is None or query.semantic_policy.max_distance is None:
+            return []
+        query_norm = math.hypot(*query.query_vector)
+        if not math.isfinite(query_norm) or query_norm == 0:
             return []
         if connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (VECTOR_TABLE,),
         ).fetchone() is None:
             return []
-        from .voyageai_ef import VOYAGE_RELEVANT_THRESHOLD
         rows = connection.execute(
-            f"""SELECT v.vector AS document_vector,m.*,u.id AS unit_id,u.kind AS unit_kind,
-            u.source_field,u.text AS unit_text,u.ordinal,u.checksum AS unit_checksum
-            FROM {VECTOR_TABLE} v
-            JOIN memory_record m ON m.id=v.memory_id
-            JOIN retrieval_unit u ON u.memory_id=m.id
-            WHERE {scope}""",
+            f"""SELECT m.id,v.vector FROM {VECTOR_TABLE} v
+            JOIN memory_record m ON m.id=v.memory_id WHERE {scope}
+            AND EXISTS (SELECT 1 FROM retrieval_unit u WHERE u.memory_id=m.id)""",
             scope_values,
-        ).fetchall()
-        grouped: dict[str, list[sqlite3.Row]] = {}
-        for row in rows:
-            grouped.setdefault(row["id"], []).append(row)
-        scored = []
-        for memory_id, group in grouped.items():
-            distance = self._cosine_distance(query.query_vector, group[0]["document_vector"])
-            if distance > VOYAGE_RELEVANT_THRESHOLD:
-                continue
-            chosen = min(group, key=lambda item: (
-                0 if item["source_field"] == "FLOW/OUTCOME" else 1,
-                item["ordinal"], item["unit_id"],
-            ))
-            scored.append((distance, memory_id, chosen))
-        scored.sort(key=lambda item: (item[0], item[1]))
-        return [
-            self._candidate(
+        )
+
+        def qualified():
+            for row in rows:
+                distance = self._cosine_distance(query.query_vector, row["vector"], query_norm)
+                if query.semantic_policy.qualifies(distance):
+                    yield distance, row["id"]
+
+        selected = heapq.nsmallest(query.candidate_limit, qualified())
+        candidates = []
+        for rank, (distance, memory_id) in enumerate(selected, 1):
+            row = connection.execute(
+                """SELECT m.*,u.id AS unit_id,u.kind AS unit_kind,u.source_field,
+                u.text AS unit_text,u.ordinal,u.checksum AS unit_checksum
+                FROM memory_record m JOIN retrieval_unit u ON u.id=(
+                    SELECT id FROM retrieval_unit WHERE memory_id=m.id
+                    ORDER BY CASE WHEN source_field='FLOW/OUTCOME' THEN 0 ELSE 1 END,
+                    ordinal,id LIMIT 1
+                ) WHERE m.id=?""", (memory_id,),
+            ).fetchone()
+            candidates.append(self._candidate(
                 row, CandidateSource.SEMANTIC, rank, f"cosine_distance={distance:.6f}", distance,
-            )
-            for rank, (distance, _memory_id, row) in enumerate(scored[:query.candidate_limit], 1)
-        ]
+            ))
+        return candidates
 
     @staticmethod
-    def _cosine_distance(query_vector: tuple[float, ...], blob: bytes) -> float:
+    def _cosine_distance(query_vector: tuple[float, ...], blob: bytes, query_norm: float) -> float:
         width = DOCUMENT_VECTOR_DIMENSIONS * 4
         if not isinstance(blob, bytes) or len(blob) != width:
             return math.inf
         stored = struct.unpack(f"<{DOCUMENT_VECTOR_DIMENSIONS}f", blob)
-        dot = left = right = 0.0
-        for query_value, stored_value in zip(query_vector, stored, strict=True):
-            dot += query_value * stored_value
-            left += query_value * query_value
-            right += stored_value * stored_value
-        if left == 0 or right == 0:
+        if not all(math.isfinite(value) for value in stored):
             return math.inf
-        similarity = max(-1.0, min(1.0, dot / math.sqrt(left * right)))
-        return 1.0 - similarity
+        stored_norm = math.hypot(*stored)
+        if stored_norm == 0:
+            return math.inf
+        similarity = math.fsum(
+            (query_value / query_norm) * (stored_value / stored_norm)
+            for query_value, stored_value in zip(query_vector, stored, strict=True)
+        )
+        return 1.0 - max(-1.0, min(1.0, similarity))
 
     def _candidate(
         self, row: sqlite3.Row, source: CandidateSource, rank: int, detail: str,

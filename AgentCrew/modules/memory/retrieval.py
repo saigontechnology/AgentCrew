@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import UTC, datetime
 import json
-import math
 import re
 import unicodedata
 
@@ -52,23 +51,13 @@ def _query_parts(text: str) -> tuple[tuple[str, ...], str]:
     return tuple(sorted(exact)[:320]), expression
 
 
-def _semantic_distance(reasons) -> float:
-    distances = [
-        reason.distance for reason in reasons
-        if reason.source == CandidateSource.SEMANTIC
-        and isinstance(reason.distance, float)
-        and math.isfinite(reason.distance)
-    ]
-    return min(distances) if distances else math.inf
-
-
 class MemorySearchCoordinator:
     """Fuse eligible parent ranks without writes, LLMs or process-global scope.
 
     RRF k=60, field weights and lexical-overlap gates are initial prototype
-    settings, not calibrated relevance guarantees. A semantic document-vector
-    hit is exempt from those lexical gates and uses the frozen Chroma cosine
-    cutoff. CWD is never read for ranking.
+    settings, not calibrated relevance guarantees. Semantic signals require an
+    independent explicit SQLite policy before fusion. Unset policy stays lexical.
+    Semantic source ranks use distance; cross-source ties do not. CWD is output-only.
     """
 
     def __init__(self, repository: SQLiteMemoryRepository) -> None:
@@ -79,37 +68,46 @@ class MemorySearchCoordinator:
         batch = self.repository.candidates(query, exact, expression)
         grouped: dict[str, list[MemoryCandidate]] = defaultdict(list)
         for candidate in batch.candidates:
+            if candidate.reason.source == CandidateSource.SEMANTIC and not (
+                query.query_vector is not None
+                and query.semantic_policy.qualifies(candidate.reason.distance)
+            ):
+                continue
             grouped[candidate.record.id].append(candidate)
         query_words = _words(query.query)
-        ranked = []
+        qualified = []
         for entries in grouped.values():
-            by_source = {entry.reason.source: entry for entry in entries}
-            exact_id = CandidateSource.MEMORY_ID in by_source
-            semantic = CandidateSource.SEMANTIC in by_source
-            strong = bool({CandidateSource.ENTITY, CandidateSource.TAG} & by_source.keys())
+            lexical = [entry for entry in entries if entry.reason.source != CandidateSource.SEMANTIC]
             record = entries[0].record
-            evidence_words = _words(" ".join(entry.unit.text for entry in entries) + " " + (record.header or ""))
+            exact_id = any(entry.reason.source == CandidateSource.MEMORY_ID for entry in lexical)
+            evidence_words = _words(" ".join(entry.unit.text for entry in lexical) + " " + (record.header or ""))
             overlap = len(query_words & evidence_words)
             coverage = overlap / len(query_words) if query_words else 0
             kind_match = bool(set(record.kinds) & set(query.kinds))
-            if not exact_id and not semantic and (not overlap or coverage * (1.1 if kind_match else 1) < 0.35):
+            lexical_ok = bool(lexical) and (exact_id or bool(overlap and coverage * (1.1 if kind_match else 1) >= 0.35))
+            qualified.append((entries, lexical, coverage, exact_id, lexical_ok, kind_match))
+        best_coverage = max((item[2] for item in qualified if item[4]), default=0)
+        ranked = []
+        for entries, lexical, coverage, exact_id, lexical_ok, kind_match in qualified:
+            lexical_ok = lexical_ok and (exact_id or coverage >= 0.7 * best_coverage)
+            semantic = [entry for entry in entries if entry.reason.source == CandidateSource.SEMANTIC]
+            admitted = (lexical if lexical_ok else []) + semantic
+            if not admitted:
                 continue
-            reasons = tuple(entry.reason for entry in sorted(entries, key=lambda item: item.reason.source.value))
+            by_source = {entry.reason.source: entry for entry in admitted}
+            strong = bool({CandidateSource.ENTITY, CandidateSource.TAG} & by_source.keys())
+            reasons = tuple(entry.reason for entry in sorted(admitted, key=lambda item: item.reason.source.value))
             score = sum(1 / (60 + reason.rank) for reason in reasons)
             if kind_match:
                 score *= 1.1
                 reasons += (MatchReason(CandidateSource.KIND_HINT, 0, "Explicit kind hint: 1.1x rank weight"),)
-            display = by_source.get(CandidateSource.FTS) or entries[0]
+            display = by_source.get(CandidateSource.FTS) or admitted[0]
             confidence = (
                 ConfidenceBand.HIGH if exact_id or (strong and coverage >= 0.7) else
-                ConfidenceBand.MEDIUM if coverage >= 0.5 else ConfidenceBand.LOW
+                ConfidenceBand.MEDIUM if lexical_ok and coverage >= 0.5 else ConfidenceBand.LOW
             )
-            ranked.append((score, display, reasons, confidence, coverage, exact_id or semantic))
-        best_coverage = max((item[4] for item in ranked), default=0)
-        ranked = [item for item in ranked if item[5] or item[4] >= 0.7 * best_coverage]
-        ranked.sort(key=lambda item: (
-            -item[0], _semantic_distance(item[2]), item[1].record.id, item[1].unit.id,
-        ))
+            ranked.append((score, display, reasons, confidence))
+        ranked.sort(key=lambda item: (-item[0], item[1].record.id, item[1].unit.id))
         hits = []
         seen_documents = set()
         seen_sessions = set()
@@ -120,11 +118,10 @@ class MemorySearchCoordinator:
             chosen = min(tied, key=lambda item: (
                 item[1].record.session_id in seen_sessions,
                 item[1].unit.kind in seen_kinds,
-                _semantic_distance(item[2]),
                 item[1].record.id, item[1].unit.id,
             ))
             ranked.remove(chosen)
-            score, entry, reasons, confidence, _, _ = chosen
+            score, entry, reasons, confidence = chosen
             record = entry.record
             digest = checksum(normalize_text(record.document))
             if digest in seen_documents:
@@ -144,9 +141,11 @@ class MemorySearchCoordinator:
             ))
             if len(hits) >= query.limit:
                 break
-        return MemorySearchResult(
-            tuple(hits), () if hits else ("weak_or_no_lexical_evidence",),
+        warning = (
+            "no_qualified_evidence" if query.semantic_policy.max_distance is not None
+            else "weak_or_no_lexical_evidence"
         )
+        return MemorySearchResult(tuple(hits), () if hits else (warning,))
 
 
 def format_search_result(result: MemorySearchResult) -> str:

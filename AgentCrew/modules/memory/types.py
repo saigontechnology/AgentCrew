@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
+import math
 from typing import Any
 
 
@@ -27,6 +28,29 @@ DOCUMENT_VECTOR_DIMENSIONS = 1024
 
 
 @dataclass(frozen=True)
+class SQLiteSemanticPolicy:
+    """Explicit cosine-distance admission; unset means disabled, not calibrated."""
+
+    max_distance: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_distance is not None and (
+            type(self.max_distance) not in (int, float)
+            or not 0 <= self.max_distance <= 2
+            or not math.isfinite(self.max_distance)
+        ):
+            raise ValueError("SQLite semantic cutoff must be finite within cosine distance [0, 2]")
+
+    def qualifies(self, distance: float | None) -> bool:
+        return (
+            self.max_distance is not None
+            and type(distance) in (int, float)
+            and 0 <= distance <= self.max_distance
+            and math.isfinite(distance)
+        )
+
+
+@dataclass(frozen=True)
 class MemoryQuery:
     query: str
     agent_name: str
@@ -39,6 +63,7 @@ class MemoryQuery:
     candidate_limit: int = 100
     as_of: int | None = None
     query_vector: tuple[float, ...] | None = None
+    semantic_policy: SQLiteSemanticPolicy = field(default_factory=SQLiteSemanticPolicy)
 
     def __post_init__(self) -> None:
         for value in (self.query, self.agent_name, self.current_session_id):
@@ -62,6 +87,8 @@ class MemoryQuery:
                 raise ValueError("ID and kind hints must contain nonempty strings")
         if self.as_of is not None and type(self.as_of) is not int:
             raise ValueError("Validity time must be an explicit Unix timestamp")
+        if not isinstance(self.semantic_policy, SQLiteSemanticPolicy):
+            raise ValueError("SQLite semantic policy must be explicit and immutable")
         if self.query_vector is not None:
             if (
                 not isinstance(self.query_vector, tuple)

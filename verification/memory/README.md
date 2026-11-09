@@ -12,11 +12,11 @@ Calibration used the existing harness once, under network-namespace isolation: m
 
 Holdout ran once through the harness and was consumed before execution. It must not be retried. SQLite warm p50/p95 were 30.41/64.66 ms, so the p95 gate passed. Precision@5 was .1625 versus Chroma .175, within 5 percentage points. Abstention, leak, duplicate, and backend-error gates passed. **Recall@5 failed: SQLite 0.9285714285714286 < Chroma 1.0.** Architect/PIC rejected Phase 3 acceptance on 2026-11-07. The sequence was valid and complete, but a later generic continue does not waive this gate, authorize a retry, or permit threshold tuning on the consumed holdout. Phase 3, MEM-307, and MEM-002 stay open. Phases 4–5 did not start.
 
-### Semantic candidate amendment — implementation present, not measured (2026-11-07)
+### Semantic candidate amendment — historical implementation state (2026-11-07)
 
 The user authorized this implementation slice on 2026-11-07. The code now exists in the SQLite repository and retrieval coordinator. Phase 3 remains rejected. Measurement, embeddings, freeze, holdout retry, and Phases 4–5 remain unauthorized.
 
-SQLite can store existing local 1024-dimensional document vectors in optional table `memory_document_vector` and use them as one semantic candidate source beside exact ID, entity, tag, and FTS. Schema version stays 1. Existing databases without the table remain valid. No vector extension, no new embeddings, no document egress, and no separate vector database. A semantic hit is not discarded only for failing the lexical overlap floor. Cosine distance greater than frozen Chroma cutoff `VOYAGE_RELEVANT_THRESHOLD` (1) is rejected. Equal RRF scores break ties by that distance before record ID. The benchmark can pass a cached 1024-float query vector and copy already-stored local document vectors into a disposable SQLite candidate; a missing cache vector stays lexical. The consumed holdout remains sealed.
+Historical 2026-11-07 description (superseded by the correction below; not the current query rule): The original prototype could store existing local 1024-dimensional document vectors in optional table `memory_document_vector` and use them as one semantic candidate source beside exact ID, entity, tag, and FTS. Schema version stays 1. Existing databases without the table remain valid. No vector extension, no new embeddings, no document egress, and no separate vector database. A semantic hit is not discarded only for failing the lexical overlap floor. Cosine distance greater than frozen Chroma cutoff `VOYAGE_RELEVANT_THRESHOLD` (1) is rejected. Equal RRF scores break ties by that distance before record ID. The benchmark can pass a cached 1024-float query vector and copy already-stored local document vectors into a disposable SQLite candidate; a missing cache vector stays lexical. The consumed holdout remains sealed.
 
 Fictional verification, with no private corpus:
 
@@ -44,6 +44,29 @@ uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python
 | Holdout report | `791037a77a14c878f8fc399aa9e599ea228f2ad3e386af3f3fcf8deab0a05fca` |
 
 These timings are cached-vector retrieval, not live API latency or controlled disk-cold measurements. Original corpus, cases, review, retained source, candidate database, old cache, and optional comparator hashes were unchanged. Production remains Chroma.
+
+
+### Query-rule correction — fictional verification only (2026-11-09)
+
+The approved correction qualifies signals **before RRF**, rather than treating raw vector-source membership as relevance. `SQLiteSemanticPolicy(max_distance=None)` is immutable and request-local; **unset disables semantic scanning and admission**, even with query vectors present. An explicit finite cosine-distance cutoff in `[0, 2]` is accepted as operator input, not as a calibration claim. There is no evidence-supported deployment cutoff yet. The verifier uses `0.2` only to separate hand-constructed fictional vectors; it is **not a recommended deployment setting**. SQLite no longer imports Chroma's `VOYAGE_RELEVANT_THRESHOLD`; the Chroma comparator, provider and model are unchanged.
+
+An eligible explicit ID, lexical-qualified evidence, or independently qualified semantic evidence can admit a parent. Semantic-only paraphrases need no lexical overlap. Rejected semantic reasons/evidence are removed before coverage and scoring, so they cannot boost lexical results. Lexical evidence still uses the original `.35` minimum and `.7 * best` relative coverage gates, computed independently of semantic evidence. Unqualified lexical reasons cannot piggyback on a qualified semantic parent. No limit-filling, quotas, CWD scope/boost, new rank weights, parser changes, or production wiring were added. RRF `k=60`, kind `1.1x`, lexical field weights, normalized-document dedup and session/kind diversity remain. Semantic distances order the qualified semantic source before its cap; equal fused scores use existing diversity then stable parent/unit IDs, with **no blanket semantic-distance preference** over lexical-only hits. Semantic confidence remains conservative and is not factual certainty.
+
+The optional plain vector table remains schema version 1. The semantic scan projects only one hard-eligible parent ID/vector pair, scores each once, computes the query norm once, and uses bounded top-candidate selection before loading any canonical/unit payload. Only selected parents hydrate one deterministically chosen evidence unit (outcome first, then ordinal/unit ID). All sources, hydration and conflicts share the operation-owned read snapshot. This is a structural payload correction, **not a measured latency or recall claim**.
+
+Benchmark evidence now records `sqlite_semantic_policy` and `document_vector_cache_sha256`, including explicit `null` cache absence, in reports and frozen protocols. `--sqlite-semantic-max-distance` is the explicit, unset-by-default SQLite-only input. Cache bytes are fingerprinted and hash-checked while loading; changed/missing policy or cache evidence fails before backend setup and holdout reservation. Original SQLite source identity still binds vectors already inside that source. Old manifests lacking the new fields are rejected by the corrected harness; **do not regenerate a freeze or reuse consumed holdout to bypass that rejection**.
+
+Focused offline checks use only disposable fictional data: orthogonal/weak-positive rejection, strong zero-overlap admission, abstention, rejected-signal score invariance, missing-vector/unset-policy lexical invariance, scope/date/current-session/deletion/supersession/validity/ID fences, CWD invariance, optional vectorless schema, deterministic cross-source ties and semantic ordering, one score per parent, one query norm, capped late hydration, concurrent writer/read-snapshot consistency, and evidence mutation/absence rejection without reserving any holdout. No committed labels or synthetic corpus were altered.
+
+```bash
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python -S verification/memory/verify_semantic_candidates.py
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python -S verification/memory/verify_phase1.py
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python -S verification/memory/verify_fts_payload.py
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python -S verification/memory/verify_exact_lookup.py
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python -S verification/memory/validate_assets.py
+```
+
+The existing exact-lookup verifier prints incidental fictional timings; these are not calibration or performance evidence for this change. The full Phase 3 verifier is not run because it exercises ledger reservation and additional benchmark paths; only its input-evidence contract is checked separately with fresh fictional artifacts. No private corpus/cache/trace, existing consumed ledger, private measurement, threshold selection/tuning, embeddings, real freeze, holdout execution/retry, dependency installation, network, application startup, push/merge, rollout, or Phase 4 runs in this slice. Historical failed holdout evidence above is unchanged. **Phase 3, MEM-002 and MEM-307 remain BLOCKED/open; production stays Chroma, and Phases 4–5 remain unauthorized.** Architect artifact review is required before sign-off.
 
 ## Phase 1 read-only prototype
 
