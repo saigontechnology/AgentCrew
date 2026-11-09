@@ -74,6 +74,12 @@ The preparation dependency now has an explicit operator method in `scripts/extra
 
 This source slice does not extract private data, authenticate parent lineage, supply genuine human review, register cutoffs, measure calibration, freeze, access a consumed holdout/ledger or alter production. A mechanical extraction receipt is never a completed split attestation. Existing strict loader/retrieval policies and historical evidence remain intact. The next milestone is direct method review; Phase 3 remains blocked/open and rollout/Phases 4–5 remain unauthorized.
 
+### Accepted-original-review mechanical calibration governance (code-only)
+
+The user accepted the original review as the trust anchor for mechanically derived **calibration-only** inputs, without a new human event. A distinct `mechanically-derived-calibration-export` acceptance record now dispatches through the same strict loader, preserving genuine split-human and full-cohort validation. It requires an out-of-band PIC-trusted acceptance digest, explicitly supplied extraction/execution evidence and the pinned original parent/reviewed historical derivation lineage. Caller-supplied digests are not independent authentication; the trusted operator/PIC must genuinely review the existing execution evidence. Current loader identity is distinct from historical `2610c828`/`fb3c4475…` derivation identity; no old receipt/pending packet is rewritten or marked human-reviewed.
+
+Actual export/corpus bytes and strict calibration invariants are rechecked. Reports bind all identities, explicitly record no new human review, and cannot become full-cohort evidence by dropping provenance markers. Limited freeze/holdout/acceptance barriers remain; fresh-holdout support is separate. See the [contract/checklist](../verification/memory/README.md#accepted-original-review-mechanical-contract--code-only-milestone-2026-11-09) and disposable `verify_derived_calibration.py` verifier. This slice performs no private input loading, extraction repeat, calibration, cutoff registration, embeddings, real freeze, holdout/ledger access or rollout. Stop at Architect source review; Phase 3/MEM-002/MEM-307 remain blocked/open.
+
 ## Goals
 
 1. Replace ChromaDB persistence and vector retrieval with SQLite-backed structured memory and FTS5 search.

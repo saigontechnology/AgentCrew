@@ -227,6 +227,44 @@ def lifecycle_eligible(record: MemoryRecord) -> bool:
     return record.status == "active" and record.superseded_by is None
 
 
+HUMAN_CALIBRATION_CONTRACT = "reviewed-calibration-export"
+DERIVED_CALIBRATION_CONTRACT = "mechanically-derived-calibration-export"
+DERIVATION_POLICY = "accepted-original-review-mechanical-subset-2610c828-v1"
+ACCEPTED_PARENT_REVIEW_SHA256 = "1c0af2cc2ef24e586645daf3e1186a1a1af681ec2519f03b31d4b96a458a96b2"
+REVIEWED_DERIVATION_COMMIT = "2610c82885bd33085f55b3712d23fc20fbaa1113"
+REVIEWED_DERIVATION_CODE_HASH = "fb3c44757827f959dcbfa7d3cc0bd49a058c4363a9ea4163b6166df527bcf214"
+REVIEWED_DERIVATION_SOURCES = {
+    "AgentCrew/modules/memory/benchmark.py": "e63c543cde81309074f40ee4dba318ee228ae9d8216f95d73afd482cc9eafccb",
+    "AgentCrew/modules/memory/record_parser.py": "2ffe53ea3f9a6ee43086da470575faf9a4409d934c4edd1629a1304006bcc63e",
+    "AgentCrew/modules/memory/retrieval.py": "38a08fec5d2c7ce51bc2fcfa16168b50c2dbc49242336299a99236fb1e0d0c1b",
+    "AgentCrew/modules/memory/sqlite_repository.py": "12b74a69c6e4c3122738a41ab46eebe466b05e466c0fff6ec770605db8c6b1da",
+    "AgentCrew/modules/memory/types.py": "fba2be0af389dd5c050bede638155b81815deb8b6e174c53be61476a85c9fdd9",
+    "AgentCrew/modules/memory/voyageai_ef.py": "785a50a307519a25d7277253a308727f469229d0ab60f3fe85cbc5c2a2805f21",
+    "scripts/benchmark_memory_retrieval.py": "6017f12d6ad217a574c87c636d245596acf88446aeb9ad3a156207c1accb31c0",
+    "scripts/extract_memory_calibration.py": "db0c091ff98aff6471089ca470341b8daaaa1a6a3dea69201769e3d4dae7d84a"
+}
+REVIEWED_DERIVATION_SHARED_SOURCES = {
+    "AgentCrew/modules/memory/benchmark.py": REVIEWED_DERIVATION_SOURCES["AgentCrew/modules/memory/benchmark.py"],
+    "scripts/migrate_chroma_memory_to_sqlite.py": "cb26524c347cd900c7bfcbba99c3f9e1fb87acb60dd111246b612682b09fd890",
+}
+
+
+@dataclass(frozen=True)
+class CalibrationDerivation:
+    trusted_acceptance_hash: str
+    extraction_evidence_hash: str
+    execution_evidence_hash: str
+    historical_commit: str
+    historical_code_hash: str
+    method_hash: str
+    shared_source_hashes: tuple[tuple[str, str], ...]
+    trust_policy: str = DERIVATION_POLICY
+    new_split_human_review: bool = False
+    trust_boundary: str = (
+        "Out-of-band PIC acceptance pin; consistency checks are not independent authentication or re-execution."
+    )
+
+
 @dataclass(frozen=True)
 class Dataset:
     records: dict[str, MemoryRecord]
@@ -239,6 +277,8 @@ class Dataset:
     dataset_scope: str = "full-cohort"
     parent_review_manifest_hash: str | None = None
     parent_cases_hash: str | None = None
+    calibration_provenance_contract: str | None = None
+    derivation: CalibrationDerivation | None = None
 
 
 def _validated_dataset(
@@ -358,53 +398,194 @@ def _sha256(value) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
 
-def load_calibration_dataset(
-    corpus: Path, cases: Path, review: Path, parent_review: Path,
-) -> Dataset:
-    """Load a separately human-attested export; never open original case objects.
-
-    Hash linkage identifies the parent review, not a cryptographic membership
-    proof. The split-specific human attestation explicitly supplies that trust.
-    No exporter or review-attestation generator is provided here.
-    """
-    review_hash = file_hash(review)
-    manifest = read_json(review, expected_sha256=review_hash)
-    check(isinstance(manifest, dict)
-          and type(manifest.get("schema_version")) is int and manifest.get("schema_version") == VERSION
-          and manifest.get("artifact_type") == "reviewed-calibration-export"
-          and manifest.get("dataset_scope") == "calibration-only"
-          and manifest.get("split") == "calibration"
-          and manifest.get("reviewed_locally") is True
-          and manifest.get("review_method") == "local-human"
-          and all(manifest.get(key) is True for key in (
-              "membership_reviewed_locally", "calibration_rows_complete",
-              "case_bytes_preserved", "labels_and_sanitization_preserved")),
-          "calibration_export_attestation_invalid")
-    check(all(_sha256(manifest.get(key)) for key in (
-        "corpus_sha256", "cases_sha256", "parent_review_manifest_sha256", "parent_cases_sha256")),
-        "calibration_export_hashes_invalid")
+def _calibration_parent(parent_review: Path, manifest: dict) -> str:
     parent_hash = manifest["parent_review_manifest_sha256"]
     parent = read_json(parent_review, expected_sha256=parent_hash)
     check(isinstance(parent, dict) and type(parent.get("schema_version")) is int and parent.get("schema_version") == VERSION
           and parent.get("reviewed_locally") is True and parent.get("review_method") == "local-human"
           and parent.get("dataset_scope", "full-cohort") == "full-cohort"
-          and parent.get("artifact_type") != "reviewed-calibration-export"
+          and isinstance(parent.get("artifact_type"), (str, type(None)))
+          and parent.get("artifact_type") not in (HUMAN_CALIBRATION_CONTRACT, DERIVED_CALIBRATION_CONTRACT)
           and manifest["parent_cases_sha256"] != manifest["cases_sha256"]
           and parent.get("corpus_sha256") == manifest["corpus_sha256"]
           and parent.get("cases_sha256") == manifest["parent_cases_sha256"],
           "calibration_parent_review_invalid")
+    return parent_hash
+
+
+def _check_mechanical_extraction(evidence: dict, manifest: dict) -> None:
+    """Check the recorded historical operator outcome, without rerunning it."""
+    rows = evidence.get("rows")
+    check(type(evidence.get("schema_version")) is int and evidence["schema_version"] == VERSION
+          and evidence.get("artifact_type") == "mechanical-calibration-extraction-evidence"
+          and evidence.get("expected_digest_origin") == "caller-supplied; authenticity not established by this operator"
+          and evidence.get("source_sha256") == manifest["parent_cases_sha256"]
+          and evidence.get("export_sha256") == manifest["cases_sha256"]
+          and isinstance(rows, dict) and set(rows) == {"calibration", "holdout"}
+          and all(type(value) is int and value > 0 for value in rows.values())
+          and type(manifest.get("case_count")) is int and rows["calibration"] == manifest["case_count"]
+          and sum(rows.values()) <= 100_000
+          and type(evidence.get("source_bytes")) is int and 0 < evidence["source_bytes"] <= 64 * 1024 * 1024
+          and type(evidence.get("source_full_read_passes")) is int and evidence["source_full_read_passes"] == 2
+          and evidence.get("structural_scanning_includes_heldout_bytes") is True
+          and evidence.get("heldout_payload_objects_constructed") is False
+          and evidence.get("non_discriminator_payload_values_interpreted") is False
+          and evidence.get("reviewed_locally") is False and evidence.get("valid_split_review") is False
+          and "review_method" in evidence and evidence["review_method"] is None
+          and evidence.get("calibration_validation_and_genuine_human_review_required") is True
+          and evidence.get("calibration_benchmark_freeze_or_holdout_execution") is False
+          and evidence.get("method_sha256") == REVIEWED_DERIVATION_SOURCES["scripts/extract_memory_calibration.py"]
+          and evidence.get("shared_validation_sha256") == REVIEWED_DERIVATION_SHARED_SOURCES
+          and evidence.get("limits") == {"source_bytes": 64 * 1024 * 1024, "row_bytes": 1024 * 1024,
+                                         "rows": 100_000, "json_depth": 64},
+          "mechanical_extraction_evidence_invalid")
+
+
+def _check_mechanical_execution(execution: dict, evidence: dict, manifest: dict) -> None:
+    """Check the trusted execution transcript's lineage and safety declarations."""
+    rows = evidence["rows"]
+    identity = execution.get("code_identity")
+    counts = execution.get("counts")
+    isolation = execution.get("isolation")
+    preservation = execution.get("preservation")
+    expected_identities = {
+        "parent_review_sha256": manifest["parent_review_manifest_sha256"], "corpus_sha256": manifest["corpus_sha256"],
+        "combined_source_sha256_from_parent_and_verified_by_operator": manifest["parent_cases_sha256"],
+        "calibration_export_sha256": manifest["cases_sha256"], "method_sha256": evidence["method_sha256"],
+    }
+    check(type(execution.get("schema_version")) is int and execution["schema_version"] == VERSION
+          and execution.get("receipt_type") == "phase3-milestone-b-mechanical-preparation"
+          and execution.get("status") == "MECHANICAL_EXPORT_AND_STRICT_PREPARATION_VALIDATION_COMPLETE_HUMAN_REVIEW_PENDING"
+          and execution.get("not_a_calibration_result") is True and "metrics" in execution and execution["metrics"] is None
+          and "failure" not in execution
+          and execution.get("genuine_split_human_review_completed") is False and execution.get("loader_pass_claimed") is False
+          and execution.get("identities") == expected_identities and execution.get("aggregate_split_counts") == rows
+          and isinstance(identity, dict) and identity.get("commit") == REVIEWED_DERIVATION_COMMIT
+          and identity.get("computed_code_hash") == REVIEWED_DERIVATION_CODE_HASH and identity.get("checkout_clean") is True
+          and identity.get("source_file_hashes") == REVIEWED_DERIVATION_SOURCES
+          and isinstance(counts, dict) and type(counts.get("operator_invocations")) is int and counts["operator_invocations"] == 1
+          and counts.get("operator_completed") is True
+          and type(counts.get("verified_heldout_containing_full_read_passes")) is int and counts["verified_heldout_containing_full_read_passes"] == 2
+          and all(type(counts.get(key)) is int and counts[key] == 1 for key in (
+              "strict_calibration_validation_runs", "parent_reviews_revalidated", "corpus_integrity_hash_reads",
+              "corpus_strict_validation_snapshot_reads", "calibration_export_strict_snapshot_reads"))
+          and counts.get("non_discriminator_heldout_values_used") is False
+          and all(type(counts.get(key)) is int and counts[key] == 0 for key in (
+              "case_payload_objects_from_original_combined_constructed", "original_combined_reads_outside_reviewed_operator",
+              "retrieval_benchmark_calibration_runs", "sqlite_chroma_connections", "cache_vector_files_opened",
+              "embedding_model_network_calls", "cutoff_registration_or_selection", "real_freeze_or_holdout_execution",
+              "consumed_ledger_access", "source_edits", "completed_human_attestations_created"))
+          and isinstance(isolation, dict)
+          and isinstance(isolation.get("exact_source_inputs_readonly"), dict)
+          and set(isolation["exact_source_inputs_readonly"]) == {"parent_review", "corpus", "combined_source"}
+          and all(value is True for value in isolation["exact_source_inputs_readonly"].values())
+          and all(isolation.get(key) is True for key in (
+              "code_readonly", "host_root_readonly", "mount_propagation_private", "capabilities_zero", "network_user_namespaces_distinct"))
+          and isinstance(preservation, dict) and preservation.get("heldout_bytes_accessed") is True
+          and type(preservation.get("heldout_containing_full_read_passes")) is int and preservation["heldout_containing_full_read_passes"] == 2
+          and preservation.get("no_heldout_payload_objects_or_per_row_evidence") is True,
+          "mechanical_execution_evidence_invalid")
+
+
+def _mechanical_derivation(
+    manifest: dict, review_hash: str, extraction_evidence: Path | None,
+    execution_evidence: Path | None, trusted_derivation_sha256: str | None,
+) -> tuple[CalibrationDerivation, dict]:
+    """Validate a PIC-pinned transcript, not independently authenticate its author.
+
+    The acceptance digest must be obtained out-of-band from trusted PIC review.
+    Hash agreement alone cannot prove execution or human authority. Historical
+    source pins deliberately do not depend on today's changed loader bytes.
+    """
+    check(_sha256(trusted_derivation_sha256) and trusted_derivation_sha256 == review_hash,
+          "trusted_derivation_acceptance_required")
+    check(manifest.get("derivation_policy") == DERIVATION_POLICY
+          and manifest.get("original_review_trust_anchor_accepted") is True
+          and manifest.get("parent_review_manifest_sha256") == ACCEPTED_PARENT_REVIEW_SHA256
+          and manifest.get("new_split_human_review") is False
+          and manifest.get("reviewed_locally") is False and manifest.get("review_method") is None
+          and "review_method" in manifest and manifest.get("draft") is False
+          and not ({"membership_reviewed_locally", "calibration_rows_complete", "case_bytes_preserved",
+                    "labels_and_sanitization_preserved", "genuine_human_review_evidence"} & manifest.keys()),
+          "mechanical_calibration_contract_invalid")
+    check(extraction_evidence is not None and execution_evidence is not None
+          and all(_sha256(manifest.get(key)) for key in ("extraction_evidence_sha256", "execution_evidence_sha256")),
+          "mechanical_derivation_evidence_required")
+    evidence = read_json(extraction_evidence, expected_sha256=manifest["extraction_evidence_sha256"])
+    execution = read_json(execution_evidence, expected_sha256=manifest["execution_evidence_sha256"])
+    check(isinstance(evidence, dict) and isinstance(execution, dict), "mechanical_derivation_evidence_invalid")
+    _check_mechanical_extraction(evidence, manifest)
+    _check_mechanical_execution(execution, evidence, manifest)
+    return CalibrationDerivation(
+        review_hash, manifest["extraction_evidence_sha256"], manifest["execution_evidence_sha256"],
+        REVIEWED_DERIVATION_COMMIT, REVIEWED_DERIVATION_CODE_HASH, evidence["method_sha256"],
+        tuple(sorted(REVIEWED_DERIVATION_SHARED_SOURCES.items())),
+    ), execution
+
+
+def _check_mechanical_validation(execution: dict, dataset: Dataset) -> None:
+    validation = execution.get("strict_preparation_validation")
+    check(isinstance(validation, dict)
+          and validation.get("status") == "STRICT_PREPARATION_CHECKS_PASSED"
+          and validation.get("not_a_reviewed_dataset_or_calibration_result") is True
+          and type(validation.get("corpus_records")) is int and validation["corpus_records"] == len(dataset.records)
+          and type(validation.get("calibration_cases")) is int and validation["calibration_cases"] == len(dataset.cases)
+          and type(validation.get("positive_memory_ids")) is int
+          and validation["positive_memory_ids"] == len({identifier for case in dataset.cases for identifier in case["expected_memory_ids"] + case["acceptable_memory_ids"]})
+          and type(validation.get("abstention_cases")) is int and validation["abstention_cases"] == sum(case["must_abstain"] for case in dataset.cases)
+          and all(validation.get(key) is True for key in (
+              "required_category_combinations", "unique_normalized_questions", "scope_date_lifecycle_references_cwd_labels",
+              "all_rows_calibration", "final_loader_not_run_without_genuine_split_review")),
+          "mechanical_preparation_validation_mismatch")
+
+
+def load_calibration_dataset(
+    corpus: Path, cases: Path, review: Path, parent_review: Path, *,
+    extraction_evidence: Path | None = None, execution_evidence: Path | None = None,
+    trusted_derivation_sha256: str | None = None,
+) -> Dataset:
+    """Dispatch explicit calibration provenance; never open original case objects.
+
+    Human split review remains supported. The mechanical contract instead uses
+    the user-accepted original anchor and PIC-pinned historical execution. It
+    records NO new human event and does not authenticate the PIC independently.
+    """
+    check(review.stat().st_size <= 8_000_000, "json_file_too_large")
+    review_hash = file_hash(review)
+    manifest = read_json(review, expected_sha256=review_hash)
+    check(isinstance(manifest, dict) and type(manifest.get("schema_version")) is int
+          and manifest.get("schema_version") == VERSION and manifest.get("dataset_scope") == "calibration-only"
+          and manifest.get("split") == "calibration", "calibration_export_attestation_invalid")
+    contract = manifest.get("artifact_type")
+    derivation = execution = None
+    if contract != DERIVED_CALIBRATION_CONTRACT:
+        check(extraction_evidence is None and execution_evidence is None and trusted_derivation_sha256 is None,
+              "unused_mechanical_derivation_inputs")
+        check(contract == HUMAN_CALIBRATION_CONTRACT and manifest.get("reviewed_locally") is True
+              and manifest.get("review_method") == "local-human"
+              and all(manifest.get(key) is True for key in (
+                  "membership_reviewed_locally", "calibration_rows_complete", "case_bytes_preserved",
+                  "labels_and_sanitization_preserved")), "calibration_export_attestation_invalid")
+    check(all(_sha256(manifest.get(key)) for key in (
+        "corpus_sha256", "cases_sha256", "parent_review_manifest_sha256", "parent_cases_sha256")),
+        "calibration_export_hashes_invalid")
+    if contract == DERIVED_CALIBRATION_CONTRACT:
+        derivation, execution = _mechanical_derivation(
+            manifest, review_hash, extraction_evidence, execution_evidence, trusted_derivation_sha256,
+        )
+    parent_hash = _calibration_parent(parent_review, manifest)
     dataset = _validated_dataset(
-        corpus, cases, required_split="calibration", corpus_hash=manifest["corpus_sha256"],
-        cases_hash=manifest["cases_sha256"],
+        corpus, cases, required_split="calibration", corpus_hash=manifest["corpus_sha256"], cases_hash=manifest["cases_sha256"],
     )
-    check(type(manifest.get("case_count")) is int and manifest["case_count"] == len(dataset.cases),
-          "calibration_export_count_mismatch")
+    check(type(manifest.get("case_count")) is int and manifest["case_count"] == len(dataset.cases), "calibration_export_count_mismatch")
     check(len(dataset.cases) >= 15, "calibration_export_too_small")
     _validate_private_split(dataset.cases, "calibration")
-    check(len({question_key(case, dataset.records) for case in dataset.cases}) == len(dataset.cases),
-          "duplicate_private_question_inputs")
+    check(len({question_key(case, dataset.records) for case in dataset.cases}) == len(dataset.cases), "duplicate_private_question_inputs")
+    if execution is not None:
+        _check_mechanical_validation(execution, dataset)
     return replace(dataset, review_manifest_hash=review_hash, dataset_scope="calibration-only",
-                   parent_review_manifest_hash=parent_hash, parent_cases_hash=manifest["parent_cases_sha256"])
+                   parent_review_manifest_hash=parent_hash, parent_cases_hash=manifest["parent_cases_sha256"],
+                   calibration_provenance_contract=contract, derivation=derivation)
 
 
 def measure(case: dict, hits: list[dict], records: dict[str, MemoryRecord], k: int) -> dict:

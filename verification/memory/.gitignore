@@ -15,5 +15,6 @@
 !verify_fts_payload.py
 !verify_semantic_candidates.py
 !verify_calibration_loader.py
+!verify_derived_calibration.py
 !verify_calibration_extractor.py
 !phase3-synthetic-summary.json

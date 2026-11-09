@@ -45,6 +45,10 @@ from scripts.migrate_chroma_memory_to_sqlite import (
 
 ASSETS = ROOT / "verification/memory"
 MODES = {"chroma", "sqlite", "sqlite-expand", "sqlite-rerank"}
+CALIBRATION_EVIDENCE_FIELDS = (
+    "calibration_export_sha256", "parent_review_manifest_sha256", "parent_cases_sha256",
+    "calibration_provenance_contract", "calibration_derivation",
+)
 
 
 def private_path(value: Path) -> Path:
@@ -255,32 +259,47 @@ def load_run_dataset(args, corpus: Path, cases: Path, review: Path | None) -> Da
     """Choose the explicit artifact contract before parsing any case file."""
     scope = getattr(args, "dataset_scope", "full-cohort")
     parent_review = getattr(args, "parent_review_manifest", None)
+    extraction = getattr(args, "derivation_extraction_evidence", None)
+    execution = getattr(args, "derivation_execution_evidence", None)
+    trusted = getattr(args, "trusted_derivation_sha256", None)
     if scope == "calibration-only":
         check(args.split == "calibration" and args.freeze_manifest is None,
               "calibration_only_run_required")
         check(review is not None and parent_review is not None,
               "calibration_export_reviews_required")
-        return load_calibration_dataset(corpus, cases, review, input_path(parent_review))
-    check(scope == "full-cohort" and parent_review is None, "invalid_dataset_scope_inputs")
+        return load_calibration_dataset(
+            corpus, cases, review, input_path(parent_review),
+            extraction_evidence=input_path(extraction) if extraction is not None else None,
+            execution_evidence=input_path(execution) if execution is not None else None,
+            trusted_derivation_sha256=trusted,
+        )
+    check(scope == "full-cohort" and parent_review is None and extraction is None and execution is None and trusted is None,
+          "invalid_dataset_scope_inputs")
     return load_dataset(corpus, cases, review)
 
 
 def dataset_evidence(dataset: Dataset) -> dict:
+    derivation = asdict(dataset.derivation) if dataset.derivation is not None else None
+    if derivation is not None:
+        derivation["shared_source_hashes"] = dict(dataset.derivation.shared_source_hashes)
     return {"dataset_scope": dataset.dataset_scope,
+            "dataset_provenance_kind": "full-cohort" if dataset.dataset_scope == "full-cohort" else "calibration-only",
+            "calibration_provenance_contract": dataset.calibration_provenance_contract,
+            "calibration_derivation": derivation,
             "calibration_export_sha256": dataset.cases_hash if dataset.dataset_scope == "calibration-only" else None,
             "parent_review_manifest_sha256": dataset.parent_review_manifest_hash,
             "parent_cases_sha256": dataset.parent_cases_hash}
 
 
 def _full_cohort_report(report: dict) -> bool:
-    return report.get("dataset_scope", "full-cohort") == "full-cohort" and all(
-        report.get(key) is None for key in (
-            "calibration_export_sha256", "parent_review_manifest_sha256", "parent_cases_sha256"))
+    return (isinstance(report, dict) and report.get("dataset_scope") == "full-cohort" and report.get("dataset_provenance_kind") == "full-cohort"
+            and all(key in report and report[key] is None for key in CALIBRATION_EVIDENCE_FIELDS))
 
 
 def frozen_protocol(report: dict, embedding: dict) -> dict:
     check(_full_cohort_report(report), "calibration_only_freeze_unsupported")
-    return {"k": report["k"], "warmups": report["warmups"], "repetitions": report["repetitions"],
+    return {**{key: report[key] for key in ("dataset_scope", "dataset_provenance_kind", *CALIBRATION_EVIDENCE_FIELDS)},
+            "k": report["k"], "warmups": report["warmups"], "repetitions": report["repetitions"],
             "sqlite_source_sha256": report["sqlite_source_sha256"],
             "chroma_source_fingerprint": report["chroma_source_fingerprint"],
             "collection_sha256": report["collection_sha256"],
@@ -293,7 +312,8 @@ def frozen_protocol(report: dict, embedding: dict) -> dict:
 
 def reserve_holdout(freeze: dict, dataset: Dataset, identity: dict) -> str:
     check(dataset.dataset_scope == "full-cohort" and dataset.parent_review_manifest_hash is None
-          and dataset.parent_cases_hash is None, "calibration_only_holdout_forbidden")
+          and dataset.parent_cases_hash is None and dataset.calibration_provenance_contract is None
+          and dataset.derivation is None, "calibration_only_holdout_forbidden")
     check(freeze.get("schema_version") == 1 and freeze.get("corpus_sha256") == dataset.corpus_hash
           and freeze.get("cases_sha256") == dataset.cases_hash and freeze.get("code_hash") == identity["code_hash"]
           and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash
@@ -333,13 +353,29 @@ def input_evidence(args, dataset: Dataset, modes: list[str]):
         check(file_hash(parent_path) == dataset.parent_review_manifest_hash,
               "calibration_parent_review_changed_after_loading")
     else:
-        check(getattr(args, "parent_review_manifest", None) is None, "invalid_dataset_scope_inputs")
+        check(getattr(args, "parent_review_manifest", None) is None
+              and getattr(dataset, "calibration_provenance_contract", None) is None
+              and getattr(dataset, "derivation", None) is None, "invalid_dataset_scope_inputs")
+    derivation = getattr(dataset, "derivation", None)
+    extraction = getattr(args, "derivation_extraction_evidence", None)
+    execution = getattr(args, "derivation_execution_evidence", None)
+    trusted = getattr(args, "trusted_derivation_sha256", None)
+    if derivation is not None:
+        check(scope == "calibration-only" and extraction is not None and execution is not None
+              and trusted == derivation.trusted_acceptance_hash == dataset.review_manifest_hash,
+              "mechanical_derivation_inputs_changed")
+        read_json(input_path(extraction), expected_sha256=derivation.extraction_evidence_hash)
+        read_json(input_path(execution), expected_sha256=derivation.execution_evidence_hash)
+    else:
+        check(extraction is None and execution is None and trusted is None, "unused_mechanical_derivation_inputs")
     if not dataset.synthetic:
         check(args.review_manifest is not None and dataset.review_manifest_hash is not None,
               "private_review_evidence_missing")
         review = input_path(args.review_manifest)
         check(file_hash(review) == dataset.review_manifest_hash,
               "review_manifest_changed_after_loading")
+        if derivation is not None:
+            read_json(review, expected_sha256=derivation.trusted_acceptance_hash)
     cache = None
     cache_hash = None
     if args.embedding_source == "cache":
@@ -365,7 +401,7 @@ def input_evidence(args, dataset: Dataset, modes: list[str]):
               "holdout_freeze_and_baseline_required")
         freeze = read_json(input_path(args.freeze_manifest))
         protocol = freeze.get("protocol") if isinstance(freeze, dict) else None
-        check(isinstance(protocol, dict)
+        check(isinstance(protocol, dict) and _full_cohort_report(protocol)
               and "embedding_cache_sha256" in protocol
               and "review_manifest_sha256" in protocol
               and "document_vector_cache_sha256" in protocol
@@ -690,6 +726,9 @@ def main() -> int:
     run.add_argument("--dataset-scope", choices=("full-cohort", "calibration-only"), default="full-cohort",
                      help="Calibration-only requires a separate reviewed export, never combined case filtering.")
     run.add_argument("--parent-review-manifest", type=Path)
+    run.add_argument("--derivation-extraction-evidence", type=Path)
+    run.add_argument("--derivation-execution-evidence", type=Path)
+    run.add_argument("--trusted-derivation-sha256", help="PIC-trusted acceptance-record digest obtained out-of-band")
     run.add_argument("--review-manifest", type=Path)
     run.add_argument("--freeze-manifest", type=Path)
     run.add_argument("--chroma-source", type=Path)
@@ -739,6 +778,9 @@ def main() -> int:
                 inputs.append(review)
             if args.parent_review_manifest is not None:
                 inputs.append(input_path(args.parent_review_manifest))
+            for artifact in (args.derivation_extraction_evidence, args.derivation_execution_evidence):
+                if artifact is not None:
+                    inputs.append(input_path(artifact))
             output = new_output(args.output, inputs)
             dataset = load_run_dataset(args, corpus, cases, review)
             report = run_benchmark(args, dataset, output)

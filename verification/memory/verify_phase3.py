@@ -27,7 +27,7 @@ from AgentCrew.modules.memory.benchmark import (
 )
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
 from scripts.benchmark_memory_retrieval import (
-    ASSETS, ChromaBaseline, acceptance, code_identity, freeze_calibration, input_evidence,
+    ASSETS, ChromaBaseline, acceptance, code_identity, dataset_evidence, freeze_calibration, input_evidence,
     private_path, reserve_holdout, run_benchmark, signature, synthetic_embedding,
 )
 from scripts.migrate_chroma_memory_to_sqlite import MigrationError, _private_directory, _write_json as write_json
@@ -205,7 +205,7 @@ def checks_input_evidence(folder, dataset, review):
     write_jsonl(cache, [{"schema_version": 1, "query_sha256": "0" * 64,
                         "embedding": [0.5, 0.5], "fixture_only": True}])
     cache_bytes, review_bytes = cache.read_bytes(), review.read_bytes()
-    report = {**code_identity(), "schema_version": 1, "synthetic": False,
+    report = {**code_identity(), **dataset_evidence(dataset), "schema_version": 1, "synthetic": False,
               "fixture_only": True, "split": "calibration", "selected_cases": 16,
               "corpus_sha256": dataset.corpus_hash, "cases_sha256": dataset.cases_hash,
               "sqlite_source_sha256": "1" * 64, "chroma_source_fingerprint": "2" * 64,

@@ -266,7 +266,10 @@ def checks_benchmark_evidence(folder):
     review = folder / "fictional-review.json"
     review.write_text("{}\n")
     dataset = SimpleNamespace(synthetic=False, review_manifest_hash=file_hash(review))
-    report = {"k": 5, "warmups": 0, "repetitions": 1, "sqlite_source_sha256": "1" * 64,
+    report = {"dataset_scope": "full-cohort", "dataset_provenance_kind": "full-cohort",
+              "calibration_provenance_contract": None, "calibration_derivation": None,
+              "calibration_export_sha256": None, "parent_review_manifest_sha256": None, "parent_cases_sha256": None,
+              "k": 5, "warmups": 0, "repetitions": 1, "sqlite_source_sha256": "1" * 64,
               "chroma_source_fingerprint": "2" * 64, "collection_sha256": "3" * 64,
               "embedding_cache_sha256": None, "review_manifest_sha256": file_hash(review),
               "document_vector_cache_sha256": file_hash(vector_path), "sqlite_semantic_policy": asdict(FIXTURE_POLICY)}

@@ -141,6 +141,50 @@ API/grammar references (no network lookup required for this offline slice): [RFC
 
 **Stop at Architect method review.** No private extraction/preparation, calibration/cutoff grid, embedding, real freeze, heldout execution/retry, ledger access, rollout, or Phases 4–5 occurred. A genuinely reviewed calibration export and later fresh, reviewed, semantically non-overlapping holdout remain gates. Production stays Chroma, semantic cutoff stays unset, and Phase 3/MEM-002/MEM-307 stay blocked/open.
 
+### Accepted-original-review mechanical contract — code-only milestone (2026-11-09)
+
+The user explicitly approved a truthful alternative for **calibration only**: accept the original human-reviewed cohort as the trust anchor and rely on its reviewed mechanical subset derivation, **without claiming a new human review**. `load_calibration_dataset` now dispatches by an explicit artifact type. The existing `reviewed-calibration-export` split-human-review contract and full-cohort per-case/holdout checks remain supported. No existing pending packet, original manifest, execution receipt, historical report or consumed freeze is rewritten or relabeled.
+
+The new `mechanically-derived-calibration-export` contract is deliberately narrow:
+
+1. Policy `accepted-original-review-mechanical-subset-2610c828-v1` pins the original parent review's already-published identity (`Finalized local-human review manifest` below), approved derivation commit `2610c82885bd33085f55b3712d23fc20fbaa1113`, code identity `fb3c44757827f959dcbfa7d3cc0bd49a058c4363a9ea4163b6166df527bcf214`, method source, historical shared sources and complete historical source bundle. A new parent or method requires an explicit reviewed policy change, not caller-selected replacement hashes.
+2. Supply a **new, separately PIC-reviewed acceptance record** as `--review-manifest`, plus `--trusted-derivation-sha256` obtained from that trusted review **out of band**. Do not hash an unchecked candidate and call it trusted. This parameter is a trust input, not a signature or independent PIC authentication. The loader cannot distinguish an honest trusted operator from one intentionally blessing forged receipts. User acceptance of the original review is a governance assumption, not newly established human authenticity.
+3. Explicitly supply `--derivation-extraction-evidence` and `--derivation-execution-evidence` in addition to corpus, calibration-only export and original `--parent-review-manifest`. No referenced path is followed automatically. Bounded hash-checked JSON snapshots bind each extra artifact; actual corpus/export bytes are checked by the shared strict validators. Missing, changed, malformed, wrong-role or inconsistent evidence fails before backend setup/reservation. Original combined cases, caches and ledgers are never needed for this path.
+4. Operator evidence must declare a completed two-pass source/export identity check, both positive split counts, matching export count, correct historical method/shared identities, structural heldout-byte access, no heldout payload objects, and explicitly unreviewed mechanical flags. Execution evidence must match source/export/corpus/parent/method identities, reviewed historical code bundle, exactly one completed operator invocation, strict preparation validation, read-only/isolation declarations, preservation declarations and zero forbidden operational counters. The current loader independently repeats strict validation **only on the supplied calibration export/corpus**; it does not re-execute or cryptographically prove the recorded extraction. Trusted PIC review of the existing execution transcript is essential.
+5. Historical operator wording that human review was still required and historical pending packets remain unchanged. This *new* acceptance record states the separately approved alternative; it must not contain the legacy split-human membership/completeness/preservation confirmation fields. It explicitly has `reviewed_locally=false`, `review_method=null`, `new_split_human_review=false`, `draft=false`, and `original_review_trust_anchor_accepted=true`. `draft=false` means the mechanical acceptance record is complete, not that a human reviewed new cases. No acceptance-record generator or authority impersonation is added.
+
+Illustrative record shape only (placeholders are intentionally invalid hashes, **not** a usable attestation or private preparation result):
+
+```json
+{
+  "schema_version": 1,
+  "artifact_type": "mechanically-derived-calibration-export",
+  "dataset_scope": "calibration-only",
+  "split": "calibration",
+  "derivation_policy": "accepted-original-review-mechanical-subset-2610c828-v1",
+  "original_review_trust_anchor_accepted": true,
+  "new_split_human_review": false,
+  "reviewed_locally": false,
+  "review_method": null,
+  "draft": false,
+  "case_count": 16,
+  "corpus_sha256": "<actual unchanged corpus hash>",
+  "cases_sha256": "<actual calibration export hash>",
+  "parent_review_manifest_sha256": "<fixed published accepted parent hash>",
+  "parent_cases_sha256": "<original combined identity from parent>",
+  "extraction_evidence_sha256": "<reviewed extraction receipt hash>",
+  "execution_evidence_sha256": "<reviewed execution receipt hash>"
+}
+```
+
+The same `--dataset-scope calibration-only --split calibration` route is used. Human split review rejects unused mechanical inputs, as does full-cohort mode. All existing calibration minima (15 cases, five positive IDs, two abstentions), category combinations, reviewed/non-draft original labels, privacy/schema, scope/date/lifecycle/references/CWD checks, duplicate IDs and normalized questions remain strict. A mixed/heldout row is rejected, never filtered. No reviewed Dataset is fabricated to skip these controls.
+
+Reports separately bind the actual acceptance/export/parent identities and `calibration_derivation` (trusted acceptance digest, extraction/execution digests, historical commit/code/method/shared identities, policy, `new_split_human_review=false`, explicit trust limitation). The current benchmark `code_hash` is independently current; changed loader source does **not** require rewriting historical execution/benchmark.py hashes. Pre-backend evidence checks detect changes to supplied acceptance/parent/derivation artifacts. Full-cohort report/protocol evidence now requires explicit positive scope/kind markers and all calibration fields present-and-null: deleting provenance does not silently grant full-cohort status. Old manifests missing these markers are not silently upgraded. Derived calibration remains barred from freeze, holdout reservation and Phase 3 acceptance regardless of split/scope marker edits. No limited-input/fresh-holdout protocol has been added.
+
+Fictional verifier: `verification/memory/verify_derived_calibration.py` reuses the existing fixture/strict-validation checks, checks unchanged raw case bytes/labels, accepted chain versus missing/wrong-role/hash/method/count/parent/evidence failures, snapshot and post-load mutation, invalid private cases, CLI input binding, historical/current identity separation, and barriers before mocked backends/reservation. Existing human/full-cohort/extractor/retrieval checks remain required. All source and fixtures are disposable/public; no private Milestone B artifacts are read or copied by this implementation slice. No extraction repeat, real freeze, ledger, calibration, embeddings, cutoff registration or quality/performance claim occurs.
+
+**Stop for Architect source review.** No private derived-loader pass or completed Phase 3 is claimed. The next private validation and any bounded cached-vector calibration resumption require the coordinating Architect's reviewed execution slice. Fresh one-use semantically non-overlapping human-reviewed holdout requirements, unchanged acceptance gates, consumed-holdout prohibition, production Chroma, unset SQLite cutoff, open Phase 3/MEM-002/MEM-307 and unauthorized rollout/Phases 4–5 are unchanged.
+
 ## Phase 1 read-only prototype
 
 Implementation files:

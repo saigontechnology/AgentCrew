@@ -121,7 +121,9 @@ def checks_loader(folder):
             and dataset.parent_review_manifest_hash == file_hash(parent), "Limited input identity lost")
     require(tuple(cases) == dataset.cases, "Export labels or query sanitization were rewritten")
     require(runner.dataset_evidence(dataset) == {
-        "dataset_scope": "calibration-only", "calibration_export_sha256": file_hash(exported),
+        "dataset_scope": "calibration-only", "dataset_provenance_kind": "calibration-only",
+        "calibration_provenance_contract": benchmark.HUMAN_CALIBRATION_CONTRACT, "calibration_derivation": None,
+        "calibration_export_sha256": file_hash(exported),
         "parent_review_manifest_sha256": file_hash(parent), "parent_cases_sha256": attestation["parent_cases_sha256"],
     }, "Report provenance does not identify actual export and parent separately")
     with patch.object(runner, "input_path", lambda path: path):
