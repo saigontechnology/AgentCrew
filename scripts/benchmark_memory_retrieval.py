@@ -31,8 +31,9 @@ sys.path.insert(0, str(ROOT))
 from AgentCrew.modules.memory.benchmark import (
     BenchmarkError, Calls, Dataset, FakeAdapter, POLICY, PROMPT, RemoteJSONAdapter,
     aggregate, check, digest, encode, evaluate_answer, expand_queries, file_hash,
-    load_dataset, measure, percentile, query_from_case, read_json, read_jsonl,
-    record_from_row, rerank_hits, scope_eligible, lifecycle_eligible, question_key,
+    cached_query_vector, load_dataset, local_document_vectors, measure, percentile,
+    query_from_case, read_json, read_jsonl, record_from_row, rerank_hits,
+    scope_eligible, lifecycle_eligible, question_key,
 )
 from AgentCrew.modules.memory.retrieval import MemorySearchCoordinator
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
@@ -92,8 +93,8 @@ def signature(hits: list[dict]):
     return [{key: hit.get(key) for key in ("memory_id", "citation", "score", "reasons")} for hit in hits]
 
 
-def sqlite_hits(coordinator, case, k: int) -> list[dict]:
-    result = coordinator.search(query_from_case(case, k))
+def sqlite_hits(coordinator, case, k: int, query_vector=None) -> list[dict]:
+    result = coordinator.search(query_from_case(case, k, query_vector))
     return [{**asdict(hit), "citation": hit.citation, "cwd_label": hit.cwd if hit.cwd is not None else "Unknown (legacy memory)"} for hit in result.hits]
 
 
@@ -349,6 +350,15 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
     repository = SQLiteMemoryRepository(sqlite_source, read_only=True)
     assert_candidate(repository, dataset)
     sqlite_before = file_hash(sqlite_source)
+    if args.document_vector_cache is not None:
+        vector_path = input_path(args.document_vector_cache)
+        document_vectors = local_document_vectors(read_jsonl(vector_path))
+        if document_vectors:
+            destination = output / "sqlite-semantic-candidate.sqlite3"
+            with closing(sqlite3.connect(sqlite_source.resolve().as_uri() + "?mode=ro", uri=True)) as origin, closing(sqlite3.connect(destination)) as target:
+                origin.backup(target)
+            repository = SQLiteMemoryRepository(destination)
+            repository.copy_local_document_vectors(document_vectors)
     identity = code_identity()
     calls = Calls()
     coordinator = MemorySearchCoordinator(repository)
@@ -395,7 +405,8 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
                 queries = expand_queries(adapter, case["query"], synthetic=dataset.synthetic, calls=calls, budget=args.model_call_budget)
             by_id, scores = {}, defaultdict(float)
             for text in queries:
-                for rank, hit in enumerate(sqlite_hits(coordinator, {**case, "query": text}, args.k), 1):
+                vector = cached_query_vector(cache_rows, text)
+                for rank, hit in enumerate(sqlite_hits(coordinator, {**case, "query": text}, args.k, vector), 1):
                     key = hit["memory_id"]
                     check(scope_eligible(dataset.records[key], case) and lifecycle_eligible(dataset.records[key]), "assisted_scope_violation")
                     by_id.setdefault(key, hit)
@@ -606,6 +617,7 @@ def main() -> int:
     run.add_argument("--collection", default="conversation")
     run.add_argument("--embedding-source", choices=("disabled", "cache", "configured", "synthetic-hash"))
     run.add_argument("--embedding-cache", type=Path)
+    run.add_argument("--document-vector-cache", type=Path)
     run.add_argument("--allow-remote-embeddings", action="store_true")
     run.add_argument("--allow-remote-llm", action="store_true")
     run.add_argument("--adapter", choices=("fake", "remote"))
@@ -639,6 +651,8 @@ def main() -> int:
             inputs = [corpus, cases, sqlite]
             if args.chroma_source:
                 inputs.append(private_path(args.chroma_source))
+            if args.document_vector_cache:
+                inputs.append(input_path(args.document_vector_cache))
             output = new_output(args.output, inputs)
             review = input_path(args.review_manifest) if args.review_manifest else None
             dataset = load_dataset(corpus, cases, review)

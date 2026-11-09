@@ -12,6 +12,18 @@ Calibration used the existing harness once, under network-namespace isolation: m
 
 Holdout ran once through the harness and was consumed before execution. It must not be retried. SQLite warm p50/p95 were 30.41/64.66 ms, so the p95 gate passed. Precision@5 was .1625 versus Chroma .175, within 5 percentage points. Abstention, leak, duplicate, and backend-error gates passed. **Recall@5 failed: SQLite 0.9285714285714286 < Chroma 1.0.** Architect/PIC rejected Phase 3 acceptance on 2026-11-07. The sequence was valid and complete, but a later generic continue does not waive this gate, authorize a retry, or permit threshold tuning on the consumed holdout. Phase 3, MEM-307, and MEM-002 stay open. Phases 4–5 did not start.
 
+### Semantic candidate amendment — implementation present, not measured (2026-11-07)
+
+The user authorized this implementation slice on 2026-11-07. The code now exists in the SQLite repository and retrieval coordinator. Phase 3 remains rejected. Measurement, embeddings, freeze, holdout retry, and Phases 4–5 remain unauthorized.
+
+SQLite can store existing local 1024-dimensional document vectors in optional table `memory_document_vector` and use them as one semantic candidate source beside exact ID, entity, tag, and FTS. Schema version stays 1. Existing databases without the table remain valid. No vector extension, no new embeddings, no document egress, and no separate vector database. A semantic hit is not discarded only for failing the lexical overlap floor. Cosine distance greater than frozen Chroma cutoff `VOYAGE_RELEVANT_THRESHOLD` (1) is rejected. Equal RRF scores break ties by that distance before record ID. The benchmark can pass a cached 1024-float query vector and copy already-stored local document vectors into a disposable SQLite candidate; a missing cache vector stays lexical. The consumed holdout remains sealed.
+
+Fictional verification, with no private corpus:
+
+```bash
+uv run --no-project --no-config --offline --python ../AgentCrew/.venv/bin/python python verification/memory/verify_semantic_candidates.py
+```
+
 | Gate | Calibration | Holdout |
 | --- | --- | --- |
 | Zero scope/session/deletion/lifecycle leaks | pass | pass |

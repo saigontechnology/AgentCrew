@@ -16,6 +16,7 @@ The authorized Phase 3 completion sequence then built combined cache `f6cb3feaâ€
 
 - Use Python's standard `sqlite3` module and SQLite FTS5.
 - Do not require a SQLite vector extension or a separate vector database.
+- PIC approved on 2026-11-07 a narrow exception, and the user authorized its implementation on 2026-11-07. The code now stores optional local 1024-dimensional document vectors and can use them as a semantic candidate source. This does not accept Phase 3 and does not authorize embeddings, measurement, a holdout retry, or Phases 4â€“5.
 - Allow optional, bounded LLM query expansion and reranking.
 - Improve `search_memory` first. Decide automatic memory injection only after retrieval quality is measured.
 - Preserve the current default sharing boundary: memories are scoped to an agent and may be recalled across sessions.
@@ -24,6 +25,14 @@ The authorized Phase 3 completion sequence then built combined cache `f6cb3feaâ€
 - Do not use CWD as an eligibility filter or ranking boost in the first release.
 - Preserve adaptive behaviors as a separate trusted mechanism. Recalled conversation memory is untrusted historical data and cannot grant permission.
 - Create the implementation plan now. Implement the migration and benchmark only after this plan is approved.
+
+### Semantic candidate source â€” implementation present, not measured (2026-11-07)
+
+The user authorized this implementation slice on 2026-11-07 so Phase 3 can later be completed. The code now exists. Phase 3 remains rejected. MEM-307 and MEM-002 stay open. Embeddings, measurement, holdout retry, and Phase 4 remain unauthorized.
+
+SQLite can store existing local 1024-dimensional document vectors in the optional `memory_document_vector` table and score them beside exact ID, entity, tag, and FTS. Schema version stays 1. Existing databases without the table remain valid. Vectors are copied only by an explicit local-vector copy step; documents are not re-embedded. No vector extension and no separate database. A semantic hit is not dropped only for missing the lexical overlap floor (`min_overlap` 0.35 and `relative_coverage` 0.7). The distance cutoff is `VOYAGE_RELEVANT_THRESHOLD` (1) from `voyageai_ef.py`: cosine distance greater than that cutoff is rejected, matching the Chroma baseline. Equal RRF scores break ties by that cosine distance before record ID; a missing semantic distance sorts after any finite in-cutoff distance. The benchmark can pass an already-cached 1024-float query vector into SQLite and copy already-stored local document vectors into a disposable candidate. This slice does not measure recall and does not close Phase 3.
+
+The consumed holdout stays failed evidence. The first later measurement, if separately authorized, is a calibration-only non-regression check on the existing calibration cache. That check cannot pass Phase 3. A fresh, non-overlapping holdout is still required before Phase 4.
 
 ## Goals
 
@@ -39,7 +48,7 @@ The authorized Phase 3 completion sequence then built combined cache `f6cb3feaâ€
 
 - Automatic memory injection in this delivery.
 - Project-scoped memory filtering.
-- A vector extension, Python-side vector scan, or separate vector database.
+- A vector extension or a separate vector database. The 2026-11-07 amendment allows a future bounded local score over vectors already stored with the SQLite records. It does not authorize that code yet.
 - Replacing `ContextPersistenceService`, conversation history, prompt evolution, or tool-result summaries.
 - Building a general knowledge graph or copying Mercury's complete belief model.
 - Changing provider selection, model definitions, model pins, or model-selection policy.

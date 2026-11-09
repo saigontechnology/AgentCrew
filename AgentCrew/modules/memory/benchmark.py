@@ -134,17 +134,58 @@ def record_from_row(row: dict) -> MemoryRecord:
     return record
 
 
-def query_from_case(case: dict, k: int) -> MemoryQuery:
+def query_from_case(case: dict, k: int, query_vector: tuple[float, ...] | None = None) -> MemoryQuery:
     try:
         return MemoryQuery(
             query=case["query"], agent_name=case["agent_name"],
             current_session_id=case["current_session_id"],
             from_date=date.fromisoformat(case["from_date"]) if case.get("from_date") else None,
             to_date=date.fromisoformat(case["to_date"]) if case.get("to_date") else None,
-            kinds=tuple(case["kinds"]), limit=k,
+            kinds=tuple(case["kinds"]), limit=k, query_vector=query_vector,
         )
     except (KeyError, TypeError, ValueError):
         raise BenchmarkError("invalid_case_query_scope") from None
+
+
+def _stored_vector(value) -> tuple[float, ...] | None:
+    if (
+        not isinstance(value, list)
+        or len(value) != 1024
+        or any(type(item) not in (int, float) or not math.isfinite(item) for item in value)
+    ):
+        return None
+    return tuple(float(item) for item in value)
+
+
+def cached_query_vector(cache_rows, query: str) -> tuple[float, ...] | None:
+    """Return one already-cached 1024-float query vector, or None to stay lexical."""
+    if not cache_rows or not isinstance(query, str):
+        return None
+    key = digest(query)
+    matches = [
+        item for item in cache_rows
+        if isinstance(item, dict) and item.get("query_sha256") == key and "embedding" in item
+    ]
+    if not matches:
+        return None
+    vector = _stored_vector(matches[0].get("embedding"))
+    if vector is None or any(_stored_vector(item.get("embedding")) != vector for item in matches):
+        return None
+    return vector
+
+
+def local_document_vectors(rows) -> dict[str, tuple[float, ...]]:
+    """Validate already-stored local document vectors. Does not embed or open a database."""
+    vectors = {}
+    for item in rows:
+        check(isinstance(item, dict) and item.get("schema_version") == 1, "invalid_document_vector_cache")
+        check(item.get("provenance") == "local-stored-document", "invalid_document_vector_cache")
+        memory_id = item.get("memory_id")
+        vector = _stored_vector(item.get("embedding"))
+        check(isinstance(memory_id, str) and memory_id.strip() and memory_id not in vectors, "invalid_document_vector_cache")
+        check(vector is not None, "invalid_document_vector_cache")
+        vectors[memory_id] = vector
+    return vectors
 
 
 def question_key(case: dict, records: dict[str, MemoryRecord]) -> str:

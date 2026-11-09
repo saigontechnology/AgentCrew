@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, time
 from dataclasses import asdict
@@ -9,16 +10,23 @@ import json
 import math
 from pathlib import Path
 import sqlite3
+import struct
 from typing import Iterator
 
 from .record_parser import checksum, derive_memory_units, normalize_text
 from .types import (
-    CandidateBatch, CandidateSource, MatchReason, MemoryCandidate, MemoryQuery,
-    MemoryRecord, ParsedMemory, RetrievalUnit,
+    DOCUMENT_VECTOR_DIMENSIONS, CandidateBatch, CandidateSource, MatchReason,
+    MemoryCandidate, MemoryQuery, MemoryRecord, ParsedMemory, RetrievalUnit,
 )
 
 
 SCHEMA_VERSION = 1
+VECTOR_TABLE = "memory_document_vector"
+VECTOR_TABLE_SQL = f"""CREATE TABLE {VECTOR_TABLE} (
+    memory_id TEXT PRIMARY KEY REFERENCES memory_record(id) ON DELETE CASCADE,
+    dimensions INTEGER NOT NULL CHECK(dimensions={DOCUMENT_VECTOR_DIMENSIONS}),
+    vector BLOB NOT NULL
+)"""
 SCHEMA = (
     "CREATE TABLE schema_version (version INTEGER PRIMARY KEY)",
     """CREATE TABLE memory_record (
@@ -458,6 +466,49 @@ class SQLiteMemoryRepository:
             values.extend([query.as_of, query.as_of])
         return " AND ".join(clauses), values
 
+    def copy_local_document_vectors(self, vectors: Mapping[str, Sequence[float]]) -> int:
+        """Store already-materialized local vectors. Does not embed or open a network."""
+        if not isinstance(vectors, Mapping) or not vectors:
+            raise ValueError("Local document vectors must be a nonempty mapping")
+        encoded = []
+        for memory_id, vector in vectors.items():
+            if not isinstance(memory_id, str) or not memory_id.strip():
+                raise ValueError("Document vector memory ID must be explicit")
+            if (
+                not isinstance(vector, Sequence)
+                or isinstance(vector, (str, bytes))
+                or len(vector) != DOCUMENT_VECTOR_DIMENSIONS
+                or any(type(value) not in (int, float) or not math.isfinite(value) for value in vector)
+            ):
+                raise ValueError("Document vector must contain 1024 finite numbers")
+            encoded.append((memory_id, struct.pack(f"<{DOCUMENT_VECTOR_DIMENSIONS}f", *vector)))
+        with self._transaction(write=True) as connection:
+            self._ensure_vector_table(connection)
+            stored = 0
+            for memory_id, blob in encoded:
+                if connection.execute("SELECT 1 FROM memory_record WHERE id=?", (memory_id,)).fetchone() is None:
+                    raise ValueError("Document vector requires an existing memory record")
+                connection.execute(
+                    f"INSERT OR REPLACE INTO {VECTOR_TABLE}(memory_id,dimensions,vector) VALUES(?,?,?)",
+                    (memory_id, DOCUMENT_VECTOR_DIMENSIONS, blob),
+                )
+                stored += 1
+            if connection.execute("SELECT version FROM schema_version").fetchone()[0] != SCHEMA_VERSION:
+                raise SQLiteMemoryError("Vector copy must not change schema version")
+        return stored
+
+    @staticmethod
+    def _ensure_vector_table(connection: sqlite3.Connection) -> None:
+        existing = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (VECTOR_TABLE,),
+        ).fetchone()
+        if existing is None:
+            connection.execute(VECTOR_TABLE_SQL)
+            return
+        columns = {row[1] for row in connection.execute(f"PRAGMA table_info({VECTOR_TABLE})")}
+        if not {"memory_id", "dimensions", "vector"} <= columns:
+            raise SQLiteMemoryError("Optional document-vector table is incompatible")
+
     def candidates(
         self, query: MemoryQuery, exact_values: tuple[str, ...], fts_expression: str,
     ) -> CandidateBatch:
@@ -521,13 +572,8 @@ class SQLiteMemoryRepository:
                 ORDER BY source_score,id,unit_id LIMIT ?"""
                 rows = connection.execute(sql, (*scope_values, *values, query.candidate_limit)).fetchall()
                 for rank, row in enumerate(rows, 1):
-                    candidates.append(MemoryCandidate(
-                        record=self._record(row),
-                        unit=RetrievalUnit(row["unit_id"], row["id"], row["unit_kind"], row["source_field"], row["unit_text"], row["ordinal"], row["unit_checksum"]),
-                        reason=MatchReason(source, rank, row["source_detail"]),
-                        parse_warnings=tuple(json.loads(row["parse_warnings_json"])),
-                        source_headline=(json.loads(row["structured_json"] or "{}").get("HEAD") or [None])[0],
-                    ))
+                    candidates.append(self._candidate(row, source, rank, row["source_detail"]))
+            candidates.extend(self._semantic_candidates(connection, query, scope, scope_values))
             conflicts = connection.execute(
                 f"""SELECT m.subject_key FROM memory_record m WHERE {scope}
                 AND m.subject_key IS NOT NULL AND m.subject_key!=''
@@ -535,6 +581,77 @@ class SQLiteMemoryRepository:
                 scope_values,
             ).fetchall()
         return CandidateBatch(tuple(candidates), frozenset(row[0] for row in conflicts))
+
+    def _semantic_candidates(
+        self, connection: sqlite3.Connection, query: MemoryQuery, scope: str, scope_values: list,
+    ) -> list[MemoryCandidate]:
+        if query.query_vector is None:
+            return []
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (VECTOR_TABLE,),
+        ).fetchone() is None:
+            return []
+        from .voyageai_ef import VOYAGE_RELEVANT_THRESHOLD
+        rows = connection.execute(
+            f"""SELECT v.vector AS document_vector,m.*,u.id AS unit_id,u.kind AS unit_kind,
+            u.source_field,u.text AS unit_text,u.ordinal,u.checksum AS unit_checksum
+            FROM {VECTOR_TABLE} v
+            JOIN memory_record m ON m.id=v.memory_id
+            JOIN retrieval_unit u ON u.memory_id=m.id
+            WHERE {scope}""",
+            scope_values,
+        ).fetchall()
+        grouped: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            grouped.setdefault(row["id"], []).append(row)
+        scored = []
+        for memory_id, group in grouped.items():
+            distance = self._cosine_distance(query.query_vector, group[0]["document_vector"])
+            if distance > VOYAGE_RELEVANT_THRESHOLD:
+                continue
+            chosen = min(group, key=lambda item: (
+                0 if item["source_field"] == "FLOW/OUTCOME" else 1,
+                item["ordinal"], item["unit_id"],
+            ))
+            scored.append((distance, memory_id, chosen))
+        scored.sort(key=lambda item: (item[0], item[1]))
+        return [
+            self._candidate(
+                row, CandidateSource.SEMANTIC, rank, f"cosine_distance={distance:.6f}", distance,
+            )
+            for rank, (distance, _memory_id, row) in enumerate(scored[:query.candidate_limit], 1)
+        ]
+
+    @staticmethod
+    def _cosine_distance(query_vector: tuple[float, ...], blob: bytes) -> float:
+        width = DOCUMENT_VECTOR_DIMENSIONS * 4
+        if not isinstance(blob, bytes) or len(blob) != width:
+            return math.inf
+        stored = struct.unpack(f"<{DOCUMENT_VECTOR_DIMENSIONS}f", blob)
+        dot = left = right = 0.0
+        for query_value, stored_value in zip(query_vector, stored, strict=True):
+            dot += query_value * stored_value
+            left += query_value * query_value
+            right += stored_value * stored_value
+        if left == 0 or right == 0:
+            return math.inf
+        similarity = max(-1.0, min(1.0, dot / math.sqrt(left * right)))
+        return 1.0 - similarity
+
+    def _candidate(
+        self, row: sqlite3.Row, source: CandidateSource, rank: int, detail: str,
+        distance: float | None = None,
+    ) -> MemoryCandidate:
+        return MemoryCandidate(
+            record=self._record(row),
+            unit=RetrievalUnit(
+                row["unit_id"], row["id"], row["unit_kind"], row["source_field"],
+                row["unit_text"], row["ordinal"], row["unit_checksum"],
+            ),
+            reason=MatchReason(source, rank, detail, distance),
+            parse_warnings=tuple(json.loads(row["parse_warnings_json"])),
+            source_headline=(json.loads(row["structured_json"] or "{}").get("HEAD") or [None])[0],
+        )
 
     @staticmethod
     def _record(row: sqlite3.Row) -> MemoryRecord:

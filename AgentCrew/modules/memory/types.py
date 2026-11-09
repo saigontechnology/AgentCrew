@@ -19,7 +19,11 @@ class CandidateSource(StrEnum):
     ENTITY = "exact_entity_or_resource"
     TAG = "exact_tag"
     FTS = "weighted_fts5"
+    SEMANTIC = "semantic_document_vector"
     KIND_HINT = "explicit_kind_hint"
+
+
+DOCUMENT_VECTOR_DIMENSIONS = 1024
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,7 @@ class MemoryQuery:
     limit: int = 5
     candidate_limit: int = 100
     as_of: int | None = None
+    query_vector: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         for value in (self.query, self.agent_name, self.current_session_id):
@@ -57,6 +62,18 @@ class MemoryQuery:
                 raise ValueError("ID and kind hints must contain nonempty strings")
         if self.as_of is not None and type(self.as_of) is not int:
             raise ValueError("Validity time must be an explicit Unix timestamp")
+        if self.query_vector is not None:
+            if (
+                not isinstance(self.query_vector, tuple)
+                or len(self.query_vector) != DOCUMENT_VECTOR_DIMENSIONS
+                or any(
+                    type(value) not in (int, float)
+                    or value != value
+                    or value in (float("inf"), float("-inf"))
+                    for value in self.query_vector
+                )
+            ):
+                raise ValueError("Query vector must be an explicit 1024-float tuple")
 
 
 @dataclass(frozen=True)
@@ -105,6 +122,7 @@ class MatchReason:
     source: CandidateSource
     rank: int
     detail: str
+    distance: float | None = None
 
 
 @dataclass(frozen=True)

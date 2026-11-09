@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import UTC, datetime
 import json
+import math
 import re
 import unicodedata
 
@@ -51,11 +52,23 @@ def _query_parts(text: str) -> tuple[tuple[str, ...], str]:
     return tuple(sorted(exact)[:320]), expression
 
 
+def _semantic_distance(reasons) -> float:
+    distances = [
+        reason.distance for reason in reasons
+        if reason.source == CandidateSource.SEMANTIC
+        and isinstance(reason.distance, float)
+        and math.isfinite(reason.distance)
+    ]
+    return min(distances) if distances else math.inf
+
+
 class MemorySearchCoordinator:
     """Fuse eligible parent ranks without writes, LLMs or process-global scope.
 
     RRF k=60, field weights and lexical-overlap gates are initial prototype
-    settings, not calibrated relevance guarantees. CWD is never read for ranking.
+    settings, not calibrated relevance guarantees. A semantic document-vector
+    hit is exempt from those lexical gates and uses the frozen Chroma cosine
+    cutoff. CWD is never read for ranking.
     """
 
     def __init__(self, repository: SQLiteMemoryRepository) -> None:
@@ -72,13 +85,14 @@ class MemorySearchCoordinator:
         for entries in grouped.values():
             by_source = {entry.reason.source: entry for entry in entries}
             exact_id = CandidateSource.MEMORY_ID in by_source
+            semantic = CandidateSource.SEMANTIC in by_source
             strong = bool({CandidateSource.ENTITY, CandidateSource.TAG} & by_source.keys())
             record = entries[0].record
             evidence_words = _words(" ".join(entry.unit.text for entry in entries) + " " + (record.header or ""))
             overlap = len(query_words & evidence_words)
             coverage = overlap / len(query_words) if query_words else 0
             kind_match = bool(set(record.kinds) & set(query.kinds))
-            if not exact_id and (not overlap or coverage * (1.1 if kind_match else 1) < 0.35):
+            if not exact_id and not semantic and (not overlap or coverage * (1.1 if kind_match else 1) < 0.35):
                 continue
             reasons = tuple(entry.reason for entry in sorted(entries, key=lambda item: item.reason.source.value))
             score = sum(1 / (60 + reason.rank) for reason in reasons)
@@ -90,10 +104,12 @@ class MemorySearchCoordinator:
                 ConfidenceBand.HIGH if exact_id or (strong and coverage >= 0.7) else
                 ConfidenceBand.MEDIUM if coverage >= 0.5 else ConfidenceBand.LOW
             )
-            ranked.append((score, display, reasons, confidence, coverage, exact_id))
+            ranked.append((score, display, reasons, confidence, coverage, exact_id or semantic))
         best_coverage = max((item[4] for item in ranked), default=0)
         ranked = [item for item in ranked if item[5] or item[4] >= 0.7 * best_coverage]
-        ranked.sort(key=lambda item: (-item[0], item[1].record.id, item[1].unit.id))
+        ranked.sort(key=lambda item: (
+            -item[0], _semantic_distance(item[2]), item[1].record.id, item[1].unit.id,
+        ))
         hits = []
         seen_documents = set()
         seen_sessions = set()
@@ -104,6 +120,7 @@ class MemorySearchCoordinator:
             chosen = min(tied, key=lambda item: (
                 item[1].record.session_id in seen_sessions,
                 item[1].unit.kind in seen_kinds,
+                _semantic_distance(item[2]),
                 item[1].record.id, item[1].unit.id,
             ))
             ranked.remove(chosen)
