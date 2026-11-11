@@ -717,20 +717,58 @@ def freeze_calibration(report_path: Path, output: Path) -> dict:
 FRESH_HOLDOUT_LEDGER = ROOT / "verification/memory/local/fresh-holdout-ledger"
 
 
+def _fresh_reserved(ledger: Path, keys: list[str]) -> bool:
+    for child in ledger.iterdir():
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        if not (child / "packet.complete").is_file():
+            continue
+        if any((child / f"{key}.consumed").is_file() for key in keys):
+            return True
+    return False
+
+
+def _discard_partial_reservation(staging: Path) -> None:
+    if staging.exists():
+        shutil.rmtree(staging)
+
+
 def reserve_fresh_holdout(dataset: Dataset, ledger: Path) -> str:
-    """Reserve fresh question keys immediately before one execution. Never touch the consumed ledger."""
+    """Publish one fresh reservation atomically, immediately before retrieval."""
     check(not identifies_consumed_holdout(ledger), "consumed_holdout_ledger_rejected")
     check(ledger.name != "benchmark-holdout-ledger", "consumed_holdout_ledger_rejected")
     ledger.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(ledger, 0o700)
+    for child in list(ledger.iterdir()):
+        if child.name.startswith(".partial-"):
+            _discard_partial_reservation(child)
     token = digest({"cases": dataset.cases_hash, "review": dataset.review_manifest_hash, "scope": "fresh-holdout"})
     keys = [question_key(case, dataset.records) for case in dataset.cases]
-    if any((ledger / f"{key}.consumed").exists() for key in keys):
+    if _fresh_reserved(ledger, keys):
         raise BenchmarkError("fresh_holdout_already_reserved")
-    for key in keys:
-        descriptor = os.open(ledger / f"{key}.consumed", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        os.write(descriptor, (token + "\n").encode())
-        os.close(descriptor)
+    staging = ledger / f".partial-{token}"
+    try:
+        staging.mkdir(mode=0o700)
+        for key in keys:
+            descriptor = os.open(staging / f"{key}.consumed", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            try:
+                os.write(descriptor, (token + "\n").encode())
+            finally:
+                os.close(descriptor)
+        marker = os.open(staging / "packet.complete", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            os.write(marker, (token + "\n").encode())
+        finally:
+            os.close(marker)
+        if _fresh_reserved(ledger, keys):
+            raise BenchmarkError("fresh_holdout_already_reserved")
+        try:
+            os.rename(staging, ledger / token)
+        except FileExistsError as error:
+            raise BenchmarkError("fresh_holdout_already_reserved") from error
+    except Exception:
+        _discard_partial_reservation(staging)
+        raise
     return token
 
 
@@ -755,7 +793,7 @@ def run_fresh_lexical_holdout(
     source_hash: str | None = None, ledger: Path | None = None, semantic_max_distance=None,
     k: int = 5, warmups: int = 1, repetitions: int = 3,
 ) -> dict:
-    """Run one lexical-only fresh holdout. Reservation happens only after validation."""
+    """Run one lexical-only fresh holdout. Reserve only after backends are ready."""
     check(semantic_max_distance is None, "fresh_holdout_semantic_cutoff_forbidden")
     check(k == 5 and warmups == 1 and repetitions == 3, "fresh_holdout_protocol_required")
     paths = [corpus, cases, review, sqlite_source, embedding_cache, output]
@@ -769,7 +807,6 @@ def run_fresh_lexical_holdout(
     check(not identifies_consumed_holdout(ledger), "consumed_holdout_ledger_rejected")
     dataset = load_fresh_holdout_dataset(input_path(corpus), input_path(cases), input_path(review))
     cache_hash, rows = _fresh_vectors(dataset, input_path(embedding_cache))
-    token = reserve_fresh_holdout(dataset, ledger)
     repository = SQLiteMemoryRepository(input_path(sqlite_source), read_only=True)
     assert_candidate(repository, dataset)
     coordinator = MemorySearchCoordinator(repository)
@@ -780,6 +817,7 @@ def run_fresh_lexical_holdout(
         source_hash = copy_chroma(private_path(chroma_source), work)
         collection = _sdk_collection(work, collection_name)
     chroma = ChromaBaseline(collection, dataset, "cache", Calls(), False, input_path(embedding_cache), source_hash or "", cache_rows=rows)
+    token = reserve_fresh_holdout(dataset, ledger)
 
     def retrieve(mode: str, case: dict):
         if mode == "sqlite":

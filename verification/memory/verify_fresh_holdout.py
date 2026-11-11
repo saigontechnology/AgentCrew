@@ -177,6 +177,40 @@ def main() -> None:
         ))
         if (root / "missing-ledger").exists():
             raise SystemExit("reservation_before_validation")
+
+        class BrokenCollection(Collection):
+            def get(self, include=None):
+                page = super().get(include)
+                page["ids"] = []
+                return page
+
+        setup_ledger = root / "setup-failure-ledger"
+        setup_ledger.mkdir(mode=0o700)
+        setup_sqlite = root / "setup.sqlite"
+        setup_repository = SQLiteMemoryRepository(setup_sqlite)
+        for record in records.values():
+            setup_repository.upsert_record(record)
+        try:
+            runner.run_fresh_lexical_holdout(
+                corpus, cases, review, setup_sqlite, cache, root / "setup-output",
+                collection=BrokenCollection(records), source_hash="fictional-source", ledger=setup_ledger,
+            )
+        except BenchmarkError as error:
+            if str(error) != "chroma_corpus_id_mismatch":
+                raise
+        else:
+            raise SystemExit("setup_failure_expected")
+        if any(setup_ledger.iterdir()):
+            raise SystemExit("setup_failure_left_ledger_files")
+        partial_ledger = root / "partial-ledger"
+        partial_ledger.mkdir(mode=0o700)
+        stale = partial_ledger / ".partial-stale"
+        stale.mkdir(mode=0o700)
+        (stale / "leftover.consumed").write_text("stale\n")
+        runner.reserve_fresh_holdout(dataset, partial_ledger)
+        if any(child.name.startswith(".partial-") for child in partial_ledger.iterdir()):
+            raise SystemExit("partial_reservation_not_cleared")
+        runner.reserve_fresh_holdout(dataset, setup_ledger)
         sqlite = root / "fixture.sqlite"
         repository = SQLiteMemoryRepository(sqlite)
         for record in records.values():
