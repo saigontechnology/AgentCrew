@@ -34,7 +34,7 @@ CASE_KEYS = frozenset({
     "expected_facts", "expected_cwds", "must_abstain", "same_ranking_as_case",
     "requires_conflict_marker", "must_not_follow_memory_instructions",
     "forbidden_answer_fragments", "setup_action", "notes", "split",
-    "reviewed_locally", "query_sanitized", "draft", "relevance_grades", "context",
+    "reviewed_locally", "query_sanitized", "draft", "review_method", "relevance_grades", "context",
     "expected_cwd_label", "forbidden_answer_claims", "require_conflict_marker", "required_setup",
 })
 CORPUS_KEYS = frozenset({
@@ -229,6 +229,8 @@ def lifecycle_eligible(record: MemoryRecord) -> bool:
 
 HUMAN_CALIBRATION_CONTRACT = "reviewed-calibration-export"
 DERIVED_CALIBRATION_CONTRACT = "mechanically-derived-calibration-export"
+FRESH_HOLDOUT_CONTRACT = "fresh-lexical-holdout-review"
+CONSUMED_HOLDOUT_MARK = "benchmark-holdout-ledger"
 DERIVATION_POLICY = "accepted-original-review-mechanical-subset-2610c828-v1"
 ACCEPTED_PARENT_REVIEW_SHA256 = "1c0af2cc2ef24e586645daf3e1186a1a1af681ec2519f03b31d4b96a458a96b2"
 REVIEWED_DERIVATION_COMMIT = "2610c82885bd33085f55b3712d23fc20fbaa1113"
@@ -586,6 +588,51 @@ def load_calibration_dataset(
     return replace(dataset, review_manifest_hash=review_hash, dataset_scope="calibration-only",
                    parent_review_manifest_hash=parent_hash, parent_cases_hash=manifest["parent_cases_sha256"],
                    calibration_provenance_contract=contract, derivation=derivation)
+
+
+def identifies_consumed_holdout(path: Path) -> bool:
+    """Identify the consumed ledger by path identity, without opening it."""
+    return CONSUMED_HOLDOUT_MARK in Path(path).parts or CONSUMED_HOLDOUT_MARK in Path(path).name
+
+
+def load_fresh_holdout_dataset(corpus: Path, cases: Path, review: Path) -> Dataset:
+    """Load one fresh lexical holdout. Reject drafts and the consumed cohort.
+
+    User acceptance to proceed is not a witnessed semantic-non-overlap audit.
+    A manifest claiming that stronger attestation is rejected.
+    """
+    for path in (corpus, cases, review):
+        check(not identifies_consumed_holdout(path), "consumed_holdout_ledger_rejected")
+    check(review.stat().st_size <= 8_000_000, "json_file_too_large")
+    review_hash = file_hash(review)
+    manifest = read_json(review, expected_sha256=review_hash)
+    check(isinstance(manifest, dict), "fresh_holdout_review_invalid")
+    check(CONSUMED_HOLDOUT_MARK not in encode(manifest), "consumed_holdout_reference_rejected")
+    check(manifest.get("artifact_type") not in {HUMAN_CALIBRATION_CONTRACT, DERIVED_CALIBRATION_CONTRACT},
+          "consumed_or_calibration_cohort_rejected")
+    check(manifest.get("schema_version") == VERSION and manifest.get("artifact_type") == FRESH_HOLDOUT_CONTRACT
+          and manifest.get("dataset_scope") == "fresh-holdout" and manifest.get("split") == "holdout",
+          "fresh_holdout_review_invalid")
+    check(manifest.get("reviewed_locally") is True and manifest.get("review_method") == "local-human"
+          and manifest.get("draft") is False and manifest.get("query_sanitized") is True,
+          "fresh_holdout_unreviewed")
+    check(manifest.get("semantic_nonoverlap_witnessed") is not True, "unwitnessed_semantic_attestation_rejected")
+    check(manifest.get("lexical_only") is True and manifest.get("sqlite_semantic_max_distance") is None,
+          "fresh_holdout_semantic_cutoff_forbidden")
+    check(all(_sha256(manifest.get(key)) for key in ("corpus_sha256", "cases_sha256")), "fresh_holdout_hashes_invalid")
+    rows = read_jsonl(cases, expected_sha256=manifest["cases_sha256"])
+    check(bool(rows) and all(isinstance(row, dict) and row.get("split") == "holdout" for row in rows),
+          "consumed_combined_cohort_rejected")
+    dataset = _validated_dataset(
+        corpus, cases, required_split="holdout", corpus_hash=manifest["corpus_sha256"], cases_hash=manifest["cases_sha256"],
+    )
+    check(all(case.get("query_sanitized") is True and case.get("review_method") == "local-human" for case in dataset.cases),
+          "fresh_holdout_unreviewed")
+    check(type(manifest.get("case_count")) is int and manifest["case_count"] == len(dataset.cases), "fresh_holdout_count_mismatch")
+    check(len(dataset.cases) >= 15, "fresh_holdout_too_small")
+    _validate_private_split(dataset.cases, "holdout")
+    check(len({question_key(case, dataset.records) for case in dataset.cases}) == len(dataset.cases), "duplicate_private_question_inputs")
+    return replace(dataset, review_manifest_hash=review_hash, dataset_scope="fresh-holdout")
 
 
 def measure(case: dict, hits: list[dict], records: dict[str, MemoryRecord], k: int) -> dict:

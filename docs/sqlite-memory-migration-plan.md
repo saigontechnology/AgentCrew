@@ -1162,3 +1162,8 @@ The migration is complete only when:
 - Forget/delete/evolution behavior is preserved.
 - No automatic context injection was introduced without separate approval.
 - Chroma is removed only after the rollback window closes.
+
+
+## Fresh lexical holdout runner
+
+The fresh exam has a separate entry point, `fresh-holdout`. It does not call `reserve_holdout` or `freeze_calibration`, and it refuses any path or manifest that identifies `benchmark-holdout-ledger`. User acceptance to proceed is not a witnessed semantic-non-overlap audit; a manifest claiming `semantic_nonoverlap_witnessed` is rejected. The runner requires a human-reviewed, sanitized, non-draft holdout and an unset SQLite semantic cutoff. It compares lexical SQLite with cached voyage-4 Chroma vectors and does not call an embedding provider. A blocked result is not production approval. The current unreviewed draft is not a valid input.

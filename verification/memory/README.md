@@ -670,3 +670,8 @@ uv run --no-sync python verification/memory/capture_baseline.py \
 The environment-based collector defaults to `MEMORYDB_PATH`; another source requires explicit `--source` and the matching `--source-label`. It refuses overlapping paths, an existing snapshot, symlinked sources, unknown metadata key names, unstable source bytes, or an unreadable collection. Failures require private operator inspection; do not publish diagnostic logs. Unknown keys must be reviewed before changing the safe key-name allowlist. This is an inventory helper, not a general Chroma exporter.
 
 The implementation validation used the existing provisioned interpreter, offline uv execution, and no project synchronization. Validation covers JSON/JSONL/XML, unique IDs, fixture/case referential integrity, category coverage, date/scope/lifecycle labels, CWD invariants, checksums, obvious secret/path patterns, syntax, UTF-8/whitespace, ignored private artifacts, and FTS5 create/insert/MATCH. It runs no deprecated tests, production startup, migration, live memory queries, retrieval quality scoring, or remote model calls.
+
+
+## Fresh lexical holdout
+
+`scripts/benchmark_memory_retrieval.py fresh-holdout` is the only entry point for a new lexical exam. It refuses the consumed `benchmark-holdout-ledger`, a combined calibration/holdout case file, an unset review, and any SQLite semantic cutoff. Query vectors must already be cached as reviewed voyage-4 rows. The runner does not generate embeddings. User acceptance to proceed is not a witnessed semantic-non-overlap audit. A blocked acceptance report is not production approval.

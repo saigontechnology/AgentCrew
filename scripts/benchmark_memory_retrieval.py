@@ -31,8 +31,9 @@ sys.path.insert(0, str(ROOT))
 from AgentCrew.modules.memory.benchmark import (
     BenchmarkError, Calls, Dataset, FakeAdapter, POLICY, PROMPT, RemoteJSONAdapter,
     aggregate, check, digest, encode, evaluate_answer, expand_queries, file_hash,
-    cached_query_vector, load_calibration_dataset, load_dataset, local_document_vectors, measure, percentile,
-    query_from_case, read_json, read_jsonl, record_from_row, rerank_hits,
+    cached_query_vector, identifies_consumed_holdout, load_calibration_dataset, load_dataset,
+    load_fresh_holdout_dataset, local_document_vectors, measure, percentile,
+    query_from_case, read_json, read_jsonl, record_from_row, rerank_hits, _stored_vector,
     scope_eligible, lifecycle_eligible, question_key,
 )
 from AgentCrew.modules.memory.types import SQLiteSemanticPolicy
@@ -713,6 +714,133 @@ def freeze_calibration(report_path: Path, output: Path) -> dict:
     return {"status": "frozen", "freeze_hash": digest(frozen)}
 
 
+FRESH_HOLDOUT_LEDGER = ROOT / "verification/memory/local/fresh-holdout-ledger"
+
+
+def reserve_fresh_holdout(dataset: Dataset, ledger: Path) -> str:
+    """Reserve fresh question keys immediately before one execution. Never touch the consumed ledger."""
+    check(not identifies_consumed_holdout(ledger), "consumed_holdout_ledger_rejected")
+    check(ledger.name != "benchmark-holdout-ledger", "consumed_holdout_ledger_rejected")
+    ledger.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(ledger, 0o700)
+    token = digest({"cases": dataset.cases_hash, "review": dataset.review_manifest_hash, "scope": "fresh-holdout"})
+    keys = [question_key(case, dataset.records) for case in dataset.cases]
+    if any((ledger / f"{key}.consumed").exists() for key in keys):
+        raise BenchmarkError("fresh_holdout_already_reserved")
+    for key in keys:
+        descriptor = os.open(ledger / f"{key}.consumed", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.write(descriptor, (token + "\n").encode())
+        os.close(descriptor)
+    return token
+
+
+def _fresh_vectors(dataset: Dataset, cache: Path) -> tuple[str, tuple[dict, ...]]:
+    cache_hash = file_hash(cache)
+    rows = tuple(read_jsonl(cache, expected_sha256=cache_hash))
+    for item in rows:
+        check(isinstance(item, dict) and item.get("schema_version") == 1, "embedding_cache_unreviewed")
+        check(item.get("provenance") == "independent-configured-query" and item.get("reviewed_locally") is True,
+              "embedding_cache_unreviewed")
+        check(item.get("provider") == "voyage" and item.get("model") == "voyage-4", "fresh_holdout_embedding_identity_required")
+        check(_stored_vector(item.get("embedding")) is not None, "cached_query_embedding_missing")
+    for case in dataset.cases:
+        check(cached_query_vector(rows, case["query"]) is not None, "cached_query_embedding_missing")
+    check(os.getenv("VOYAGE_API_KEY") is not None, "fresh_holdout_voyage_identity_required")
+    return cache_hash, rows
+
+
+def run_fresh_lexical_holdout(
+    corpus: Path, cases: Path, review: Path, sqlite_source: Path, embedding_cache: Path, output: Path, *,
+    chroma_source: Path | None = None, collection_name: str = "conversation", collection=None,
+    source_hash: str | None = None, ledger: Path | None = None, semantic_max_distance=None,
+    k: int = 5, warmups: int = 1, repetitions: int = 3,
+) -> dict:
+    """Run one lexical-only fresh holdout. Reservation happens only after validation."""
+    check(semantic_max_distance is None, "fresh_holdout_semantic_cutoff_forbidden")
+    check(k == 5 and warmups == 1 and repetitions == 3, "fresh_holdout_protocol_required")
+    paths = [corpus, cases, review, sqlite_source, embedding_cache, output]
+    if chroma_source is not None:
+        paths.append(chroma_source)
+    if ledger is not None:
+        paths.append(ledger)
+    for path in paths:
+        check(not identifies_consumed_holdout(Path(path)), "consumed_holdout_ledger_rejected")
+    ledger = ledger or FRESH_HOLDOUT_LEDGER
+    check(not identifies_consumed_holdout(ledger), "consumed_holdout_ledger_rejected")
+    dataset = load_fresh_holdout_dataset(input_path(corpus), input_path(cases), input_path(review))
+    cache_hash, rows = _fresh_vectors(dataset, input_path(embedding_cache))
+    token = reserve_fresh_holdout(dataset, ledger)
+    repository = SQLiteMemoryRepository(input_path(sqlite_source), read_only=True)
+    assert_candidate(repository, dataset)
+    coordinator = MemorySearchCoordinator(repository)
+    if collection is None:
+        check(chroma_source is not None, "fresh_holdout_chroma_source_required")
+        work = output / "chroma"
+        work.mkdir(mode=0o700)
+        source_hash = copy_chroma(private_path(chroma_source), work)
+        collection = _sdk_collection(work, collection_name)
+    chroma = ChromaBaseline(collection, dataset, "cache", Calls(), False, input_path(embedding_cache), source_hash or "", cache_rows=rows)
+
+    def retrieve(mode: str, case: dict):
+        if mode == "sqlite":
+            return sqlite_hits(coordinator, case, k, None, SQLiteSemanticPolicy(None))
+        return chroma.search(case, k)
+
+    modes = {}
+    for mode in ("sqlite", "chroma"):
+        evaluated, times, cold = [], [], []
+        errors = cwd_failures = unstable = 0
+        for case in dataset.cases:
+            try:
+                started = time.perf_counter()
+                first = retrieve(mode, case)
+                cold.append((time.perf_counter() - started) * 1000)
+                retrieve(mode, case)
+                last = first
+                for _ in range(repetitions):
+                    started = time.perf_counter()
+                    last = retrieve(mode, case)
+                    times.append((time.perf_counter() - started) * 1000)
+                    unstable += signature(last) != signature(first)
+                changed = retrieve(mode, {**case, "current_cwd": "benchmark-cwd-invariance-probe"})
+                cwd_failures += signature(changed) != signature(last)
+                evaluated.append(measure(case, last, dataset.records, k))
+            except Exception:
+                errors += 1
+        modes[mode] = {**aggregate(evaluated), "backend_errors": errors, "cwd_invariance_failures": cwd_failures,
+                       "repeat_signature_changes": unstable, "cold_p95_ms": percentile(cold, 0.95),
+                       "p50_ms": percentile(times, 0.5), "p95_ms": percentile(times, 0.95)}
+    sqlite, baseline = modes["sqlite"], modes["chroma"]
+    failures = []
+    leak_keys = ("scope_leaks", "lifecycle_leaks", "deletion_leaks", "excluded_leaks", "unknown_id_leaks",
+                 "duplicate_parent_hits", "cwd_invariance_failures", "repeat_signature_changes", "backend_errors")
+    if any(sqlite[key] or baseline[key] for key in leak_keys):
+        failures.append("leak_or_repeat_failure")
+    if sqlite["recall_at_5"] < baseline["recall_at_5"]:
+        failures.append("recall_regression")
+    if sqlite["precision_at_5"] < baseline["precision_at_5"] - 0.05:
+        failures.append("precision_regression")
+    if sqlite["no_relevant_abstention"] is None or sqlite["no_relevant_abstention"] < 0.95:
+        failures.append("abstention_failure")
+    if sqlite["p95_ms"] >= 100:
+        failures.append("latency_regression")
+    if chroma.calls.embedding or chroma.calls.remote_embedding:
+        failures.append("embedding_call_forbidden")
+    report = {
+        "schema_version": 1, "kind": "fresh-lexical-holdout", "dataset_scope": "fresh-holdout",
+        "not_production_approval": True, "user_acceptance_is_not_semantic_nonoverlap_audit": True,
+        "selected_cases": len(dataset.cases), "reservation_token": token, "code": code_identity(),
+        "corpus_sha256": dataset.corpus_hash, "cases_sha256": dataset.cases_hash,
+        "review_manifest_sha256": dataset.review_manifest_hash, "query_embedding_cache_sha256": cache_hash,
+        "policy": {"name": "lexical-only", "sqlite_semantic_max_distance": None, "k": k, "warmups": warmups, "repetitions": repetitions},
+        "modes": modes, "calls": {"embedding": chroma.calls.embedding, "remote_embedding": chroma.calls.remote_embedding},
+        "acceptance": {"status": "blocked" if failures else "passed", "proposed_only": True, "production_approved": False, "failures": failures},
+    }
+    _write_json(output / "results.json", report)
+    write_text(output / "summary.md", "# Fresh lexical holdout\n\nStatus: " + report["acceptance"]["status"] + "\n\nNot production approval.\n")
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest="command", required=True)
@@ -751,6 +879,12 @@ def main() -> int:
     freeze = subs.add_parser("freeze")
     freeze.add_argument("--calibration-report", type=Path, required=True)
     freeze.add_argument("--output", type=Path, required=True)
+    fresh = subs.add_parser("fresh-holdout")
+    for name in ("corpus", "cases", "review-manifest", "sqlite-source", "embedding-cache", "output"):
+        fresh.add_argument("--" + name, type=Path, required=True)
+    fresh.add_argument("--chroma-source", type=Path)
+    fresh.add_argument("--collection", default="conversation")
+    fresh.add_argument("--sqlite-semantic-max-distance", type=float)
     args = parser.parse_args()
     output = None
     previous = os.umask(0o077)
@@ -764,6 +898,25 @@ def main() -> int:
             source = input_path(args.calibration_report)
             output = new_output(args.output, [source])
             result = freeze_calibration(source, output)
+        elif args.command == "fresh-holdout":
+            if args.sqlite_semantic_max_distance is not None:
+                raise BenchmarkError("fresh_holdout_semantic_cutoff_forbidden")
+            corpus = input_path(args.corpus)
+            cases = input_path(args.cases)
+            review = input_path(args.review_manifest)
+            sqlite = input_path(args.sqlite_source)
+            cache = input_path(args.embedding_cache)
+            inputs = [corpus, cases, review, sqlite, cache]
+            chroma = private_path(args.chroma_source) if args.chroma_source else None
+            if chroma is not None:
+                inputs.append(chroma)
+            output = new_output(args.output, inputs)
+            report = run_fresh_lexical_holdout(
+                corpus, cases, review, sqlite, cache, output, chroma_source=chroma,
+                collection_name=args.collection, semantic_max_distance=args.sqlite_semantic_max_distance,
+            )
+            result = {"status": report["acceptance"]["status"], "production_approved": False,
+                      "selected_cases": report["selected_cases"], "failures": report["acceptance"]["failures"]}
         else:
             corpus = input_path(args.corpus, "synthetic-corpus.jsonl")
             cases = input_path(args.cases, "benchmark-cases.jsonl")
