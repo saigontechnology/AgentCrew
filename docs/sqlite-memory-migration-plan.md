@@ -12,6 +12,10 @@ Local milestone 3 used low-overhead phase timers, not cProfile, on the existing 
 
 The authorized Phase 3 completion sequence then built combined cache `f6cb3fea…`, preserved calibration cache `594666c4…`, and sent only the 16 sanitized holdout queries to Voyage-4 once (397 tokens; dollar cost unobserved). Network-isolated calibration passed every proposed gate, including SQLite warm p95 77.78 ms. Freeze digest `188a5aec…` binds that exact cache, review, code, policy, and protocol. The single-use holdout then failed Recall@5, SQLite 0.9285714285714286 versus Chroma 1.0; its other proposed gates passed, including warm p95 64.66 ms. Architect/PIC rejected Phase 3 acceptance on 2026-11-07. Holdout report `791037a7…` remains the failed evidence. It was not retried, and it does not close Phase 3 or authorize Phases 4–5. Safe aggregate `c4c95e59…` records the gate table and conservation checks.
 
+**PIC override of the Phase 3 gate — Phase 4 start (2026-11-12).** After the reservation-order runner fix `2ef1df258c574e1d1883bcb1afccae60eda55bdf` was accepted, the one-shot fresh lexical holdout exam ran once, network-isolated, with the user-reviewed packet derived from draft `626f5bb43da8` (local-human review evidence; not a semantic-non-overlap audit), the retained reviewed 408-record corpus, the matched SQLite candidate and Chroma source, and the single authorized Voyage-4 query cache `aba4c6ea…` (339 tokens, one embed call, no retry). The exam reserved fresh ledger token `2d088d52a9aa5df417bd0948d114c5c1471c3c8344f9be6ac61e65707bb7c199` and returned status **blocked** with failures `recall_regression` and `precision_regression`; report SHA-256 `4065c502b8d9b6e5482af64f87556c0b0b8da4ef1bead4849e746d511ae1a969`, output directory `phase3-fresh-holdout-exam-55dc95132c75` under the fresh-holdout worktree. Accepted regressions in the SQLite search: Recall@5 0.50 versus Chroma 1.00, Precision@5 0.0875 versus 0.175 (−8.75 pp against a 5 pp allowance). Passed gates: no-relevant abstention 1.0, SQLite warm p95 33.4 ms, zero leaks of any kind, zero embedding calls. On **2026-11-12 the PIC explicitly reviewed this verified fresh-exam record and overrode the Phase 3 gate, authorizing Phase 4 to start now with the current lexical-only policy.** Phase 3 remains recorded as **NOT MET**; this override does not rewrite sealed evidence, and the consumed exams, the benchmark-holdout-ledger, the fresh-holdout ledger, draft packets and Phase 3 verification artifacts stay untouched. No new embedding or Voyage call was sent. The shipped retrieval policy stays behavior-identical to the measured one at commit `2ef1df25` (code hash `e42f148d…`): `qualified-sqlite-signals-v1`, fts_weights `[6,4,1,8]`, rrf_k 60, kind_weight 1.1, min_overlap 0.35, relative_coverage 0.7, cosine_distance with explicit-cutoff-before-rrf admission and default max distance null (semantic matching disabled), cross-source ties by diversity then stable ID. No threshold changes, no semantic cutoff, no tuning of any kind.
+
+**Phase 4 implemented under the override (2026-11-12).** MEM-400 through MEM-405 are implemented on branch `feat/sqlite-memory-search-tool` (worktree `AgentCrew-sqlite-search-tool`, based on `2ef1df25`): the `search_memory` definition gained `kinds`, `memory_ids`, `detail` (summary/evidence/full) and a server-bounded `limit` (1–20) with accurate wording; the handler uses structured results through a non-breaking `BaseMemoryService.search_structured` compatibility adapter plus a Chroma override, preserving date validation, fail-open behavior and server-side agent scope; optional query expansion runs at most one bounded memory-LLM call with validated JSON and deterministic fallback only when the deterministic pass returns no hits and the request is not ID-restricted; optional reranking is gated by `MEMORY_RERANK_ENABLED` (default off), accepts known candidate IDs only, and falls back deterministically; result expansion by known memory IDs supports summary, evidence and full-detail modes through an agent-scoped `get_memory_documents` contract; and tool registration was verified across all five surfaces (local interactive agents, jobs and delegation, A2A, ACP, and the Cursor-agent path), with automatic headline injection unchanged. The disposable `verification/memory/verify_phase4.py` verifier asserts the frozen policy parameters, the unchanged measured code hash, the expanded tool contract, fail-open/date validation, expansion/rerank bounds and fallbacks, detail modes, the Chroma adapter scope/threshold/ID behavior, and per-surface registration; all existing offline verifiers still pass and lint is clean apart from two pre-existing-style `TRY004` findings. Phase 4 completion is tool-layer only: the user-visible default memory backend remains Chroma, MEM-002 and MEM-307 remain open, and Phases 5–6 remain blocked.
+
 ## Approved decisions
 
 - Use Python's standard `sqlite3` module and SQLite FTS5.
@@ -975,27 +979,27 @@ Those earlier exact-lookup observations still miss the proposed <100 ms p95 targ
 
 ### Phase 4 — Expanded search tool
 
-- [ ] **MEM-400: Update the `search_memory` definition.**
+- [x] **MEM-400: Update the `search_memory` definition.**
   - Add kinds, IDs, detail level, and bounded limit.
   - Replace inaccurate vector-semantic wording.
-- [ ] **MEM-401: Update the handler to use structured results.**
+- [x] **MEM-401: Update the handler to use structured results.**
   - Preserve date validation and fail-open behavior.
   - Keep agent scope server-side rather than model-controlled.
-- [ ] **MEM-402: Add optional query expansion.**
+- [x] **MEM-402: Add optional query expansion.**
   - One bounded call, validated JSON, deterministic fallback.
-- [ ] **MEM-403: Add optional reranking.**
+- [x] **MEM-403: Add optional reranking.**
   - Known candidates only.
   - No scope/lifecycle override.
-- [ ] **MEM-404: Add result expansion by known memory IDs.**
+- [x] **MEM-404: Add result expansion by known memory IDs.**
   - Summary, evidence, and full detail modes.
-- [ ] **MEM-405: Verify tool registration across runtime surfaces.**
+- [x] **MEM-405: Verify tool registration across runtime surfaces.**
   - Local interactive agents.
   - Jobs and delegation.
   - A2A.
   - ACP.
   - Cursor-agent path where memory is enabled.
 
-**Gate:** Tool behavior is consistent across supported surfaces. Automatic injection remains unchanged.
+**Gate — met under the 2026-11-12 PIC override (see Status):** Tool behavior is consistent across supported surfaces; all five registration surfaces bind the shared expanded definition and handler, and automatic headline injection remains unchanged. Verified by the disposable offline `verify_phase4.py` verifier plus the full existing verifier suite; the frozen measured retrieval policy and code hash are asserted unchanged. This closes the Phase 4 tool-layer items only: the default backend remains Chroma, MEM-002/MEM-307 stay open, and Phases 5–6 remain blocked.
 
 ### Phase 5 — SQLite write path
 

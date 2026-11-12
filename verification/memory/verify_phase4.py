@@ -1,0 +1,599 @@
+"""Fictional Phase 4 checks: expanded search tool, frozen policy, registration.
+
+No network, embeddings, private memory, or sealed Phase 3 artifacts are used.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from datetime import date
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+executable = Path(sys.executable)
+if executable.is_symlink():
+    executable = Path(os.path.abspath(sys.executable))
+for site in (executable.parent.parent / "lib").glob("python*/site-packages"):
+    site_path = str(site)
+    if site_path not in sys.path:
+        sys.path.append(site_path)
+
+import scripts.benchmark_memory_retrieval as runner
+from AgentCrew.modules.memory import tool
+from AgentCrew.modules.memory.base_service import BaseMemoryService
+from AgentCrew.modules.memory.benchmark import POLICY
+from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
+from AgentCrew.modules.memory.types import (
+    CandidateSource,
+    ConfidenceBand,
+    MatchReason,
+    MemoryQuery,
+    MemorySearchHit,
+    MemorySearchResult,
+    SQLiteSemanticPolicy,
+)
+
+FROZEN_POLICY = {
+    "name": "qualified-sqlite-signals-v1",
+    "fts_weights": [6, 4, 1, 8],
+    "rrf_k": 60,
+    "kind_weight": 1.1,
+    "min_overlap": 0.35,
+    "relative_coverage": 0.7,
+    "sqlite_semantic": {
+        "metric": "cosine_distance",
+        "admission": "explicit-cutoff-before-rrf",
+        "default_max_distance": None,
+        "cross_source_tie": "diversity-then-stable-id",
+    },
+}
+FROZEN_CODE_HASH = "e42f148d8ebf416b72267ed304c615d4f0e91799b9b564f7178f5e436db65faf"
+
+
+def require(condition, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def make_hit(memory_id: str, excerpt: str = "fictional excerpt", kind: str = "conversation") -> MemorySearchHit:
+    return MemorySearchHit(
+        memory_id=memory_id,
+        unit_id=kind,
+        date="2026-11-12",
+        cwd=None,
+        kind=kind,
+        headline="Fictional headline",
+        excerpt=excerpt,
+        reasons=(MatchReason(CandidateSource.SEMANTIC, 0, "vector similarity 0.90", 0.1),),
+        confidence=ConfidenceBand.HIGH,
+        score=0.9,
+    )
+
+
+class FictionalLLM:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    async def process_message(self, prompt, temperature=0, model_id=None):
+        self.calls.append(prompt)
+        if not self.responses:
+            raise AssertionError("unexpected model call")
+        value = self.responses.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+class RecordingService:
+    llm_service = None
+
+    def __init__(self, hits_by_query=None):
+        self.hits_by_query = hits_by_query or {}
+        self.queries = []
+        self.documents_calls = []
+        self.session_id = "fictional-session"
+
+    def search_structured(self, query):
+        self.queries.append(query)
+        return MemorySearchResult(tuple(self.hits_by_query.get(query.query, ())))
+
+    def get_memory_documents(self, memory_ids, agent_name="None"):
+        self.documents_calls.append((tuple(memory_ids), agent_name))
+        return {"mem-1": "FULL FICTIONAL DOCUMENT"}
+
+
+class ExplodingService:
+    llm_service = None
+    session_id = "fictional-session"
+
+    def search_structured(self, query):
+        raise RuntimeError("fictional backend outage")
+
+
+class LegacyService(BaseMemoryService):
+    def __init__(self, text):
+        self.text = text
+        self.session_id = ""
+
+    def store_conversation(self, *args, **kwargs):
+        return []
+
+    def clear_conversation_context(self):
+        pass
+
+    def load_conversation_context(self, *args, **kwargs):
+        pass
+
+    def retrieve_memory(self, keywords, from_date=None, to_date=None, agent_name="None"):
+        return self.text
+
+    def list_memory_headers(self, *args, **kwargs):
+        return []
+
+    def cleanup_old_memories(self, months=1):
+        return 0
+
+    def forget_topic(self, *args, **kwargs):
+        return {}
+
+    def forget_ids(self, *args, **kwargs):
+        return {}
+
+    def delete_by_conversation_id(self, *args, **kwargs):
+        return {}
+
+    def get_agent_memory_corpus(self, agent_name="None", max_items=100, exclude_session_id=None):
+        records = [
+            {"id": "legacy-1", "document": "legacy document one", "metadata": {"agent": agent_name}},
+            {"id": "legacy-2", "document": "legacy document two", "metadata": {"agent": "OtherAgent"}},
+        ]
+        return [record for record in records if record["metadata"]["agent"] == agent_name][:max_items]
+
+    def mark_memories_evolved(self, *args, **kwargs):
+        return 0
+
+
+def run_handler(service, agent_name="FictionalAgent", **params):
+    context = tool.MemoryToolContext(agent_name=agent_name, memory_service=service)
+    handler = tool.get_memory_retrieve_tool_handler(context)
+    return asyncio.run(handler(**params))
+
+
+def checks_policy_freeze():
+    require(POLICY == FROZEN_POLICY, "Frozen retrieval policy changed")
+    require(SQLiteSemanticPolicy().max_distance is None, "Semantic cutoff must default to disabled")
+    query = MemoryQuery(query="fictional policy probe", agent_name="FictionalAgent", current_session_id="fictional-session")
+    require(query.semantic_policy.max_distance is None, "Default query semantic policy changed")
+    identity = runner.code_identity()
+    require(identity["code_hash"] == FROZEN_CODE_HASH, "Measured retrieval code identity changed")
+
+
+def checks_tool_definition():
+    definition = tool.get_memory_retrieve_tool_definition()
+    function = definition["function"]
+    require(function["name"] == "search_memory", "Tool renamed")
+    properties = function["parameters"]["properties"]
+    require(
+        set(properties) == {"query", "from_date", "to_date", "kinds", "memory_ids", "detail", "limit"},
+        "Expanded parameters missing",
+    )
+    require(function["parameters"]["required"] == ["query"], "Required parameters changed")
+    require(properties["kinds"]["items"]["enum"] == list(tool.MEMORY_KINDS), "Kind enum changed")
+    require(properties["detail"]["enum"] == list(tool.DETAIL_MODES), "Detail modes changed")
+    require("agent" not in properties, "Agent scope must stay server-side")
+    description = function["description"]
+    require("semantic search" not in description.lower(), "Inaccurate vector wording kept")
+    require("full-text search" in description.lower(), "Accurate wording missing")
+    require("scoped to the current agent" in description, "Agent scoping wording missing")
+
+
+def checks_handler_contract():
+    service = RecordingService({"fictional alpha details": (make_hit("mem-1"),)})
+    out = run_handler(service, query="fictional alpha details")
+    require("untrusted recalled data" in out and "memory:mem-1#conversation" in out, "Summary format broke")
+    require("Matched because" not in out, "Summary must stay compact")
+
+    out = run_handler(service, query="fictional alpha details", detail="evidence")
+    require("Matched because" in out and "Unknown (legacy memory)" in out, "Evidence format broke")
+
+    out = run_handler(service, query="fictional alpha details", detail="full")
+    require("FULL FICTIONAL DOCUMENT" in out, "Full detail did not expand the record")
+    require(
+        service.documents_calls[-1] == (("mem-1",), "FictionalAgent"),
+        "Document expansion calls changed",
+    )
+
+    out = run_handler(
+        service,
+        query="fictional alpha details",
+        from_date="2026-11-12",
+        to_date="2026-11-12",
+    )
+    require(out.startswith("Memory search failed: from_date must be earlier"), "Date validation changed")
+
+    out = run_handler(service, query="fictional alpha details", from_date="not-a-date")
+    require(out.startswith("Memory search failed:"), "Invalid date must fail open")
+
+    out = run_handler(
+        service,
+        query="fictional alpha details",
+        from_date="2026-11-01",
+        to_date="2026-11-12",
+    )
+    require("memory:mem-1" in out, "Valid date range broke retrieval")
+    require(service.queries[-1].from_date == date(2026, 11, 1), "Date filter not passed through")
+    require(service.queries[-1].to_date == date(2026, 11, 12), "Date filter not passed through")
+
+    out = run_handler(ExplodingService(), query="fictional alpha details")
+    require(out.startswith("Memory search failed: fictional backend outage"), "Fail-open behavior changed")
+
+    for bad_limit in (0, 21, "5", True, 2.5):
+        out = run_handler(service, query="fictional alpha details", limit=bad_limit)
+        require(out.startswith("Memory search failed: limit"), f"Limit bound rejected {bad_limit!r} wrongly")
+    for good_limit in (1, 20):
+        out = run_handler(service, query="fictional alpha details", limit=good_limit)
+        require("memory:mem-1" in out, f"Valid limit {good_limit} rejected")
+
+    out = run_handler(service, query="fictional alpha details", kinds=["bogus"])
+    require(out.startswith("Memory search failed: Unknown memory kinds"), "Unknown kind accepted")
+    out = run_handler(service, query="fictional alpha details", kinds=["Fact", "decision"])
+    require(service.queries[-1].kinds == ("decision", "fact"), "Kind hint not normalized")
+
+    out = run_handler(service, query="fictional alpha details", detail="bogus")
+    require(out.startswith("Memory search failed: detail"), "Unknown detail accepted")
+
+    out = run_handler(service, query="fictional alpha details", kinds="decision")
+    require(out.startswith("Memory search failed: kinds must be an array"), "Non-array kinds accepted")
+    out = run_handler(service, query="fictional alpha details", memory_ids="mem-1")
+    require(out.startswith("Memory search failed: memory_ids must be an array"), "Non-array ids accepted")
+
+    out = run_handler(service, query="fictional alpha details", memory_ids=["mem-1", "mem-1"])
+    require(service.queries[-1].memory_ids == ("mem-1", "mem-1"), "ID restriction not passed through")
+
+    out = run_handler(service, query="fictional missing topic")
+    require(out.startswith("No memories found for"), "Empty result message changed")
+
+    require(service.queries[0].agent_name == "FictionalAgent", "Agent scope must be server-side")
+    require(service.queries[0].current_session_id == "fictional-session", "Session identity lost")
+
+    missing = tool.MemoryToolContext(agent_name="FictionalAgent", memory_service=None)
+    handler = tool.get_memory_retrieve_tool_handler(missing)
+    try:
+        asyncio.run(handler(query="fictional alpha details"))
+    except ValueError as error:
+        require("Memory service not found" in str(error), "Missing service message changed")
+    else:
+        raise AssertionError("Missing service did not raise")
+
+    try:
+        asyncio.run(handler(query="ab"))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Short query did not raise")
+
+
+def checks_legacy_adapter():
+    legacy = LegacyService("recalled fictional legacy text")
+    result = legacy.search_structured(
+        MemoryQuery(query="fictional legacy probe", agent_name="FictionalAgent", current_session_id="fictional-session")
+    )
+    require(len(result.hits) == 1 and result.hits[0].excerpt == "recalled fictional legacy text", "Legacy adapter broke")
+    empty = LegacyService("")
+    result = empty.search_structured(
+        MemoryQuery(query="fictional legacy probe", agent_name="FictionalAgent", current_session_id="fictional-session")
+    )
+    require(not result.hits, "Legacy empty adapter broke")
+    documents = legacy.get_memory_documents(["legacy-1", "legacy-2"], "FictionalAgent")
+    require(documents == {"legacy-1": "legacy document one"}, "Legacy document expansion broke")
+
+
+def checks_expansion():
+    llm = FictionalLLM(['```json\n{"queries": ["fictional beta phrase", "fictional gamma phrase"]}\n```'])
+    service = RecordingService(
+        {
+            "fictional alpha": (),
+            "fictional beta phrase": (make_hit("mem-b"),),
+            "fictional gamma phrase": (make_hit("mem-b"), make_hit("mem-c")),
+        }
+    )
+    service.llm_service = llm
+    out = run_handler(service, query="fictional alpha")
+    require("mem-b" in out and "mem-c" in out, "Expansion merge broke")
+    require(len(llm.calls) == 1, "Expansion must be one bounded call")
+    require(
+        [query.query for query in service.queries]
+        == ["fictional alpha", "fictional beta phrase", "fictional gamma phrase"],
+        "Expanded phrases not searched in order",
+    )
+    require(out.count("memory:mem-b#") == 1, "Expansion dedupe broke")
+
+    llm = FictionalLLM(['{"queries": ["safe"], "scope": "override"}'])
+    service = RecordingService({"fictional alpha": ()})
+    service.llm_service = llm
+    out = run_handler(service, query="fictional alpha")
+    require(out.startswith("No memories found") and len(llm.calls) == 1, "Expansion schema fallback broke")
+
+    llm = FictionalLLM(['{"queries": ["a", "b", "c", "d"]}'])
+    service = RecordingService({"fictional alpha": ()})
+    service.llm_service = llm
+    out = run_handler(service, query="fictional alpha")
+    require(out.startswith("No memories found") and len(llm.calls) == 1, "Expansion bound fallback broke")
+
+    llm = FictionalLLM([ValueError("fictional LLM outage")])
+    service = RecordingService({"fictional alpha": ()})
+    service.llm_service = llm
+    out = run_handler(service, query="fictional alpha")
+    require(out.startswith("No memories found") and len(llm.calls) == 1, "Expansion error fallback broke")
+
+    llm = FictionalLLM([])
+    service = RecordingService({"fictional alpha": (make_hit("mem-x"),)})
+    service.llm_service = llm
+    run_handler(service, query="fictional alpha")
+    require(not llm.calls, "Expansion must not run when hits exist")
+
+    llm = FictionalLLM([])
+    service = RecordingService({"fictional alpha": ()})
+    service.llm_service = llm
+    run_handler(service, query="fictional alpha", memory_ids=["mem-known"])
+    require(not llm.calls, "Expansion must not run for ID-restricted follow-ups")
+
+    class PartialService(RecordingService):
+        def search_structured(self, query):
+            self.queries.append(query)
+            if query.query == "fictional broken phrase":
+                raise RuntimeError("fictional phrase outage")
+            return MemorySearchResult(tuple(self.hits_by_query.get(query.query, ())))
+
+    llm = FictionalLLM(['{"queries": ["fictional beta phrase", "fictional broken phrase"]}'])
+    service = PartialService({"fictional alpha": (), "fictional beta phrase": (make_hit("mem-b"),)})
+    service.llm_service = llm
+    out = run_handler(service, query="fictional alpha")
+    require("mem-b" in out, "Expansion must continue deterministically past a failed phrase")
+
+
+def checks_rerank():
+    llm = FictionalLLM([])
+    service = RecordingService({"fictional alpha": (make_hit("mem-1"), make_hit("mem-2"))})
+    service.llm_service = llm
+    run_handler(service, query="fictional alpha")
+    require(not llm.calls, "Reranking must stay disabled by default")
+
+    os.environ["MEMORY_RERANK_ENABLED"] = "1"
+    try:
+        llm = FictionalLLM(['{"ranked_ids": ["mem-2", "mem-1"], "abstain": false}'])
+        service = RecordingService({"fictional alpha": (make_hit("mem-1"), make_hit("mem-2"))})
+        service.llm_service = llm
+        out = run_handler(service, query="fictional alpha")
+        require(out.index("memory:mem-2") < out.index("memory:mem-1"), "Rerank order broke")
+        require(len(llm.calls) == 1, "Rerank must be one bounded call")
+        require("mem-2" in llm.calls[0], "Rerank payload must cite known candidates")
+
+        llm = FictionalLLM(['{"ranked_ids": ["mem-1", "mem-foreign"], "abstain": false}'])
+        service = RecordingService({"fictional alpha": (make_hit("mem-1"), make_hit("mem-2"))})
+        service.llm_service = llm
+        out = run_handler(service, query="fictional alpha")
+        require(out.index("memory:mem-1") < out.index("memory:mem-2"), "Unknown rerank ID must fall back")
+
+        llm = FictionalLLM(['{"ranked_ids": ["mem-1", "mem-1"], "abstain": false}'])
+        service = RecordingService({"fictional alpha": (make_hit("mem-1"), make_hit("mem-2"))})
+        service.llm_service = llm
+        out = run_handler(service, query="fictional alpha")
+        require(out.index("memory:mem-1") < out.index("memory:mem-2"), "Duplicate rerank ID must fall back")
+
+        llm = FictionalLLM(['{"ranked_ids": [], "abstain": true}'])
+        service = RecordingService({"fictional alpha": (make_hit("mem-1"),)})
+        service.llm_service = llm
+        out = run_handler(service, query="fictional alpha")
+        require(out.startswith("No memories found"), "Rerank abstention broke")
+
+        llm = FictionalLLM(['{"ranked_ids": [], "abstain": false}'])
+        service = RecordingService({"fictional alpha": (make_hit("mem-1"),)})
+        service.llm_service = llm
+        out = run_handler(service, query="fictional alpha")
+        require("memory:mem-1" in out, "Contradictory rerank abstention must fall back")
+
+        llm = FictionalLLM([ValueError("fictional rerank outage")])
+        service = RecordingService({"fictional alpha": (make_hit("mem-1"),)})
+        service.llm_service = llm
+        out = run_handler(service, query="fictional alpha")
+        require("memory:mem-1" in out, "Rerank error must fall back deterministically")
+    finally:
+        del os.environ["MEMORY_RERANK_ENABLED"]
+
+
+class FictionalCollection:
+    def __init__(self):
+        self.observed = []
+        self.rows = {
+            "chroma-1": (
+                "doc one " * 100,
+                {"date": 1760000000, "agent": "FictionalAgent", "session_id": "other", "type": "conversation", "header": "Fictional header"},
+            ),
+            "chroma-2": (
+                "doc two",
+                {"date": 1760100000, "agent": "FictionalAgent", "session_id": "fictional-session", "type": "conversation"},
+            ),
+            "chroma-3": (
+                "doc three",
+                {"date": 1760200000, "agent": "OtherAgent", "session_id": "other", "type": "conversation"},
+            ),
+        }
+
+    def _passes(self, metadata, where):
+        if where is None:
+            return True
+        conditions = where.get("$and", [where])
+        for condition in conditions:
+            for key, rule in condition.items():
+                if key not in metadata:
+                    return False
+                if not isinstance(rule, dict):
+                    if metadata[key] != rule:
+                        return False
+                    continue
+                if "$ne" in rule and metadata[key] == rule["$ne"]:
+                    return False
+                if "$gte" in rule and not (metadata[key] >= rule["$gte"]):
+                    return False
+                if "$lte" in rule and not (metadata[key] <= rule["$lte"]):
+                    return False
+        return True
+
+    def query(self, **kwargs):
+        self.observed.append(("query", kwargs))
+        ids = [
+            memory_id
+            for memory_id, (_, metadata) in self.rows.items()
+            if self._passes(metadata, kwargs.get("where"))
+        ][: kwargs.get("n_results", 10)]
+        return {
+            "ids": [ids],
+            "distances": [[0.1 if memory_id == "chroma-1" else 0.4 for memory_id in ids]],
+            "metadatas": [[self.rows[memory_id][1] for memory_id in ids]],
+            "documents": [[self.rows[memory_id][0] for memory_id in ids]],
+        }
+
+    def get(self, **kwargs):
+        self.observed.append(("get", kwargs))
+        ids = [
+            memory_id
+            for memory_id in kwargs.get("ids", [])
+            if memory_id in self.rows and self._passes(self.rows[memory_id][1], kwargs.get("where"))
+        ]
+        include = kwargs.get("include", [])
+        out = {"ids": ids}
+        if "documents" in include:
+            out["documents"] = [self.rows[memory_id][0] for memory_id in ids]
+        if "metadatas" in include:
+            out["metadatas"] = [self.rows[memory_id][1] for memory_id in ids]
+        return out
+
+
+def checks_chroma_adapter():
+    service = object.__new__(ChromaMemoryService)
+    service._collection = FictionalCollection()
+    service.session_id = "fictional-session"
+    service.relevant_threshold = 0.3
+
+    result = service.search_structured(
+        MemoryQuery(query="fictional alpha", agent_name="FictionalAgent", current_session_id="fictional-session", limit=5)
+    )
+    where = service._collection.observed[0][1]["where"]
+    require("FictionalAgent" in str(where) and "$ne" in str(where), "Chroma scope conditions changed")
+    require([hit.memory_id for hit in result.hits] == ["chroma-1"], "Chroma session/threshold filtering changed")
+    hit = result.hits[0]
+    require(hit.citation == "memory:chroma-1#conversation", "Chroma citation changed")
+    require(hit.confidence.value == "high", "Chroma confidence banding changed")
+    require(hit.headline == "Fictional header" and len(hit.excerpt) == 360, "Chroma hit fields changed")
+    require(hit.reasons[0].source == CandidateSource.SEMANTIC, "Chroma match reason changed")
+
+    result = service.search_structured(
+        MemoryQuery(
+            query="fictional alpha",
+            agent_name="FictionalAgent",
+            current_session_id="fictional-session",
+            memory_ids=("chroma-3", "chroma-1", "chroma-1"),
+        )
+    )
+    require([hit.memory_id for hit in result.hits] == ["chroma-1"], "Chroma ID restriction changed")
+    require(
+        result.hits[0].reasons[0].source == CandidateSource.MEMORY_ID
+        and result.hits[0].confidence.value == "high",
+        "Chroma exact-ID reason changed",
+    )
+
+    documents = service.get_memory_documents(["chroma-3", "chroma-1"], "FictionalAgent")
+    require(sorted(documents) == ["chroma-1"], "Chroma document expansion scope changed")
+
+    service._collection.observed.clear()
+    service.search_structured(
+        MemoryQuery(
+            query="fictional alpha",
+            agent_name="FictionalAgent",
+            current_session_id="fictional-session",
+            from_date=date(2025, 10, 10),
+            to_date=date(2025, 10, 11),
+        )
+    )
+    where = str(service._collection.observed[0][1]["where"])
+    require("$gte" in where and "$lte" in where, "Chroma date filters changed")
+
+
+def checks_registration_surfaces():
+    from unittest.mock import patch
+
+    class FictionalAgent:
+        name = "FictionalAgent"
+
+        def register_tool(self, definition_func, handler_factory, service_instance=None):
+            return None
+
+    service = RecordingService()
+    with patch("AgentCrew.modules.tools.registration.register_tool") as register_tool:
+        tool.register(service_instance=service, persistence_service=None, agent=FictionalAgent(), llm_service=None)
+    require(register_tool.call_count == 2, "Memory registration count changed")
+    definitions = {call.args[0]()["function"]["name"]: call.args[0]() for call in register_tool.call_args_list}
+    require(set(definitions) == {"search_memory", "forget_memory_topic"}, "Registered tool set changed")
+    require(
+        set(definitions["search_memory"]["function"]["parameters"]["properties"])
+        == {"query", "from_date", "to_date", "kinds", "memory_ids", "detail", "limit"},
+        "Registered search definition is not the expanded one",
+    )
+
+    with patch("AgentCrew.modules.tools.registration.register_tool") as register_tool:
+        tool.register(service_instance=service, persistence_service=object(), agent=FictionalAgent(), llm_service=None)
+    require(register_tool.call_count == 3, "Persistence registration count changed")
+
+    registrar = (ROOT / "AgentCrew/modules/agents/tool_registrar.py").read_text(encoding="utf-8")
+    require(
+        "register as register_memory" in registrar and '"memory"' in registrar,
+        "LocalAgent registrar no longer binds memory tools",
+    )
+    local_agent = (ROOT / "AgentCrew/modules/agents/local_agent.py").read_text(encoding="utf-8")
+    require("AgentToolRegistrar" in local_agent, "LocalAgent no longer registers tools")
+    cursor_agent = (ROOT / "AgentCrew/modules/agents/cursor_agent.py").read_text(encoding="utf-8")
+    require(
+        "get_memory_retrieve_tool_definition" in cursor_agent
+        and "get_memory_retrieve_tool_handler" in cursor_agent,
+        "Cursor-agent path no longer binds the shared search tool",
+    )
+    for surface in (
+        "AgentCrew/modules/agents/tools/delegate.py",
+        "AgentCrew/modules/agents/agent_runner.py",
+        "AgentCrew/modules/a2a/agent_executor.py",
+        "AgentCrew/modules/acp/turn_executor.py",
+    ):
+        source = (ROOT / surface).read_text(encoding="utf-8")
+        require("LocalAgent" in source, f"{surface} no longer routes through LocalAgent")
+
+    context_manager = (ROOT / "AgentCrew/modules/agents/context_manager.py").read_text(encoding="utf-8")
+    require(
+        "call search_memory before responding" in context_manager,
+        "Automatic headline injection changed",
+    )
+    require(
+        "call search_memory before responding" in cursor_agent,
+        "Cursor headline injection changed",
+    )
+
+
+def main():
+    checks_policy_freeze()
+    checks_tool_definition()
+    checks_handler_contract()
+    checks_legacy_adapter()
+    checks_expansion()
+    checks_rerank()
+    checks_chroma_adapter()
+    checks_registration_surfaces()
+    print("PASS Phase 4 frozen-policy, expanded-tool, fail-open, expansion, rerank, detail, adapter and registration checks")
+    print("Fictional data only; no network, embeddings, private memory or sealed Phase 3 artifacts were used.")
+
+
+if __name__ == "__main__":
+    main()

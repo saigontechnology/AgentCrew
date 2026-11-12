@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from .base_service import BaseMemoryService
 from .memory_worker import MemoryWorker
+from .types import (
+    CandidateSource,
+    ConfidenceBand,
+    MatchReason,
+    MemoryQuery,
+    MemorySearchHit,
+    MemorySearchResult,
+)
 
 if TYPE_CHECKING:
     from chromadb import Collection
@@ -272,6 +280,165 @@ class ChromaMemoryService(BaseMemoryService):
 
         memories = "\n\n".join(output)
         return memories
+
+    def search_structured(self, query: MemoryQuery) -> MemorySearchResult:
+        """Structured Chroma search with server-side scope and bounded results."""
+        collection = self._initialize_collection()
+
+        and_conditions: list[dict[str, Any]] = []
+        if self.session_id.strip():
+            and_conditions.append({"session_id": {"$ne": self.session_id}})
+        if query.agent_name.strip():
+            and_conditions.append({"agent": query.agent_name})
+        if query.from_date is not None:
+            and_conditions.append(
+                {
+                    "date": {
+                        "$gte": int(
+                            datetime.combine(query.from_date, time.min).timestamp()
+                        )
+                    }
+                }
+            )
+        if query.to_date is not None:
+            and_conditions.append(
+                {
+                    "date": {
+                        "$lte": int(
+                            datetime.combine(query.to_date, time.min).timestamp()
+                        )
+                        + 86_399
+                    }
+                }
+            )
+        where = (
+            {"$and": and_conditions}
+            if len(and_conditions) >= 2
+            else and_conditions[0]
+            if and_conditions
+            else None
+        )
+
+        if query.memory_ids:
+            requested = list(dict.fromkeys(query.memory_ids))
+            fetched = collection.get(
+                ids=requested,
+                where=where,
+                include=["documents", "metadatas"],
+            )
+            documents = dict(zip(fetched["ids"], fetched["documents"]))
+            metadatas = dict(zip(fetched["ids"], fetched["metadatas"]))
+            hits = [
+                self._structured_hit(
+                    memory_id,
+                    documents[memory_id],
+                    metadatas.get(memory_id) or {},
+                    None,
+                )
+                for memory_id in requested
+                if memory_id in documents
+            ]
+            return MemorySearchResult(tuple(hits[: query.limit]))
+
+        results = collection.query(
+            query_texts=[query.query],
+            n_results=max(10, min(query.limit, 20)),
+            where=where,
+        )
+        hits = []
+        for memory_id, document, metadata, distance in zip(
+            results["ids"][0],
+            results["documents"][0],
+            results["metadatas"][0],
+            results["distances"][0],
+        ):
+            if distance is None or distance > self.relevant_threshold:
+                continue
+            hits.append(
+                self._structured_hit(memory_id, document, metadata or {}, distance)
+            )
+        kind_hints = {kind.lower() for kind in query.kinds}
+        if kind_hints:
+            hits.sort(key=lambda hit: hit.kind.lower() not in kind_hints)
+        return MemorySearchResult(tuple(hits[: query.limit]))
+
+    def _structured_hit(
+        self,
+        memory_id: str,
+        document: str,
+        metadata: dict[str, Any],
+        distance: float | None,
+    ) -> MemorySearchHit:
+        kind = str(metadata.get("type") or "memory")
+        timestamp = metadata.get("date")
+        try:
+            date_text = (
+                datetime.fromtimestamp(timestamp, tz=UTC).date().isoformat()
+                if isinstance(timestamp, (int, float))
+                else str(timestamp or "unknown")
+            )
+        except Exception:
+            date_text = "unknown"
+        if distance is None:
+            reasons = (
+                MatchReason(CandidateSource.MEMORY_ID, 0, "exact memory id lookup"),
+            )
+            confidence = ConfidenceBand.HIGH
+            score = 1.0
+        else:
+            reasons = (
+                MatchReason(
+                    CandidateSource.SEMANTIC,
+                    0,
+                    f"vector similarity {1 - distance:.2f}",
+                    distance,
+                ),
+            )
+            confidence = (
+                ConfidenceBand.HIGH
+                if distance <= self.relevant_threshold * 0.5
+                else ConfidenceBand.MEDIUM
+                if distance <= self.relevant_threshold * 0.8
+                else ConfidenceBand.LOW
+            )
+            score = 1.0 - distance
+        header = metadata.get("header")
+        return MemorySearchHit(
+            memory_id=str(memory_id),
+            unit_id=kind,
+            date=date_text,
+            cwd=None,
+            kind=kind,
+            headline=str(header)[:180] if header else None,
+            excerpt=(document or "")[:360],
+            reasons=reasons,
+            confidence=confidence,
+            score=score,
+        )
+
+    def get_memory_documents(
+        self,
+        memory_ids: list[str],
+        agent_name: str = "None",
+    ) -> dict[str, str]:
+        """Return full documents for known memory IDs, scoped to one agent."""
+        collection = self._initialize_collection()
+        requested = [
+            str(memory_id)
+            for memory_id in dict.fromkeys(memory_ids)
+            if str(memory_id).strip()
+        ]
+        if not requested:
+            return {}
+        fetched = collection.get(
+            ids=requested,
+            where={"agent": agent_name} if agent_name.strip() else None,
+            include=["documents"],
+        )
+        return {
+            str(memory_id): document
+            for memory_id, document in zip(fetched["ids"], fetched["documents"])
+        }
 
     def cleanup_old_memories(self, months: int = 1) -> int:
         collection = self._initialize_collection()
