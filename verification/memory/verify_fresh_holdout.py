@@ -5,6 +5,7 @@ No private exam files, network, or embedding calls.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, datetime
 import json
 import os
@@ -15,6 +16,13 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+executable = Path(sys.executable)
+if executable.is_symlink():
+    executable = Path(os.path.abspath(sys.executable))
+for site in (executable.parent.parent / "lib").glob("python*/site-packages"):
+    site_path = str(site)
+    if site_path not in sys.path:
+        sys.path.append(site_path)
 
 from AgentCrew.modules.memory.benchmark import BenchmarkError, digest, file_hash, load_fresh_holdout_dataset, record_from_row
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
@@ -229,6 +237,92 @@ def main() -> None:
             corpus, cases, review, sqlite, cache, root / "second-output", collection=Collection(records),
             source_hash="fictional-source", ledger=root / "passing-ledger",
         ))
+        marker = root / "chroma-marker"
+        marker.mkdir(mode=0o700)
+        (marker / "chroma.sqlite3").write_bytes(b"disposable-marker")
+        marker_hash = runner.digest(runner.fingerprint(marker))
+        marker_cache = root / "marker-cache.jsonl"
+        marker_rows = []
+        for line in cache.read_text().splitlines():
+            row = json.loads(line)
+            row["source_fingerprint"] = marker_hash
+            marker_rows.append(row)
+        marker_cache.write_text("".join(json.dumps(row) + "\n" for row in marker_rows))
+        context_sqlite = root / "context.sqlite"
+        context_repository = SQLiteMemoryRepository(context_sqlite)
+        for record in records.values():
+            context_repository.upsert_record(record)
+        sdk_state = {"entered": 0, "exited": 0, "queries": 0, "yielded": None}
+        original_sdk = runner._sdk_collection
+
+        @contextmanager
+        def yielding_sdk(work, collection_name):
+            sdk_state["entered"] += 1
+            yielded = Collection(records)
+            sdk_state["yielded"] = yielded
+
+            def query(*args, **kwargs):
+                if sdk_state["exited"]:
+                    raise SystemExit("context_closed_before_retrieval")
+                sdk_state["queries"] += 1
+                return Collection.query(yielded, *args, **kwargs)
+
+            yielded.query = query
+            try:
+                yield yielded
+            finally:
+                sdk_state["exited"] += 1
+
+        @contextmanager
+        def failing_sdk(work, collection_name):
+            sdk_state["entered"] += 1
+            try:
+                yield BrokenCollection(records)
+            finally:
+                sdk_state["exited"] += 1
+
+        runner._sdk_collection = failing_sdk
+        try:
+            context_ledger = root / "context-setup-ledger"
+            context_ledger.mkdir(mode=0o700)
+            context_output = root / "context-setup-output"
+            context_output.mkdir(mode=0o700)
+            try:
+                runner.run_fresh_lexical_holdout(
+                    corpus, cases, review, context_sqlite, marker_cache, context_output,
+                    chroma_source=marker, ledger=context_ledger,
+                )
+            except BenchmarkError as error:
+                if str(error) != "chroma_corpus_id_mismatch":
+                    raise
+            else:
+                raise SystemExit("yielded_setup_failure_expected")
+            if sdk_state["entered"] != 1 or sdk_state["exited"] != 1 or any(context_ledger.iterdir()):
+                raise SystemExit("yielded_setup_failure_context")
+            supplied = {"entered": sdk_state["entered"]}
+            supplied_output = root / "supplied-collection-output"
+            supplied_output.mkdir(mode=0o700)
+            runner.run_fresh_lexical_holdout(
+                corpus, cases, review, context_sqlite, cache, supplied_output,
+                collection=Collection(records), source_hash="fictional-source",
+                ledger=root / "supplied-collection-ledger",
+            )
+            if sdk_state["entered"] != supplied["entered"]:
+                raise SystemExit("supplied_collection_entered_sdk")
+            runner._sdk_collection = yielding_sdk
+            sdk_state.update({"entered": 0, "exited": 0, "queries": 0, "yielded": None})
+            context_pass_output = root / "context-pass-output"
+            context_pass_output.mkdir(mode=0o700)
+            context_report = runner.run_fresh_lexical_holdout(
+                corpus, cases, review, context_sqlite, marker_cache, context_pass_output,
+                chroma_source=marker, ledger=root / "context-pass-ledger",
+            )
+            if context_report["acceptance"]["status"] != "passed" or sdk_state["yielded"] is None:
+                raise SystemExit("yielded_collection_not_used")
+            if sdk_state["queries"] < 1 or sdk_state["entered"] != 1 or sdk_state["exited"] != 1:
+                raise SystemExit("context_not_closed_after_retrieval")
+        finally:
+            runner._sdk_collection = original_sdk
     finally:
         VoyageEmbeddingFunction.__call__ = original
         if previous is None:

@@ -810,73 +810,77 @@ def run_fresh_lexical_holdout(
     repository = SQLiteMemoryRepository(input_path(sqlite_source), read_only=True)
     assert_candidate(repository, dataset)
     coordinator = MemorySearchCoordinator(repository)
-    if collection is None:
-        check(chroma_source is not None, "fresh_holdout_chroma_source_required")
-        work = output / "chroma"
-        work.mkdir(mode=0o700)
-        source_hash = copy_chroma(private_path(chroma_source), work)
-        collection = _sdk_collection(work, collection_name)
-    chroma = ChromaBaseline(collection, dataset, "cache", Calls(), False, input_path(embedding_cache), source_hash or "", cache_rows=rows)
-    token = reserve_fresh_holdout(dataset, ledger)
+    stack = ExitStack()
+    try:
+        if collection is None:
+            check(chroma_source is not None, "fresh_holdout_chroma_source_required")
+            work = output / "chroma"
+            work.mkdir(mode=0o700)
+            source_hash = copy_chroma(private_path(chroma_source), work)
+            collection = stack.enter_context(_sdk_collection(work, collection_name))
+        chroma = ChromaBaseline(collection, dataset, "cache", Calls(), False, input_path(embedding_cache), source_hash or "", cache_rows=rows)
+        token = reserve_fresh_holdout(dataset, ledger)
 
-    def retrieve(mode: str, case: dict):
-        if mode == "sqlite":
-            return sqlite_hits(coordinator, case, k, None, SQLiteSemanticPolicy(None))
-        return chroma.search(case, k)
+        def retrieve(mode: str, case: dict):
+            if mode == "sqlite":
+                return sqlite_hits(coordinator, case, k, None, SQLiteSemanticPolicy(None))
+            return chroma.search(case, k)
 
-    modes = {}
-    for mode in ("sqlite", "chroma"):
-        evaluated, times, cold = [], [], []
-        errors = cwd_failures = unstable = 0
-        for case in dataset.cases:
-            try:
-                started = time.perf_counter()
-                first = retrieve(mode, case)
-                cold.append((time.perf_counter() - started) * 1000)
-                retrieve(mode, case)
-                last = first
-                for _ in range(repetitions):
+        modes = {}
+        for mode in ("sqlite", "chroma"):
+            evaluated, times, cold = [], [], []
+            errors = cwd_failures = unstable = 0
+            for case in dataset.cases:
+                try:
                     started = time.perf_counter()
-                    last = retrieve(mode, case)
-                    times.append((time.perf_counter() - started) * 1000)
-                    unstable += signature(last) != signature(first)
-                changed = retrieve(mode, {**case, "current_cwd": "benchmark-cwd-invariance-probe"})
-                cwd_failures += signature(changed) != signature(last)
-                evaluated.append(measure(case, last, dataset.records, k))
-            except Exception:
-                errors += 1
-        modes[mode] = {**aggregate(evaluated), "backend_errors": errors, "cwd_invariance_failures": cwd_failures,
-                       "repeat_signature_changes": unstable, "cold_p95_ms": percentile(cold, 0.95),
-                       "p50_ms": percentile(times, 0.5), "p95_ms": percentile(times, 0.95)}
-    sqlite, baseline = modes["sqlite"], modes["chroma"]
-    failures = []
-    leak_keys = ("scope_leaks", "lifecycle_leaks", "deletion_leaks", "excluded_leaks", "unknown_id_leaks",
-                 "duplicate_parent_hits", "cwd_invariance_failures", "repeat_signature_changes", "backend_errors")
-    if any(sqlite[key] or baseline[key] for key in leak_keys):
-        failures.append("leak_or_repeat_failure")
-    if sqlite["recall_at_5"] < baseline["recall_at_5"]:
-        failures.append("recall_regression")
-    if sqlite["precision_at_5"] < baseline["precision_at_5"] - 0.05:
-        failures.append("precision_regression")
-    if sqlite["no_relevant_abstention"] is None or sqlite["no_relevant_abstention"] < 0.95:
-        failures.append("abstention_failure")
-    if sqlite["p95_ms"] >= 100:
-        failures.append("latency_regression")
-    if chroma.calls.embedding or chroma.calls.remote_embedding:
-        failures.append("embedding_call_forbidden")
-    report = {
-        "schema_version": 1, "kind": "fresh-lexical-holdout", "dataset_scope": "fresh-holdout",
-        "not_production_approval": True, "user_acceptance_is_not_semantic_nonoverlap_audit": True,
-        "selected_cases": len(dataset.cases), "reservation_token": token, "code": code_identity(),
-        "corpus_sha256": dataset.corpus_hash, "cases_sha256": dataset.cases_hash,
-        "review_manifest_sha256": dataset.review_manifest_hash, "query_embedding_cache_sha256": cache_hash,
-        "policy": {"name": "lexical-only", "sqlite_semantic_max_distance": None, "k": k, "warmups": warmups, "repetitions": repetitions},
-        "modes": modes, "calls": {"embedding": chroma.calls.embedding, "remote_embedding": chroma.calls.remote_embedding},
-        "acceptance": {"status": "blocked" if failures else "passed", "proposed_only": True, "production_approved": False, "failures": failures},
-    }
-    _write_json(output / "results.json", report)
-    write_text(output / "summary.md", "# Fresh lexical holdout\n\nStatus: " + report["acceptance"]["status"] + "\n\nNot production approval.\n")
-    return report
+                    first = retrieve(mode, case)
+                    cold.append((time.perf_counter() - started) * 1000)
+                    retrieve(mode, case)
+                    last = first
+                    for _ in range(repetitions):
+                        started = time.perf_counter()
+                        last = retrieve(mode, case)
+                        times.append((time.perf_counter() - started) * 1000)
+                        unstable += signature(last) != signature(first)
+                    changed = retrieve(mode, {**case, "current_cwd": "benchmark-cwd-invariance-probe"})
+                    cwd_failures += signature(changed) != signature(last)
+                    evaluated.append(measure(case, last, dataset.records, k))
+                except Exception:
+                    errors += 1
+            modes[mode] = {**aggregate(evaluated), "backend_errors": errors, "cwd_invariance_failures": cwd_failures,
+                           "repeat_signature_changes": unstable, "cold_p95_ms": percentile(cold, 0.95),
+                           "p50_ms": percentile(times, 0.5), "p95_ms": percentile(times, 0.95)}
+        sqlite, baseline = modes["sqlite"], modes["chroma"]
+        failures = []
+        leak_keys = ("scope_leaks", "lifecycle_leaks", "deletion_leaks", "excluded_leaks", "unknown_id_leaks",
+                     "duplicate_parent_hits", "cwd_invariance_failures", "repeat_signature_changes", "backend_errors")
+        if any(sqlite[key] or baseline[key] for key in leak_keys):
+            failures.append("leak_or_repeat_failure")
+        if sqlite["recall_at_5"] < baseline["recall_at_5"]:
+            failures.append("recall_regression")
+        if sqlite["precision_at_5"] < baseline["precision_at_5"] - 0.05:
+            failures.append("precision_regression")
+        if sqlite["no_relevant_abstention"] is None or sqlite["no_relevant_abstention"] < 0.95:
+            failures.append("abstention_failure")
+        if sqlite["p95_ms"] >= 100:
+            failures.append("latency_regression")
+        if chroma.calls.embedding or chroma.calls.remote_embedding:
+            failures.append("embedding_call_forbidden")
+        report = {
+            "schema_version": 1, "kind": "fresh-lexical-holdout", "dataset_scope": "fresh-holdout",
+            "not_production_approval": True, "user_acceptance_is_not_semantic_nonoverlap_audit": True,
+            "selected_cases": len(dataset.cases), "reservation_token": token, "code": code_identity(),
+            "corpus_sha256": dataset.corpus_hash, "cases_sha256": dataset.cases_hash,
+            "review_manifest_sha256": dataset.review_manifest_hash, "query_embedding_cache_sha256": cache_hash,
+            "policy": {"name": "lexical-only", "sqlite_semantic_max_distance": None, "k": k, "warmups": warmups, "repetitions": repetitions},
+            "modes": modes, "calls": {"embedding": chroma.calls.embedding, "remote_embedding": chroma.calls.remote_embedding},
+            "acceptance": {"status": "blocked" if failures else "passed", "proposed_only": True, "production_approved": False, "failures": failures},
+        }
+        _write_json(output / "results.json", report)
+        write_text(output / "summary.md", "# Fresh lexical holdout\n\nStatus: " + report["acceptance"]["status"] + "\n\nNot production approval.\n")
+        return report
+    finally:
+        stack.close()
 
 
 def main() -> int:
