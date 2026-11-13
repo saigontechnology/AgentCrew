@@ -16,6 +16,8 @@ The authorized Phase 3 completion sequence then built combined cache `f6cb3fea�
 
 **Phase 4 implemented under the override (2026-11-12).** MEM-400 through MEM-405 are implemented on branch `feat/sqlite-memory-search-tool` (worktree `AgentCrew-sqlite-search-tool`, based on `2ef1df25`): the `search_memory` definition gained `kinds`, `memory_ids`, `detail` (summary/evidence/full) and a server-bounded `limit` (1–20) with accurate wording; the handler uses structured results through a non-breaking `BaseMemoryService.search_structured` compatibility adapter plus a Chroma override, preserving date validation, fail-open behavior and server-side agent scope; optional query expansion runs at most one bounded memory-LLM call with validated JSON and deterministic fallback only when the deterministic pass returns no hits and the request is not ID-restricted; optional reranking is gated by `MEMORY_RERANK_ENABLED` (default off), accepts known candidate IDs only, and falls back deterministically; result expansion by known memory IDs supports summary, evidence and full-detail modes through an agent-scoped `get_memory_documents` contract; and tool registration was verified across all five surfaces (local interactive agents, jobs and delegation, A2A, ACP, and the Cursor-agent path), with automatic headline injection unchanged. The disposable `verification/memory/verify_phase4.py` verifier asserts the frozen policy parameters, the unchanged measured code hash, the expanded tool contract, fail-open/date validation, expansion/rerank bounds and fallbacks, detail modes, the Chroma adapter scope/threshold/ID behavior, and per-surface registration; all existing offline verifiers still pass and lint is clean apart from two pre-existing-style `TRY004` findings. Phase 4 completion is tool-layer only: the user-visible default memory backend remains Chroma, MEM-002 and MEM-307 remain open, and Phases 5–6 remain blocked.
 
+**PIC authorization of Phase 5 (2026-11-12).** On 2026-11-12 the PIC explicitly authorized implementing the SQLite write path (MEM-500 through MEM-508) on top of the accepted Phase 4 tool layer, while Phase 3 remains recorded as NOT MET and Phase 6 (shadow mode, cutover, default-backend switch, Chroma removal) stays blocked. The write path is implemented on branch `feat/sqlite-memory-write-path` (worktree `AgentCrew-sqlite-write-path`, based on Phase 4 commit `ab18af2a56335d4dbda9d1403d1e9153b85e01bb`): `store_conversation` captures `os.getcwd()` synchronously at queue time and both backends persist it (Chroma metadata gains `cwd`; SQLite writes the existing `memory_record.cwd` column); the backend-neutral `MemoryRecordBuilder` in `AgentCrew/modules/memory/memory_record_builder.py` preserves the current prompts, hooks, fallback and session context exactly, and `MemoryWorker` now orchestrates a pluggable persistence backend (`ChromaMemoryPersistence` for embeddings/metadata/vector candidates, `SQLiteMemoryPersistence` in the new `AgentCrew/modules/memory/sqlite_service.py` for canonical writes) so Chroma and SQLite share one extraction path with no duplicated logic; `SQLiteMemoryService` fulfills the complete `BaseMemoryService` contract with fail-open storage, header listing with session exclusion and no CWD in headers, corpus/evolution methods preserving `evolved_at` behavior, physical forget/delete transactions that remove canonical, units, FTS, entities and tags atomically (verified with a mid-transaction failure trigger leaving no partial deletion and a clean `PRAGMA foreign_key_check`), explicit retention that never deletes at initialization and returns observable counts, bounded exact/entity/FTS consolidation candidates with zero vector use (FTS-sourced candidates additionally pass the frozen-policy `min_overlap` 0.35 word-overlap gate; no embeddings are created), and worker-thread/concurrency ownership verified for concurrent tasks, concurrent sessions, and shutdown that now drains pending operations without lost or duplicated writes. **Code-identity handling:** the retrieval-critical identity files stay pinned per-file to their Phase 4 values in `verify_phase4.py` (`benchmark_memory_retrieval.py`, `extract_memory_calibration.py`, `benchmark.py`, `retrieval.py`, `record_parser.py`, `types.py`, `voyageai_ef.py`), while `sqlite_repository.py` — which gained only appended write-path methods with every existing retrieval method byte-identical — is pinned by a digest over the exact Phase 4 method sources; the combined measured code hash `e42f148d…` therefore no longer applies verbatim once write methods are appended, and the per-file/method pins now prove the retrieval behavior is unchanged. The new disposable `verification/memory/verify_phase5.py` verifier asserts the Phase 5 gate (SQLite writes, reads, forgets, deletions and evolution standalone without Chroma), CWD capture, builder equivalence, header/session behavior, atomicity, retention, bounded vector-free consolidation candidates, concurrency and shutdown draining, fail-open storage, and the frozen policy parameters; all twelve existing offline verifiers still pass on the branch, and lint is clean apart from pre-existing findings in the frozen repository file. Phase 5 completion is write-path only: the user-visible default memory backend remains Chroma, MEM-002 and MEM-307 remain open, and Phase 6/cutover and the default-backend switch remain blocked.
+
 ## Approved decisions
 
 - Use Python's standard `sqlite3` module and SQLite FTS5.
@@ -1003,33 +1005,35 @@ Those earlier exact-lookup observations still miss the proposed <100 ms p95 targ
 
 ### Phase 5 — SQLite write path
 
-- [ ] **MEM-500: Add CWD to memory operation data.**
+- [x] **MEM-500: Add CWD to memory operation data.**
   - Capture it synchronously when the store operation is created.
   - Pass it through hooks and persistence.
-- [ ] **MEM-501: Extract the backend-neutral `MemoryRecordBuilder`.**
+- [x] **MEM-501: Extract the backend-neutral `MemoryRecordBuilder`.**
   - Preserve current prompts, hooks, fallback, and session context.
   - Avoid duplicated Chroma/SQLite extraction logic.
-- [ ] **MEM-502: Implement `SQLiteMemoryService`.**
+- [x] **MEM-502: Implement `SQLiteMemoryService`.**
   - Fulfill the complete `BaseMemoryService` contract.
   - Preserve fail-open storage behavior.
-- [ ] **MEM-503: Implement SQLite header listing and session exclusion.**
+- [x] **MEM-503: Implement SQLite header listing and session exclusion.**
   - Preserve current agent/date behavior.
   - Display CWD only in detailed retrieval results unless explicitly approved for headers.
-- [ ] **MEM-504: Implement corpus/evolution methods.**
+- [x] **MEM-504: Implement corpus/evolution methods.**
   - Preserve prompt-evolution inputs and `evolved_at` behavior.
-- [ ] **MEM-505: Implement physical forget/delete transactions.**
+- [x] **MEM-505: Implement physical forget/delete transactions.**
   - Remove canonical, units, FTS, entities, and tags atomically.
-- [ ] **MEM-506: Implement explicit retention.**
+- [x] **MEM-506: Implement explicit retention.**
   - Do not delete memories during database initialization.
   - Make retention a deliberate operation with observable results.
-- [ ] **MEM-507: Replace vector-based consolidation candidates.**
+- [x] **MEM-507: Replace vector-based consolidation candidates.**
   - Use exact/entity/FTS candidates.
   - Keep consolidation bounded and benchmark its effect.
-- [ ] **MEM-508: Verify thread/concurrency ownership.**
+- [x] **MEM-508: Verify thread/concurrency ownership.**
   - Worker thread.
   - A2A concurrent tasks.
   - ACP concurrent sessions.
   - Shutdown and pending operations.
+
+**Gate — met (2026-11-12, see Status):** New SQLite writes, reads, forgets, deletions and evolution operations pass standalone verification without Chroma (`verify_phase5.py`: the SQLite-only flows never import `chromadb`, and the full existing verifier suite passes on the branch). This closes the Phase 5 write-path items only: the user-visible default memory backend remains Chroma, MEM-002/MEM-307 stay open, and Phase 6/cutover and the default-backend switch remain blocked.
 
 **Gate:** New SQLite writes, reads, forgets, deletions, and evolution operations pass standalone verification without Chroma.
 

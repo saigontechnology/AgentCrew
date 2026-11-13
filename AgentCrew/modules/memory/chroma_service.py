@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from .base_service import BaseMemoryService
-from .memory_worker import MemoryWorker
+from .memory_worker import ChromaMemoryPersistence, MemoryWorker
 from .types import (
     CandidateSource,
     ConfidenceBand,
@@ -66,7 +66,9 @@ class ChromaMemoryService(BaseMemoryService):
 
         self._collection = None
         self.collection_name = collection_name
-        self._worker: MemoryWorker = MemoryWorker(llm_service=self.llm_service)
+        self._worker: MemoryWorker = MemoryWorker(
+            llm_service=self.llm_service, persistence=ChromaMemoryPersistence()
+        )
         self._worker.start()
 
     def ensure_initialized(self) -> None:
@@ -145,6 +147,7 @@ class ChromaMemoryService(BaseMemoryService):
             "agent_name": agent_name,
             "session_id": session_id or self.session_id,
             "timestamp": datetime.now(UTC).isoformat(),
+            "cwd": os.getcwd(),
         }
 
         if self._worker.queue_store(operation_data):

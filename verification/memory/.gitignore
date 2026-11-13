@@ -20,3 +20,4 @@
 !phase3-synthetic-summary.json
 !verify_fresh_holdout.py
 !verify_phase4.py
+!verify_phase5.py

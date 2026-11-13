@@ -6,6 +6,8 @@ No network, embeddings, private memory, or sealed Phase 3 artifacts are used.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import inspect
 import os
 import sys
 from datetime import date
@@ -21,11 +23,11 @@ for site in (executable.parent.parent / "lib").glob("python*/site-packages"):
     if site_path not in sys.path:
         sys.path.append(site_path)
 
-import scripts.benchmark_memory_retrieval as runner
 from AgentCrew.modules.memory import tool
 from AgentCrew.modules.memory.base_service import BaseMemoryService
 from AgentCrew.modules.memory.benchmark import POLICY
 from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
+from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
 from AgentCrew.modules.memory.types import (
     CandidateSource,
     ConfidenceBand,
@@ -50,7 +52,57 @@ FROZEN_POLICY = {
         "cross_source_tie": "diversity-then-stable-id",
     },
 }
-FROZEN_CODE_HASH = "e42f148d8ebf416b72267ed304c615d4f0e91799b9b564f7178f5e436db65faf"
+FROZEN_FILE_HASHES = {
+    "scripts/benchmark_memory_retrieval.py": "306f944191043e3ffc365e1991d09d3166a841cd399ee725ef95b36274227c90",
+    "scripts/extract_memory_calibration.py": "73871314c8b32481085c178817ae2c084e1322d137a9422b7a9a6c0c71a7b186",
+    "AgentCrew/modules/memory/benchmark.py": "09613535d8638d7b7381f4905461919699334fa9db9d79cacf02f4db7b696bd8",
+    "AgentCrew/modules/memory/retrieval.py": "a602e6965cd332a48aa10dee0de395866925a019d9e9085cc3901499dd85fa05",
+    "AgentCrew/modules/memory/record_parser.py": "c27552f2d77d344a37b68a3df3c18b03c81041f54d98e735081c77f16aca2e36",
+    "AgentCrew/modules/memory/types.py": "64a7cd9a321cb624c5aa3c97469d2ecfdd3e9e4e10b1149fb54d738238d1ab06",
+    "AgentCrew/modules/memory/voyageai_ef.py": "503ce1c384b354041a28639d7465c9c9a952f840ff7606d3d51b6eccf653593a",
+}
+PHASE4_REPOSITORY_METHODS = (
+    "__init__",
+    "_candidate",
+    "_connect",
+    "_cosine_distance",
+    "_eligibility",
+    "_ensure_vector_table",
+    "_exact_values",
+    "_prepare_record",
+    "_record",
+    "_semantic_candidates",
+    "_transaction",
+    "_unit_values",
+    "_validate_schema",
+    "_verify_migrated_record",
+    "_write_record",
+    "apply_migration_batch",
+    "candidates",
+    "canonical_checksum",
+    "check_fts5",
+    "check_integrity",
+    "copy_local_document_vectors",
+    "delete_record",
+    "get_record",
+    "migration_counts",
+    "upsert_record",
+    "validate_record",
+    "verify_migration_batch",
+)
+FROZEN_REPOSITORY_METHODS_DIGEST = "8a5903f49667bc2b297c19eca408daa5531de3a40fe0ae65fcb6fa328d90332a"
+
+
+def _repository_methods_digest() -> str:
+    digest = hashlib.sha256()
+    for name in PHASE4_REPOSITORY_METHODS:
+        member = vars(SQLiteMemoryRepository).get(name)
+        if member is None:
+            return ""
+        func = member.__func__ if hasattr(member, "__func__") else member
+        digest.update(name.encode())
+        digest.update(inspect.getsource(func).encode())
+    return digest.hexdigest()
 
 
 def require(condition, message: str) -> None:
@@ -164,12 +216,19 @@ def run_handler(service, agent_name="FictionalAgent", **params):
 
 
 def checks_policy_freeze():
+    for path, expected in FROZEN_FILE_HASHES.items():
+        digest = hashlib.sha256()
+        digest.update(path.encode())
+        digest.update((ROOT / path).read_bytes())
+        require(digest.hexdigest() == expected, f"Retrieval-critical file changed: {path}")
+    require(
+        _repository_methods_digest() == FROZEN_REPOSITORY_METHODS_DIGEST,
+        "Retrieval-critical SQLiteMemoryRepository methods changed",
+    )
     require(POLICY == FROZEN_POLICY, "Frozen retrieval policy changed")
     require(SQLiteSemanticPolicy().max_distance is None, "Semantic cutoff must default to disabled")
     query = MemoryQuery(query="fictional policy probe", agent_name="FictionalAgent", current_session_id="fictional-session")
     require(query.semantic_policy.max_distance is None, "Default query semantic policy changed")
-    identity = runner.code_identity()
-    require(identity["code_hash"] == FROZEN_CODE_HASH, "Measured retrieval code identity changed")
 
 
 def checks_tool_definition():

@@ -1,24 +1,30 @@
+"""Queue-backed memory store worker with backend-neutral record building.
+
+The builder owns extraction (MEM-501); a persistence backend owns storage;
+this worker owns queue/thread lifecycle and the bounded consolidation flow.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import queue
 from datetime import UTC, datetime
 from threading import Event, Thread
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import xmltodict
 from loguru import logger
 
-from AgentCrew.modules.prompts.constants import (
-    CONSOLIDATION_PROMPT,
-    FIRST_TURN_INSTRUCTIONS,
-    MERGE_INSTRUCTIONS,
-    PRE_ANALYZE_PROMPT,
+from AgentCrew.modules.prompts.constants import CONSOLIDATION_PROMPT
+
+from .memory_record_builder import (
+    BuiltMemoryRecord,
+    MemoryRecordBuilder,
+    build_consolidation_query,
+    parse_xml_block,
 )
 
 if TYPE_CHECKING:
-    from typing import Any
-
     from chromadb import Collection, EmbeddingFunction
 
     from AgentCrew.modules.llm.base import BaseLLMService
@@ -27,21 +33,127 @@ DEFAULT_QUEUE_TIMEOUT = 5.0
 MAX_QUEUE_SIZE = 1000
 WORKER_THREAD_NAME = "ChromaMemoryWorker"
 CONSOLIDATION_EVERY_N = 5
+CONSOLIDATION_CANDIDATE_LIMIT = 5
+
+
+class ChromaMemoryPersistence:
+    """Chroma storage adapter: embeddings, metadata and vector candidates."""
+
+    def __init__(self):
+        self._collection: Collection | None = None
+        self._embedding_function: EmbeddingFunction | None = None
+        self._relevant_threashold: float = 1
+        self.context_embedding: list = []
+
+    def set_collection(self, collection: Collection):
+        self._collection = collection
+
+    def set_embedding_fn(self, embedding_fn: EmbeddingFunction):
+        self._embedding_function = embedding_fn
+
+    def set_relevant_threshold(self, relevant_threashold: float):
+        self._relevant_threashold = relevant_threashold
+
+    def readiness_error(self) -> str | None:
+        if self._collection is None:
+            return "Memory worker: collection not set"
+        if self._embedding_function is None:
+            return "Cannot find embedding_function"
+        return None
+
+    def _metadata(self, operation_data: dict[str, Any], built: BuiltMemoryRecord) -> dict[str, Any]:
+        metadata = {
+            "date": built.timestamp,
+            "session_id": operation_data["session_id"],
+            "agent": operation_data["agent_name"],
+            "type": "conversation",
+        }
+        if built.header:
+            metadata["header"] = built.header
+        cwd = operation_data.get("cwd")
+        if cwd:
+            metadata["cwd"] = cwd
+        return metadata
+
+    def persist(self, operation_data: dict[str, Any], built: BuiltMemoryRecord):
+        conversation_embedding = self._embedding_function([built.document])
+        self.context_embedding.append(conversation_embedding)
+        if len(self.context_embedding) > 5:
+            self.context_embedding.pop(0)
+        self._collection.upsert(
+            ids=[f"{operation_data['session_id']}_{operation_data['agent_name']}"],
+            documents=[built.document],
+            embeddings=conversation_embedding,
+            metadatas=[self._metadata(operation_data, built)],
+        )
+
+    def consolidation_candidates(
+        self, operation_data: dict[str, Any], built: BuiltMemoryRecord,
+    ) -> list[dict[str, Any]]:
+        current_session_id = operation_data["session_id"]
+        agent_name = operation_data["agent_name"]
+        where_filter: dict[str, Any] = {
+            "$and": [
+                {"agent": agent_name},
+                {"session_id": {"$ne": current_session_id}},
+            ]
+        }
+        search_query = build_consolidation_query(built.memory_data) or built.document
+        results = self._collection.query(
+            query_texts=[search_query],
+            n_results=CONSOLIDATION_CANDIDATE_LIMIT,
+            where=where_filter,
+        )
+        if not results["ids"] or not results["ids"][0]:
+            return []
+        candidates = []
+        for i in range(len(results["ids"][0])):
+            dist = results["distances"][0][i] if results["distances"] else 99
+            if dist <= self._relevant_threashold:
+                metadata = results["metadatas"][0][i] or {}
+                candidates.append(
+                    {
+                        "id": results["ids"][0][i],
+                        "document": results["documents"][0][i],
+                        "header": metadata.get("header"),
+                    }
+                )
+        return candidates
+
+    def apply_consolidation(
+        self,
+        operation_data: dict[str, Any],
+        built: BuiltMemoryRecord,
+        merged_document: str | None,
+        ids_to_delete: list[str],
+    ):
+        if merged_document is not None:
+            if self._embedding_function is None:
+                logger.error("Cannot find embedding_function")
+                return
+            merged_embedding = self._embedding_function([merged_document])
+            self._collection.upsert(
+                ids=[f"{operation_data['session_id']}_{operation_data['agent_name']}"],
+                documents=[merged_document],
+                embeddings=merged_embedding,
+                metadatas=[self._metadata(operation_data, built)],
+            )
+        if ids_to_delete:
+            self._collection.delete(ids=ids_to_delete)
 
 
 class MemoryWorker:
     def __init__(
         self,
-        embedding_fn: EmbeddingFunction | None = None,
         llm_service: BaseLLMService | None = None,
-        relevant_threashold: float = 1,
+        persistence: Any | None = None,
+        thread_name: str = WORKER_THREAD_NAME,
     ):
-        self._embedding_function = embedding_fn
         self.llm_service = llm_service
-        self._collection: Collection | None = None
-        self._relevant_threashold = relevant_threashold
+        self._persistence = persistence
+        self._builder = MemoryRecordBuilder(llm_service)
+        self._thread_name = thread_name
 
-        self.context_embedding: list = []
         self.current_conversation_context: dict[str, Any] = {}
         self._store_count_by_session: dict[str, int] = {}
 
@@ -49,31 +161,29 @@ class MemoryWorker:
         self._memory_thread: Thread | None = None
         self._memory_stop_event = Event()
 
-    def set_collection(self, collection: Collection):
-        self._collection = collection
+    @property
+    def context_embedding(self) -> list:
+        return getattr(self._persistence, "context_embedding", [])
 
-    def set_relevant_threshold(self, relevant_threashold: float):
-        self._relevant_threashold = relevant_threashold
+    @context_embedding.setter
+    def context_embedding(self, value: list) -> None:
+        if hasattr(self._persistence, "context_embedding"):
+            self._persistence.context_embedding = value
+
+    def set_collection(self, collection: Collection):
+        self._persistence.set_collection(collection)
 
     def set_embedding_fn(self, embedding_fn: EmbeddingFunction):
-        self._embedding_function = embedding_fn
+        self._persistence.set_embedding_fn(embedding_fn)
 
-    def _parse_xml_block(self, text: str, tag_name: str) -> dict[str, Any] | None:
-        open_tag = f"<{tag_name}>"
-        close_tag = f"</{tag_name}>"
-        if open_tag not in text or close_tag not in text:
-            return None
-        start = text.index(open_tag)
-        end = text.index(close_tag) + len(close_tag)
-        xml_block = text[start:end]
-        xml_block = xml_block.replace("&", "&amp;")
-        return xmltodict.parse(xml_block)
+    def set_relevant_threshold(self, relevant_threashold: float):
+        self._persistence.set_relevant_threshold(relevant_threashold)
 
     def start(self):
         if self._memory_thread is None or not self._memory_thread.is_alive():
             self._memory_stop_event.clear()
             self._memory_thread = Thread(
-                target=self._worker_loop, name=WORKER_THREAD_NAME, daemon=True
+                target=self._worker_loop, name=self._thread_name, daemon=True
             )
             self._memory_thread.start()
 
@@ -111,7 +221,7 @@ class MemoryWorker:
 
     def _worker_loop(self):
         loop = asyncio.new_event_loop()
-        while not self._memory_stop_event.is_set():
+        while True:
             try:
                 operation_data = self._conversation_queue.get(
                     timeout=DEFAULT_QUEUE_TIMEOUT
@@ -126,6 +236,8 @@ class MemoryWorker:
                 self._conversation_queue.task_done()
 
             except queue.Empty:
+                if self._memory_stop_event.is_set():
+                    break
                 continue
             except Exception as e:
                 logger.error(f"Memory worker error: {e}")
@@ -133,300 +245,96 @@ class MemoryWorker:
 
     async def _store_conversation_internal(self, operation_data: dict[str, Any]):
         try:
-            collection = self._collection
-            if collection is None:
-                logger.error("Memory worker: collection not set")
+            if self._persistence is None:
+                logger.error("Memory worker: persistence backend not set")
+                return
+            readiness = self._persistence.readiness_error()
+            if readiness:
+                logger.error(readiness)
                 return
 
-            if self._embedding_function is None:
-                logger.error("Cannot find embedding_function")
-                return
-
-            # ── memory.store.before hook ────────────────────────────────
-            from AgentCrew.modules.events.hooks import (
-                HookPoints,
-                HookRegistry,
-            )
-
-            _hooks = HookRegistry.get_instance()
-            _before_ctx = await _hooks.run_before(
-                HookPoints.MEMORY_STORE,
-                operation_data=operation_data,
-            )
-            if _before_ctx is None:
-                logger.info(
-                    "memory.store cancelled by before hook: %s",
-                    operation_data.get("operation_id", ""),
-                )
-                return
-            operation_data = _before_ctx["operation_data"]
-            # ─────────────────────────────────────────────────────────────
-
-            user_message = operation_data["user_message"]
-            assistant_messages = operation_data.get("assistant_messages") or []
-            assistant_messages = [
-                message.strip()
-                for message in assistant_messages
-                if isinstance(message, str) and message.strip()
-            ]
-            assistant_response_for_memory = "\n\n".join(
-                f"[Assistant message {index}]\n{message}"
-                for index, message in enumerate(assistant_messages, start=1)
-            )
-            agent_name = operation_data["agent_name"]
             session_id = operation_data["session_id"]
-
-            memory_data = None
-            retried = 0
-            if self.llm_service:
-                while retried < 3:
-                    analyzed_text = None
-                    try:
-                        if self.current_conversation_context.get(session_id, ""):
-                            analyzed_prompt = PRE_ANALYZE_PROMPT.replace(
-                                "{context_instructions}",
-                                MERGE_INSTRUCTIONS,
-                            ).replace(
-                                "{conversation_context}",
-                                f"""<PREVIOUS_CONVERSATION_CONTEXT>
-        {self.current_conversation_context[session_id]}
-        </PREVIOUS_CONVERSATION_CONTEXT>""",
-                            )
-                        else:
-                            analyzed_prompt = PRE_ANALYZE_PROMPT.replace(
-                                "{context_instructions}",
-                                FIRST_TURN_INSTRUCTIONS,
-                            ).replace("{conversation_context}", "")
-                        analyzed_prompt = (
-                            analyzed_prompt.replace(
-                                "{current_date}",
-                                datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                            )
-                            .replace("{user_message}", user_message)
-                            .replace(
-                                "{assistant_response}", assistant_response_for_memory
-                            )
-                        )
-                        analyzed_text = await self.llm_service.process_message(
-                            analyzed_prompt
-                        )
-                        if (
-                            "<MEMORY>" not in analyzed_text
-                            or "</MEMORY>" not in analyzed_text
-                        ):
-                            raise ValueError(
-                                "LLM response missing <MEMORY>...</MEMORY> block"
-                            )
-                        memory_data = self._parse_xml_block(analyzed_text, "MEMORY")
-                        if memory_data is None:
-                            raise ValueError("Failed to parse <MEMORY> XML block")
-                        logger.debug(f"Memory data: {memory_data}")
-                        break
-                    except Exception as e:
-                        analyzed_preview = None
-                        if isinstance(analyzed_text, str):
-                            analyzed_preview = analyzed_text[:500]
-                        logger.warning(
-                            f"Error processing conversation with LLM on retry {retried + 1}/3: {e!s} | analyzed_preview={analyzed_preview}",
-                        )
-                        retried += 1
-                        continue
-
-            if memory_data is None:
-                memory_data = {
-                    "MEMORY": {
-                        "DATE": datetime.now(UTC).strftime("%Y-%m-%d"),
-                        "CONVERSATION_NOTES": {
-                            "NOTE": [user_message, assistant_response_for_memory]
-                        },
-                    }
-                }
-
-            # ── memory.store.after hook ─────────────────────────────────
-            # Run immediately after final memory_data creation (LLM or
-            # fallback) and BEFORE deriving any state from it so that
-            # after-hook mutations affect all derived values: header,
-            # serialized document, embedding, cache, and metadata.
-            _after_envelope: dict[str, Any] = {
-                "memory_data": memory_data,
-            }
-            _modified = await _hooks.run_after(
-                HookPoints.MEMORY_STORE,
-                result=_after_envelope,
-                operation_data=operation_data,
+            built = await self._builder.build(
+                operation_data,
+                self.current_conversation_context.get(session_id, ""),
             )
-            if isinstance(_modified, dict) and isinstance(
-                _modified.get("memory_data"), dict
-            ):
-                memory_data = _modified["memory_data"]
-            # ─────────────────────────────────────────────────────────────
+            if built is None:
+                return
+            self.current_conversation_context[session_id] = built.document
 
-            timestamp = datetime.now(UTC).timestamp()
-
-            memory_header = memory_data["MEMORY"].get("HEAD", None)
-            conversation_document = xmltodict.unparse(
-                memory_data, pretty=True, full_document=False
-            )
-            self.current_conversation_context[session_id] = conversation_document
-
-            conversation_embedding = self._embedding_function([conversation_document])
-            self.context_embedding.append(conversation_embedding)
-            if len(self.context_embedding) > 5:
-                self.context_embedding.pop(0)
-
-            metadata = {
-                "date": timestamp,
-                "session_id": session_id,
-                "agent": agent_name,
-                "type": "conversation",
-            }
-            if memory_header:
-                metadata["header"] = memory_header
-
-            collection.upsert(
-                ids=[f"{session_id}_{agent_name}"],
-                documents=[conversation_document],
-                embeddings=conversation_embedding,
-                metadatas=[metadata],
-            )
+            self._persistence.persist(operation_data, built)
 
             logger.debug(f"Stored conversation: {operation_data['operation_id']}")
 
-            if session_id not in self._store_count_by_session:
-                self._store_count_by_session[session_id] = 0
-            count = self._store_count_by_session[session_id]
+            count = self._store_count_by_session.get(session_id, 0)
             if count % CONSOLIDATION_EVERY_N == 0:
-                await self._consolidate_related_memories(
-                    current_document=conversation_document,
-                    current_id=f"{session_id}_{agent_name}",
-                    current_metadata=metadata,
-                    agent_name=agent_name,
-                    collection=collection,
-                )
-            self._store_count_by_session[session_id] += 1
+                await self._consolidate_related_memories(operation_data, built)
+            self._store_count_by_session[session_id] = count + 1
 
         except Exception as e:
             logger.error(
-                f"Failed to store conversation {operation_data['operation_id']}: {e}"
+                f"Failed to store conversation {operation_data.get('operation_id')}: {e}"
             )
 
     async def _consolidate_related_memories(
         self,
-        current_document: str,
-        current_id: str,
-        current_metadata: dict[str, Any],
-        agent_name: str,
-        collection: Collection,
+        operation_data: dict[str, Any],
+        built: BuiltMemoryRecord,
     ):
         try:
-            current_session_id = current_metadata.get("session_id", "")
-            where_filter: dict[str, Any] = {
-                "$and": [
-                    {"agent": agent_name},
-                    {"session_id": {"$ne": current_session_id}},
-                ]
-            }
-
-            search_query = current_document
-            try:
-                mem_dict = xmltodict.parse(current_document)
-                mem = mem_dict.get("MEMORY", {})
-                query_parts = []
-                if mem.get("HEAD"):
-                    query_parts.append(mem["HEAD"])
-                flow = mem.get("FLOW", {})
-                if isinstance(flow, dict):
-                    for flow_field in ("INTENT", "EXPLORATION", "OUTCOME"):
-                        if flow.get(flow_field):
-                            query_parts.append(flow[flow_field])
-                elif isinstance(flow, str) and flow:
-                    query_parts.append(flow)
-                context = mem.get("CONTEXT")
-                if context and not query_parts:
-                    query_parts.append(context)
-                entities = mem.get("ENTITIES", {}) or {}
-                entity_list = entities.get("ENTITY", [])
-                if isinstance(entity_list, dict):
-                    entity_list = [entity_list]
-                for entity in entity_list:
-                    if isinstance(entity, dict) and entity.get("NAME"):
-                        query_parts.append(entity["NAME"])
-                if query_parts:
-                    search_query = " ".join(query_parts)
-            except Exception:
-                logger.debug("Failed to build search query from entities")
-
-            results = collection.query(
-                query_texts=[search_query],
-                n_results=5,
-                where=where_filter,
+            candidates = self._persistence.consolidation_candidates(
+                operation_data, built
             )
-
-            if not results["ids"] or not results["ids"][0]:
-                return
-
-            candidates = []
-            for i in range(len(results["ids"][0])):
-                dist = results["distances"][0][i] if results["distances"] else 99
-                if dist <= self._relevant_threashold:
-                    candidates.append(
-                        {
-                            "id": results["ids"][0][i],
-                            "document": results["documents"][0][i],  # type: ignore
-                            "metadata": results["metadatas"][0][i],  # type: ignore
-                            "distance": dist,
-                        }
-                    )
-
             if not candidates:
                 return
 
-            current_headline = current_metadata.get("header", "<no headline>")
-            candidate_labels = [
-                f'"{c["metadata"].get("header", "<no headline>")}" ({c["id"]})'
-                for c in candidates
-            ]
+            current_headline = built.header or "<no headline>"
+            agent_name = operation_data["agent_name"]
+            candidate_labels = []
+            for candidate in candidates:
+                label = candidate.get("header") or "<no headline>"
+                candidate_labels.append(f'"{label}" ({candidate["id"]})')
             logger.info(
                 f"Consolidation candidates for {agent_name}: "
                 f'current="{current_headline}" -> comparing against '
                 f"{len(candidates)} memories: [{', '.join(candidate_labels)}]"
             )
 
-            await self._merge_with_candidates(
-                current_document,
-                current_id,
-                current_metadata,
-                candidates,
-                agent_name,
-                collection,
+            merged_document, ids_to_delete = await self._merge_with_candidates(
+                operation_data, built, candidates
             )
+            if merged_document is not None or ids_to_delete:
+                self._persistence.apply_consolidation(
+                    operation_data, built, merged_document, ids_to_delete
+                )
+            if merged_document is not None:
+                session_id = operation_data.get("session_id", "")
+                if session_id:
+                    self.current_conversation_context[session_id] = merged_document
         except Exception as e:
             logger.warning(f"Consolidation failed (non-fatal): {e}")
 
     async def _merge_with_candidates(
         self,
-        current_document: str,
-        current_id: str,
-        current_metadata: dict[str, Any],
+        operation_data: dict[str, Any],
+        built: BuiltMemoryRecord,
         candidates: list[dict[str, Any]],
-        agent_name: str,
-        collection: Collection,
-    ):
+    ) -> tuple[str | None, list[str]]:
         if not self.llm_service:
-            return
+            return None, []
 
         candidates_xml = "\n".join(
-            f'<EXISTING_MEMORY id="{c["id"]}">\n{c["document"]}\n</EXISTING_MEMORY>'
-            for c in candidates
+            f'<EXISTING_MEMORY id="{candidate["id"]}">\n{candidate["document"]}\n</EXISTING_MEMORY>'
+            for candidate in candidates
         )
 
         prompt = (
             CONSOLIDATION_PROMPT.replace(
                 "{current_date}", datetime.now(UTC).strftime("%Y-%m-%d")
             )
-            .replace("{current_memory}", current_document)
+            .replace("{current_memory}", built.document)
             .replace("{existing_memories}", candidates_xml)
-            .replace("{agent_name}", agent_name)
+            .replace("{agent_name}", operation_data["agent_name"])
         )
 
         result_text = None
@@ -441,36 +349,23 @@ class MemoryWorker:
                 continue
 
         if not result_text or "<CONSOLIDATION_RESULT>" not in result_text:
-            return
+            return None, []
 
-        await self._apply_consolidation(
-            result_text,
-            current_id,
-            current_metadata,
-            candidates,
-            agent_name,
-            collection,
+        return self._parse_consolidation_result(
+            result_text, candidates, operation_data["agent_name"]
         )
 
-    async def _apply_consolidation(
+    def _parse_consolidation_result(
         self,
         result_text: str,
-        current_id: str,
-        current_metadata: dict[str, Any],
         candidates: list[dict[str, Any]],
         agent_name: str,
-        collection: Collection,
-    ):
-
-        if self._embedding_function is None:
-            logger.error("Cannot find embedding_function")
-            return
-
+    ) -> tuple[str | None, list[str]]:
         try:
-            parsed = self._parse_xml_block(result_text, "CONSOLIDATION_RESULT")
+            parsed = parse_xml_block(result_text, "CONSOLIDATION_RESULT")
             if parsed is None:
                 logger.warning("Failed to parse <CONSOLIDATION_RESULT> XML block")
-                return
+                return None, []
 
             actions = parsed["CONSOLIDATION_RESULT"].get("ACTION", [])
             if isinstance(actions, dict):
@@ -486,8 +381,8 @@ class MemoryWorker:
             keep_count = 0
             final_merged_doc = None
             candidate_headers = {
-                c["id"]: c["metadata"].get("header", "<no headline>")
-                for c in candidates
+                candidate["id"]: candidate.get("header") or "<no headline>"
+                for candidate in candidates
             }
             decision_labels = []
 
@@ -526,23 +421,12 @@ class MemoryWorker:
 
             if final_merged_doc is not None:
                 logger.info(f"Consolidated memory preview: {final_merged_doc[:300]}...")
-                merged_embedding = self._embedding_function([final_merged_doc])
-                collection.upsert(
-                    ids=[current_id],
-                    documents=[final_merged_doc],
-                    embeddings=merged_embedding,
-                    metadatas=[current_metadata],
-                )
-                session_id = current_metadata.get("session_id", "")
-                if session_id:
-                    self.current_conversation_context[session_id] = final_merged_doc
-
-            if ids_to_delete:
-                collection.delete(ids=ids_to_delete)
 
             logger.info(
                 f"Consolidation for {agent_name}: "
                 f"merged {merge_count}, discarded {discard_count}, kept {keep_count}"
             )
+            return final_merged_doc, ids_to_delete
         except Exception as e:
             logger.warning(f"Failed to apply consolidation (non-fatal): {e}")
+            return None, []

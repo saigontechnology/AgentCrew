@@ -684,3 +684,243 @@ class SQLiteMemoryRepository:
             if connection.execute("PRAGMA foreign_key_check").fetchone():
                 raise SQLiteMemoryError("Memory foreign key check failed")
             connection.execute("INSERT INTO memory_fts(memory_fts,rank) VALUES('integrity-check',1)")
+
+    def list_headers(
+        self,
+        agent_name: str,
+        exclude_session_id: str | None = None,
+        from_ts: float | None = None,
+        to_ts: float | None = None,
+        limit: int = 20,
+    ) -> list[str]:
+        """Newest-first header lines for one agent, without CWD (MEM-503)."""
+        clauses = ["agent_name=?", "status='active'", "superseded_by IS NULL", "header IS NOT NULL"]
+        values: list = [agent_name]
+        if exclude_session_id:
+            clauses.append("(session_id IS NULL OR session_id!=?)")
+            values.append(exclude_session_id)
+        if from_ts is not None:
+            clauses.append("created_at>=?")
+            values.append(from_ts)
+        if to_ts is not None:
+            clauses.append("created_at<=?")
+            values.append(to_ts)
+        with self._transaction() as connection:
+            rows = connection.execute(
+                f"SELECT header, created_at FROM memory_record WHERE {' AND '.join(clauses)} "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*values, limit),
+            ).fetchall()
+        headers = []
+        for row in rows:
+            if row["created_at"] and row["created_at"] > 0:
+                try:
+                    stamp = datetime.fromtimestamp(row["created_at"], tz=UTC).strftime("%Y-%m-%d %H:%M")
+                except (OverflowError, OSError, ValueError):
+                    stamp = "unknown"
+                headers.append(f"{row['header']} ({stamp})")
+            else:
+                headers.append(row["header"])
+        return headers
+
+    def agent_records(
+        self,
+        agent_name: str,
+        max_items: int = 100,
+        exclude_session_id: str | None = None,
+    ) -> list[MemoryRecord]:
+        """Newest-first corpus records for one agent, excluding evolved memories (MEM-504)."""
+        clauses = ["agent_name=?", "status='active'", "superseded_by IS NULL", "evolved_at IS NULL"]
+        values: list = [agent_name]
+        if exclude_session_id:
+            clauses.append("(session_id IS NULL OR session_id!=?)")
+            values.append(exclude_session_id)
+        with self._transaction() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM memory_record WHERE {' AND '.join(clauses)} "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*values, max_items),
+            ).fetchall()
+        return [self._record(row) for row in rows]
+
+    def mark_records_evolved(self, memory_ids: list[str], agent_name: str, evolved_at: str) -> int:
+        """Stamp evolved_at on owned records; returns the number marked (MEM-504)."""
+        unique = list(
+            dict.fromkeys(str(memory_id) for memory_id in memory_ids if str(memory_id).strip())
+        )
+        if not unique:
+            return 0
+        placeholders = ",".join("?" for _ in unique)
+        with self._transaction(write=True) as connection:
+            return connection.execute(
+                f"UPDATE memory_record SET evolved_at=? WHERE agent_name=? AND id IN ({placeholders})",
+                (evolved_at, agent_name, *unique),
+            ).rowcount
+
+    def delete_records(self, memory_ids: list[str], agent_name: str) -> int:
+        """Physically remove owned records and every derived row in one transaction (MEM-505)."""
+        unique = list(
+            dict.fromkeys(str(memory_id) for memory_id in memory_ids if str(memory_id).strip())
+        )
+        if not unique:
+            return 0
+        placeholders = ",".join("?" for _ in unique)
+        with self._transaction(write=True) as connection:
+            return connection.execute(
+                f"DELETE FROM memory_record WHERE agent_name=? AND id IN ({placeholders})",
+                (agent_name, *unique),
+            ).rowcount
+
+    def delete_records_by_session(self, session_id: str, agent_name: str | None = None) -> int:
+        """Physically remove every record of one conversation session (MEM-505)."""
+        clauses = ["session_id=?"]
+        values: list = [session_id]
+        if agent_name:
+            clauses.append("agent_name=?")
+            values.append(agent_name)
+        with self._transaction(write=True) as connection:
+            return connection.execute(
+                f"DELETE FROM memory_record WHERE {' AND '.join(clauses)}", values,
+            ).rowcount
+
+    def delete_records_matching(
+        self,
+        fts_expression: str,
+        agent_name: str,
+        from_ts: float | None = None,
+        to_ts: float | None = None,
+        limit: int = 100,
+    ) -> int:
+        """Physically remove agent-owned records whose units match an FTS expression (MEM-505)."""
+        if not fts_expression.strip():
+            return 0
+        clauses = ["m.agent_name=?", "m.status='active'", "m.superseded_by IS NULL"]
+        values: list = [fts_expression, agent_name]
+        if from_ts is not None:
+            clauses.append("m.created_at>=?")
+            values.append(from_ts)
+        if to_ts is not None:
+            clauses.append("m.created_at<=?")
+            values.append(to_ts)
+        with self._transaction(write=True) as connection:
+            rows = connection.execute(
+                f"""SELECT DISTINCT m.id FROM memory_record m
+                JOIN retrieval_unit u ON u.memory_id=m.id
+                JOIN memory_fts ON memory_fts.rowid=u.rowid
+                WHERE memory_fts MATCH ? AND {' AND '.join(clauses)}
+                ORDER BY m.created_at DESC LIMIT ?""",
+                (*values, limit),
+            ).fetchall()
+            ids = [row[0] for row in rows]
+            if not ids:
+                return 0
+            placeholders = ",".join("?" for _ in ids)
+            return connection.execute(
+                f"DELETE FROM memory_record WHERE id IN ({placeholders})", ids,
+            ).rowcount
+
+    def delete_records_older_than(self, cutoff_ts: float, agent_name: str | None = None) -> int:
+        """Explicit retention: remove records created before a cutoff (MEM-506)."""
+        clauses = ["created_at<?"]
+        values: list = [cutoff_ts]
+        if agent_name:
+            clauses.append("agent_name=?")
+            values.append(agent_name)
+        with self._transaction(write=True) as connection:
+            return connection.execute(
+                f"DELETE FROM memory_record WHERE {' AND '.join(clauses)}", values,
+            ).rowcount
+
+    def consolidation_candidates(
+        self,
+        memory_id: str,
+        agent_name: str,
+        fts_expression: str,
+        limit: int = 5,
+    ) -> list[dict]:
+        """Bounded exact/entity/FTS consolidation candidates; vectors are never used (MEM-507)."""
+        with self._transaction() as connection:
+            current = connection.execute(
+                "SELECT session_id FROM memory_record WHERE id=? AND agent_name=?",
+                (memory_id, agent_name),
+            ).fetchone()
+            if current is None:
+                return []
+            exclude_session = current["session_id"]
+            candidates: dict[str, dict] = {}
+            for table in ("memory_entity", "memory_tag"):
+                if len(candidates) >= limit:
+                    break
+                rows = connection.execute(
+                    f"""SELECT DISTINCT m.id, m.document, m.header FROM {table} x
+                    JOIN retrieval_unit cu ON cu.id=x.unit_id
+                    JOIN {table} e ON e.normalized_value=x.normalized_value
+                    JOIN retrieval_unit u ON u.id=e.unit_id
+                    JOIN memory_record m ON m.id=u.memory_id
+                    WHERE cu.memory_id=? AND m.agent_name=? AND m.id!=?
+                    AND (m.session_id IS NULL OR m.session_id!=?)
+                    AND m.status='active' AND m.superseded_by IS NULL
+                    ORDER BY m.created_at DESC LIMIT ?""",
+                    (memory_id, agent_name, memory_id, exclude_session, limit),
+                ).fetchall()
+                for row in rows:
+                    candidates.setdefault(
+                        row["id"],
+                        {
+                            "id": row["id"],
+                            "document": row["document"],
+                            "header": row["header"],
+                            "source": "exact",
+                        },
+                    )
+            for candidate in candidates.values():
+                candidate["evidence"] = self._unit_evidence(connection, candidate["id"])
+            if fts_expression.strip() and len(candidates) < limit:
+                rows = connection.execute(
+                    """SELECT DISTINCT m.id, m.document, m.header FROM retrieval_unit u
+                    JOIN memory_fts ON memory_fts.rowid=u.rowid
+                    JOIN memory_record m ON m.id=u.memory_id
+                    WHERE memory_fts MATCH ? AND m.agent_name=? AND m.id!=?
+                    AND (m.session_id IS NULL OR m.session_id!=?)
+                    AND m.status='active' AND m.superseded_by IS NULL
+                    ORDER BY bm25(memory_fts,6.0,4.0,1.0,8.0) LIMIT ?""",
+                    (
+                        fts_expression,
+                        agent_name,
+                        memory_id,
+                        exclude_session,
+                        limit - len(candidates),
+                    ),
+                ).fetchall()
+                for row in rows:
+                    candidates.setdefault(
+                        row["id"],
+                        {
+                            "id": row["id"],
+                            "document": row["document"],
+                            "header": row["header"],
+                            "source": "fts",
+                        },
+                    )
+            for candidate in candidates.values():
+                if "evidence" not in candidate:
+                    candidate["evidence"] = self._unit_evidence(connection, candidate["id"])
+            return list(candidates.values())[:limit]
+
+    def _unit_evidence(self, connection, memory_id: str) -> str:
+        """Bounded concatenation of one record's unit texts for lexical gating."""
+        rows = connection.execute(
+            "SELECT text FROM retrieval_unit WHERE memory_id=? ORDER BY id",
+            (memory_id,),
+        ).fetchall()
+        return " ".join(row[0] for row in rows)[:2000]
+
+    def latest_session_record(self, session_id: str) -> MemoryRecord | None:
+        """Newest active record of one conversation session, across agents."""
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM memory_record WHERE session_id=? AND status='active' "
+                "ORDER BY created_at DESC, id DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            return self._record(row) if row else None
