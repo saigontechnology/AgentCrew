@@ -347,13 +347,14 @@ def memory_instruction_prompt():
       - When User references to past interactions
     </Memory_Triggers>
     <Search_Strategy>
-      - Use specific, descriptive queries
+      - Use specific, descriptive queries with distinctive identifiers, names, and technical terms; exact words and phrases are matched and filler words are discarded
       - Combine related concepts with spaces
-      - Include temporal indicators when relevant
-      - Include time filters when applicable
-      - Balance specificity with breadth based on need
-      - Use kinds to hint which memory kinds matter most
-      - Reuse memory_ids from earlier results to expand a specific record
+      - Use kinds to hint which memory kinds matter most; hinted kinds rank higher and admit more borderline matches
+      - Include from_date/to_date filters (YYYY-MM-DD) when the timeframe is known
+      - Results are short summaries; call again with the returned memory_ids and detail='evidence' or 'full' to expand a specific record
+      - If search returns nothing, rephrase with different vocabulary or split the question; an automatic paraphrase retry already ran once
+      - Raise limit (up to 20) only when browsing broadly across sessions, not for a single known fact
+      - "No relevant memories found." means nothing met the relevance bar; prefer concluding the memory does not exist over guessing
       - Request detail='full' sparingly; prefer summary or evidence
     </Search_Strategy>
     <Memory_Management>
