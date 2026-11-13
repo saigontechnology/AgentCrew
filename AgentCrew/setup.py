@@ -477,11 +477,13 @@ class ApplicationSetup:
 
         memory_service = None
         context_service = None
+        global_config = GlobalConfig().read()
+        global_settings = global_config.get("global_settings", {})
         if need_memory:
-            from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
             from AgentCrew.modules.memory.context_persistent import (
                 ContextPersistenceService,
             )
+            from AgentCrew.modules.memory.engine_selection import resolve_memory_engine
 
             memory_provider = memory_llm or provider
             memory_llm_svc = llm_manager.initialize_standalone_service(memory_provider)
@@ -494,12 +496,36 @@ class ApplicationSetup:
             else:
                 memory_llm_svc.model = llm_service.model
 
-            memory_service = ChromaMemoryService(llm_service=memory_llm_svc)
+            memory_engine = resolve_memory_engine(global_settings)
+            if memory_engine == "sqlite":
+                from AgentCrew.modules.memory.engine_selection import (
+                    chroma_source_path,
+                    ensure_sqlite_store,
+                    sqlite_migration_work_path,
+                    sqlite_store_path,
+                )
+
+                memory_db_path = ensure_sqlite_store(
+                    sqlite_store_path(),
+                    chroma_source_path(),
+                    sqlite_migration_work_path(),
+                )
+                from AgentCrew.modules.memory.sqlite_service import SQLiteMemoryService
+
+                memory_service = SQLiteMemoryService(
+                    db_path=memory_db_path, llm_service=memory_llm_svc
+                )
+                logger.info("SQLite memory service initialized")
+            else:
+                from AgentCrew.modules.memory.engine_selection import require_chromadb
+
+                require_chromadb()
+                from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
+
+                memory_service = ChromaMemoryService(llm_service=memory_llm_svc)
+                logger.info("Chroma memory service initialized")
 
             context_service = ContextPersistenceService()
-
-        global_config = GlobalConfig().read()
-        global_settings = global_config.get("global_settings", {})
         context_shrink_enabled = global_settings.get("auto_context_shrink", True)
         tool_result_summary_enabled = global_settings.get(
             "tool_result_summary_enabled", True

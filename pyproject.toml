@@ -25,13 +25,11 @@ dependencies = [
   "pyperclip==1.11.0",
   "tavily-python==0.8.0",
   "pillow==12.3.0",
-  "chromadb==1.5.9",
   "openai==3.3.1",
   "mcp==2.1.1",
   "google-genai==2.20.0",
   "markdown==3.10.3",
   "tree-sitter-language-pack==1.15.8",
-  "voyageai==0.5.0",
   "numpy==1.26.4; python_version < '3.13' and sys_platform == 'darwin'",
   "pywin32; sys_platform == 'win32'",
   "pyobjc; sys_platform == 'darwin'",
@@ -55,6 +53,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+chromadb = ["chromadb==1.5.9", "voyageai==0.5.0"]
 cpu = [
   "torch==2.11.0",
   "torchvision==0.26.0",
