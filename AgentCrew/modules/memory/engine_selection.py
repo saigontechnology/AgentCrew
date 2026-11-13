@@ -72,15 +72,22 @@ def chromadb_install_hint() -> str:
     )
 
 
-def require_chromadb() -> None:
-    """Fail fast with install instructions when chromadb is not importable."""
+def require_chromadb(reason: str | None = None) -> None:
+    """Fail fast with install instructions when chromadb is not importable.
+
+    The default message fits the engine=chromadb selection; callers that need
+    chromadb for another purpose pass their own reason.
+    """
     try:
         import chromadb  # noqa: F401
     except ImportError as error:
-        raise MemoryEngineError(
+        message = (
             "memory_engine is 'chromadb' but the chromadb package is not installed. "
             f"{chromadb_install_hint()}"
-        ) from error
+            if reason is None
+            else reason
+        )
+        raise MemoryEngineError(message) from error
 
 
 def _is_non_chroma_name(name: str) -> bool:
@@ -164,7 +171,9 @@ def _production_snapshot(source: Path, work_dir: Path, collection: str, resume: 
     shutil.copytree(
         source,
         backup,
-        ignore=shutil.ignore_patterns(*_NON_CHROMA_NAMES, *_NON_CHROMA_PREFIXES),
+        ignore=shutil.ignore_patterns(
+            *_NON_CHROMA_NAMES, *(f"{prefix}*" for prefix in _NON_CHROMA_PREFIXES)
+        ),
     )
     if _production_fingerprint(source) != source_files or fingerprint(backup) != source_files:
         raise MigrationError("source_unstable_during_copy")
@@ -342,7 +351,12 @@ def ensure_sqlite_store(
             )
         logger.info("No SQLite memory store found; starting with an empty store")
         return db_path
-    require_chromadb()
+    require_chromadb(
+        f"Chroma memory data found at '{chroma_source}'; the automatic migration to SQLite "
+        "needs the chromadb package to read it. Install with 'uv sync --extra chromadb' or "
+        "'pip install \"agentcrew-ai[chromadb]\"', or migrate manually with "
+        "scripts/migrate_chroma_memory_to_sqlite.py, then start again."
+    )
     logger.info(
         f"Chroma memory data found at '{chroma_source}'; running the automatic migration to SQLite"
     )

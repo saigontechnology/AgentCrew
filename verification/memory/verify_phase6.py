@@ -204,7 +204,15 @@ def checks_fail_fast_without_chromadb() -> None:
                 text = str(error)
                 require("uv sync --extra chromadb" in text, "Fail-fast must mention the uv extra")
                 require("agentcrew-ai[chromadb]" in text, "Fail-fast must mention the pip extra")
-                require("memory_engine" in text, "Fail-fast must mention the engine switchback")
+                require("automatic migration" in text, "Fail-fast must explain the migration need")
+                require(
+                    "migrate_chroma_memory_to_sqlite" in text,
+                    "Fail-fast must mention the manual migration fallback",
+                )
+                require(
+                    "memory_engine is 'chromadb'" not in text,
+                    "Migration fail-fast must not claim the engine is chromadb",
+                )
             require(not db.exists(), "Fail-fast must never silently start an empty store")
         finally:
             if sentinel is None:
