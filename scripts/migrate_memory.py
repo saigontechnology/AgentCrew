@@ -16,6 +16,7 @@ import subprocess
 import sys
 import traceback
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -85,6 +86,7 @@ def require_untracked_source(source: Path) -> None:
     """Refuse source files tracked by the source directory's enclosing Git repo."""
     result = subprocess.run(
         ["git", "-c", "core.fsmonitor=false", "ls-files", "--", "."],
+        check=False,
         cwd=source,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -287,14 +289,12 @@ def operate(options: OperatorOptions) -> dict:
                 "production_backend_changed": False,
                 "phase4_started": False,
             }
-            try:
+            with suppress(Exception):
                 migration._write_json(owned / "operator-error.json", failure)
                 diagnostic = migration._path(owned / "operator.log")
                 with diagnostic.open("a", encoding="utf-8") as stream:
                     os.chmod(diagnostic, 0o600)
                     traceback.print_exc(file=stream)
-            except Exception:
-                pass
         raise OperatorFailure(stage, code) from None
 
 

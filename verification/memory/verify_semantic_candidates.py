@@ -122,7 +122,7 @@ def tie_candidate(memory_id, text, source, distance=None):
 
 def checks_policy():
     for invalid in (-0.01, 2.01, 10**1000, math.nan, math.inf, -math.inf, True, "0.2"):
-        rejects(lambda: SQLiteSemanticPolicy(invalid))
+        rejects(lambda invalid=invalid: SQLiteSemanticPolicy(invalid))
     for invalid in (
         None,
         10**1000,

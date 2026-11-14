@@ -422,9 +422,9 @@ def get_memory_retrieve_tool_handler(
                     f"limit must be an integer between 1 and {MAX_MEMORY_LIMIT}. Try again."
                 )
             if not isinstance(kinds, list):
-                raise ValueError("kinds must be an array of memory kinds. Try again.")
+                raise TypeError("kinds must be an array of memory kinds. Try again.")
             if not isinstance(memory_ids, list):
-                raise ValueError(
+                raise TypeError(
                     "memory_ids must be an array of memory IDs. Try again."
                 )
             kinds = sorted(

@@ -385,7 +385,7 @@ def checks_loader(folder):
     original_reader = benchmark.read_json
     for target in (review, parent):
 
-        def changed_json(path, **kwargs):
+        def changed_json(path, target=target, **kwargs):
             if path == target:
                 path.write_bytes(original[path] + b" ")
             return original_reader(path, **kwargs)
@@ -589,7 +589,7 @@ def checks_full_cohort(folder):
             evidence.call_count == 1,
             "Existing full-cohort regression checks did not finish",
         )
-    corpus, exported, review, parent, combined, cases, attestation = fixture(folder)
+    corpus, exported, _review, _parent, _combined, _cases, _attestation = fixture(folder)
     full_review = folder / "fictional-full-review.json"
     write_json(
         full_review,

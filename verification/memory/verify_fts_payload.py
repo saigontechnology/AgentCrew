@@ -51,7 +51,7 @@ def committed_reference(commit, path, expected_sha256, name):
     module = types.ModuleType(f"AgentCrew.modules.memory.{name}")
     module.__package__ = "AgentCrew.modules.memory"
     sys.modules[module.__name__] = module
-    exec(compile(source, "<committed-reference>", "exec"), module.__dict__)
+    exec(compile(source, "<committed-reference>", "exec"), module.__dict__)  # noqa: S102
     return module
 
 
@@ -515,11 +515,11 @@ def check_entity_reference(path, current, variants, coordinator_reference):
                 )
             with current._transaction() as connection:
                 actual = [
-                    {key: row[key] for key in row.keys() if key != "parent_rank"}
+                    {key: value for key, value in dict(row).items() if key != "parent_rank"}
                     for row in connection.execute(new_sql, new_args)
                 ]
                 expected_rows = [
-                    {key: row[key] for key in row.keys() if key != "parent_rank"}
+                    {key: value for key, value in dict(row).items() if key != "parent_rank"}
                     for row in connection.execute(old_sql, old_args)
                 ]
                 require(
@@ -726,7 +726,7 @@ def main():
                         dict(row) for row in connection.execute(new_sql, new_args)
                     ]
                     expected_rows = [
-                        {key: row[key] for key in row.keys() if key != "parent_rank"}
+                        {key: value for key, value in dict(row).items() if key != "parent_rank"}
                         for row in connection.execute(old_sql, old_args)
                     ]
                     if not expression:

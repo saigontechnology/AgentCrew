@@ -28,7 +28,7 @@ from verification.memory.verify_calibration_loader import (
 
 
 def fixture(folder, mutate_cases=None):
-    corpus, exported, root, parent, combined, cases, human = human_fixture(folder)
+    corpus, exported, root, parent, combined, cases, _human = human_fixture(folder)
     if mutate_cases is not None:
         mutate_cases(cases)
     raw = b"".join(
@@ -362,8 +362,8 @@ def checks_chain(folder):
                 write_json(data.root, {**data.accepted, pin: memory.file_hash(path)})
                 rejects(lambda: load(data))
             path.write_bytes(originals[path])
-        for path in originals:
-            path.write_bytes(originals[path])
+        for path, original in originals.items():
+            path.write_bytes(original)
         for broken in (b"[]", b"null", b'{"x": 1, "x": 1}', b'{"x": NaN}', b"{"):
             data.extraction.write_bytes(broken)
             write_json(
@@ -476,8 +476,8 @@ def checks_chain(folder):
             write_json(data.root, {**data.accepted, pin: memory.file_hash(path)})
             rejects(lambda: load(data))
             path.write_bytes(originals[path])
-        for path in originals:
-            path.write_bytes(originals[path])
+        for path, original in originals.items():
+            path.write_bytes(original)
         for path in (
             data.root,
             data.parent,
@@ -551,7 +551,7 @@ def checks_strict_cases(folder):
         target.mkdir()
         data = fixture(target, mutate)
         with patch.object(memory, "ACCEPTED_PARENT_REVIEW_SHA256", data.parent_hash):
-            rejects(lambda: load(data))
+            rejects(lambda data=data: load(data))
 
 
 def checks_prebackend_and_reports(folder, data, dataset):

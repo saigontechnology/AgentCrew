@@ -65,6 +65,7 @@ def run_child(command, log_path, expected=0):
         os.chmod(log_path, 0o600)
         result = subprocess.run(
             command,
+            check=False,
             cwd=ROOT,
             stdout=log,
             stderr=log,
@@ -203,7 +204,7 @@ def verify_paths_and_stability(directory, source):
         replace(options, verify=True),
         replace(options, batch_size=0),
     ):
-        rejects(lambda: validate_options(changed))
+        rejects(lambda changed=changed: validate_options(changed))
     linked = directory / "symlink-source"
     shutil.copytree(source, linked)
     (linked / "forbidden-link").symlink_to(source / "chroma.sqlite3")
@@ -597,6 +598,7 @@ def main_verification():
                     "--no-index",
                     str(path.relative_to(ROOT)),
                 ],
+                check=False,
                 cwd=ROOT,
             ).returncode
             == 0,

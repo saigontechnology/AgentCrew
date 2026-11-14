@@ -43,7 +43,7 @@ def rejected(callback, code, stage):
 
 def invoke(folder, arguments, expected=0):
     command = python_command() + ["scripts/migrate_memory.py", *map(str, arguments)]
-    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+    result = subprocess.run(command, check=False, cwd=ROOT, capture_output=True, text=True)
     log = folder / ("operator-cli-" + uuid.uuid4().hex + ".log")
     log.write_text(result.stdout + result.stderr, encoding="utf-8")
     log.chmod(0o600)
@@ -154,6 +154,7 @@ def main():
                 "--fixture-spec",
                 str(specification),
             ],
+            check=False,
             cwd=ROOT,
             capture_output=True,
         )
@@ -209,6 +210,7 @@ def main():
                     "--no-index",
                     str(run.relative_to(ROOT)),
                 ],
+                check=False,
                 cwd=ROOT,
             ).returncode
             == 0,
@@ -351,6 +353,7 @@ def main():
                 "--fixture-spec",
                 str(strict_spec),
             ],
+            check=False,
             cwd=ROOT,
             capture_output=True,
         )
@@ -426,7 +429,7 @@ def main():
         shutil.copytree(source, tracked)
         require(
             subprocess.run(
-                ["git", "init", "-q"], cwd=tracked, capture_output=True
+                ["git", "init", "-q"], check=False, cwd=tracked, capture_output=True
             ).returncode
             == 0,
             "fictional_repo_creation_failed",
@@ -437,6 +440,7 @@ def main():
         require(
             subprocess.run(
                 ["git", "add", "fictional-tracked-file"],
+                check=False,
                 cwd=tracked,
                 capture_output=True,
             ).returncode
@@ -462,6 +466,7 @@ def main():
                 "--interrupt-fixture",
                 str(interruption),
             ],
+            check=False,
             cwd=ROOT,
             capture_output=True,
         )

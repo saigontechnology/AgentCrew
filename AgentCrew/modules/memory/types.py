@@ -97,19 +97,18 @@ class MemoryQuery:
         if self.as_of is not None and type(self.as_of) is not int:
             raise ValueError("Validity time must be an explicit Unix timestamp")
         if not isinstance(self.semantic_policy, SQLiteSemanticPolicy):
-            raise ValueError("SQLite semantic policy must be explicit and immutable")
-        if self.query_vector is not None:
-            if (
-                not isinstance(self.query_vector, tuple)
-                or len(self.query_vector) != DOCUMENT_VECTOR_DIMENSIONS
-                or any(
-                    type(value) not in (int, float)
-                    or value != value
-                    or value in (float("inf"), float("-inf"))
-                    for value in self.query_vector
-                )
-            ):
-                raise ValueError("Query vector must be an explicit 1024-float tuple")
+            raise TypeError("SQLite semantic policy must be explicit and immutable")
+        if self.query_vector is not None and (
+            not isinstance(self.query_vector, tuple)
+            or len(self.query_vector) != DOCUMENT_VECTOR_DIMENSIONS
+            or any(
+                type(value) not in (int, float)
+                or isinstance(value, float) and math.isnan(value)
+                or value in (float("inf"), float("-inf"))
+                for value in self.query_vector
+            )
+        ):
+            raise ValueError("Query vector must be an explicit 1024-float tuple")
 
 
 @dataclass(frozen=True)

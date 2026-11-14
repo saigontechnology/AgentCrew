@@ -640,11 +640,11 @@ def load_dataset(corpus: Path, cases: Path, review: Path | None = None) -> Datas
         check(len(calibration) >= 15 and len(holdout) >= 15, "private_cohort_too_small")
         check(
             len(
-                set(
+                {
                     i
                     for c in case_rows
                     for i in c["expected_memory_ids"] + c["acceptable_memory_ids"]
-                )
+                }
             )
             >= 10,
             "private_topics_too_few",

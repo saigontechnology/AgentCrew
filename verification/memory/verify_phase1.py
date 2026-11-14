@@ -302,7 +302,7 @@ def verify_repository_guards(directory, repository, original):
         for table in ("memory_entity", "memory_tag"):
             rejects(
                 sqlite3.IntegrityError,
-                lambda: connection.execute(
+                lambda table=table: connection.execute(
                     f"INSERT INTO {table} VALUES (?,?,?,?)",
                     (
                         "syn-mem-symbols",

@@ -83,6 +83,7 @@ def _ignored(path: Path) -> None:
         raise MigrationError("path_outside_private_workspace")
     if subprocess.run(
         ["git", "check-ignore", "--quiet", "--no-index", str(path.relative_to(ROOT))],
+        check=False,
         cwd=ROOT,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -166,9 +167,9 @@ def validate_options(options: MigrationOptions) -> MigrationOptions:
         if (
             not destination.exists()
             and destination.with_name(destination.name + suffix).exists()
+            and suffix != ".migration.lock"
         ):
-            if suffix != ".migration.lock":
-                raise MigrationError("orphan_destination_sidecar")
+            raise MigrationError("orphan_destination_sidecar")
     return MigrationOptions(
         source,
         destination,

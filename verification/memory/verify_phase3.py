@@ -885,7 +885,7 @@ def main():
     )
     run_child(command, folder / "benchmark.log")
     report = json.loads((output / "results.json").read_text())
-    require(list(report["modes"])[0] == "chroma", "Chroma was not run before SQLite")
+    require(next(iter(report["modes"])) == "chroma", "Chroma was not run before SQLite")
     require(
         report["calls"]["remote_model"] == 0
         and report["calls"]["remote_embedding"] == 0,
@@ -931,6 +931,7 @@ def main():
                 "--no-index",
                 str(output.relative_to(ROOT)),
             ],
+            check=False,
             cwd=ROOT,
         ).returncode
         == 0,

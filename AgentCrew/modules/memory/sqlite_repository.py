@@ -293,7 +293,7 @@ class SQLiteMemoryRepository:
         if not isinstance(record.document, str) or not isinstance(
             record.metadata, dict
         ):
-            raise ValueError(
+            raise TypeError(
                 "Canonical document and metadata must be text and a JSON object"
             )
         for timestamp in (

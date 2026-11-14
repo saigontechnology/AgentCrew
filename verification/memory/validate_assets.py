@@ -457,6 +457,7 @@ def main() -> None:
                 "--quiet",
                 f"verification/memory/{relative}",
             ],
+            check=False,
             cwd=ROOT,
             capture_output=True,
         )
