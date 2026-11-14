@@ -141,9 +141,7 @@ class MemoryRecordBuilder:
                             datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                         )
                         .replace("{user_message}", user_message)
-                        .replace(
-                            "{assistant_response}", assistant_response_for_memory
-                        )
+                        .replace("{assistant_response}", assistant_response_for_memory)
                     )
                     analyzed_text = await self.llm_service.process_message(
                         analyzed_prompt

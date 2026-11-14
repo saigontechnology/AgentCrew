@@ -2,24 +2,29 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from contextlib import closing, contextmanager
-from datetime import UTC, datetime, time
-from dataclasses import asdict
 import heapq
 import json
 import math
-from pathlib import Path
 import sqlite3
 import struct
-from typing import Iterator
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import closing, contextmanager
+from dataclasses import asdict
+from datetime import UTC, datetime, time
+from pathlib import Path
 
 from .record_parser import checksum, derive_memory_units, normalize_text
 from .types import (
-    DOCUMENT_VECTOR_DIMENSIONS, CandidateBatch, CandidateSource, MatchReason,
-    MemoryCandidate, MemoryQuery, MemoryRecord, ParsedMemory, RetrievalUnit,
+    DOCUMENT_VECTOR_DIMENSIONS,
+    CandidateBatch,
+    CandidateSource,
+    MatchReason,
+    MemoryCandidate,
+    MemoryQuery,
+    MemoryRecord,
+    ParsedMemory,
+    RetrievalUnit,
 )
-
 
 SCHEMA_VERSION = 1
 VECTOR_TABLE = "memory_document_vector"
@@ -93,10 +98,27 @@ SCHEMA = (
     END""",
 )
 RECORD_COLUMNS = (
-    "id", "agent_name", "session_id", "created_at", "updated_at", "cwd", "header",
-    "status", "superseded_by", "subject_key", "valid_from", "valid_to", "evolved_at",
-    "document_format", "document", "document_checksum", "metadata_json",
-    "metadata_checksum", "structured_json", "kinds_json", "parse_warnings_json",
+    "id",
+    "agent_name",
+    "session_id",
+    "created_at",
+    "updated_at",
+    "cwd",
+    "header",
+    "status",
+    "superseded_by",
+    "subject_key",
+    "valid_from",
+    "valid_to",
+    "evolved_at",
+    "document_format",
+    "document",
+    "document_checksum",
+    "metadata_json",
+    "metadata_checksum",
+    "structured_json",
+    "kinds_json",
+    "parse_warnings_json",
 )
 
 
@@ -114,7 +136,10 @@ class SQLiteMemoryRepository:
     """
 
     def __init__(
-        self, path: str | Path, *, read_only: bool = False,
+        self,
+        path: str | Path,
+        *,
+        read_only: bool = False,
         busy_timeout_ms: int = 2000,
     ) -> None:
         if str(path) == ":memory:":
@@ -133,33 +158,48 @@ class SQLiteMemoryRepository:
                 tables = connection.execute(
                     "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
                 ).fetchall()
-                if not tables and connection.execute("PRAGMA user_version").fetchone()[0] == 0:
+                if (
+                    not tables
+                    and connection.execute("PRAGMA user_version").fetchone()[0] == 0
+                ):
                     for statement in SCHEMA:
                         connection.execute(statement)
-                    connection.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
+                    connection.execute(
+                        "INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,)
+                    )
                     connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 self._validate_schema(connection)
             with closing(self._connect(write=True)) as connection:
                 if connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
-                    raise SQLiteMemoryError("SQLite memory requires file-backed WAL support")
+                    raise SQLiteMemoryError(
+                        "SQLite memory requires file-backed WAL support"
+                    )
 
     @staticmethod
     def check_fts5() -> None:
         if sqlite3.sqlite_version_info < (3, 35, 0):
-            raise SQLiteMemoryError("SQLite 3.35+ is required for materialized candidate queries")
+            raise SQLiteMemoryError(
+                "SQLite 3.35+ is required for materialized candidate queries"
+            )
         try:
             with closing(sqlite3.connect(":memory:")) as connection:
                 connection.execute("CREATE VIRTUAL TABLE probe USING fts5(body)")
         except sqlite3.OperationalError as error:
-            raise SQLiteMemoryError("SQLite memory requires built-in FTS5 support") from error
+            raise SQLiteMemoryError(
+                "SQLite memory requires built-in FTS5 support"
+            ) from error
 
-    def _connect(self, *, write: bool = False, create: bool = False) -> sqlite3.Connection:
+    def _connect(
+        self, *, write: bool = False, create: bool = False
+    ) -> sqlite3.Connection:
         if write and self.read_only:
             raise SQLiteMemoryError("Repository was opened read-only")
         mode = "rwc" if create else "rw" if write else "ro"
         uri = self.path.as_uri() + f"?mode={mode}"
         connection = sqlite3.connect(
-            uri, uri=True, timeout=self.busy_timeout_ms / 1000,
+            uri,
+            uri=True,
+            timeout=self.busy_timeout_ms / 1000,
             autocommit=True,
         )
         try:
@@ -174,7 +214,9 @@ class SQLiteMemoryRepository:
             raise
 
     @contextmanager
-    def _transaction(self, *, write: bool = False, create: bool = False) -> Iterator[sqlite3.Connection]:
+    def _transaction(
+        self, *, write: bool = False, create: bool = False
+    ) -> Iterator[sqlite3.Connection]:
         with closing(self._connect(write=write, create=create)) as connection:
             connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
             try:
@@ -187,18 +229,34 @@ class SQLiteMemoryRepository:
 
     @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
-        objects = {row[0] for row in connection.execute("SELECT name FROM sqlite_master")}
+        objects = {
+            row[0] for row in connection.execute("SELECT name FROM sqlite_master")
+        }
         required = {
-            "schema_version", "memory_record", "retrieval_unit", "memory_entity",
-            "memory_tag", "migration_ledger", "memory_fts",
-            "unit_insert", "unit_delete", "unit_update",
+            "schema_version",
+            "memory_record",
+            "retrieval_unit",
+            "memory_entity",
+            "memory_tag",
+            "migration_ledger",
+            "memory_fts",
+            "unit_insert",
+            "unit_delete",
+            "unit_update",
         }
         if not required <= objects:
             raise SQLiteMemoryError("Unrecognized or incomplete SQLite memory schema")
-        versions = [row[0] for row in connection.execute("SELECT version FROM schema_version")]
-        if versions != [SCHEMA_VERSION] or connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+        versions = [
+            row[0] for row in connection.execute("SELECT version FROM schema_version")
+        ]
+        if (
+            versions != [SCHEMA_VERSION]
+            or connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION
+        ):
             raise SQLiteMemoryError("Unsupported SQLite memory schema version")
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(memory_record)")}
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(memory_record)")
+        }
         if not set(RECORD_COLUMNS) <= columns:
             raise SQLiteMemoryError("Incomplete canonical memory schema")
 
@@ -211,38 +269,76 @@ class SQLiteMemoryRepository:
 
     @staticmethod
     def _prepare_record(record: MemoryRecord) -> tuple[ParsedMemory, tuple]:
-        if any(not isinstance(value, str) or not value.strip() for value in (
-            record.id, record.agent_name,
-        )):
+        if any(
+            not isinstance(value, str) or not value.strip()
+            for value in (
+                record.id,
+                record.agent_name,
+            )
+        ):
             raise ValueError("Canonical ID and agent must be explicit")
         if record.session_id is not None and not isinstance(record.session_id, str):
             raise ValueError("Canonical legacy session must be text or null")
         for value in (record.cwd, record.header, record.subject_key):
             if value is not None and (not isinstance(value, str) or not value.strip()):
-                raise ValueError("Optional canonical labels must be nonempty text or null")
-        if not isinstance(record.kinds, tuple) or any(not isinstance(kind, str) or not kind for kind in record.kinds):
+                raise ValueError(
+                    "Optional canonical labels must be nonempty text or null"
+                )
+        if not isinstance(record.kinds, tuple) or any(
+            not isinstance(kind, str) or not kind for kind in record.kinds
+        ):
             raise ValueError("Explicit kind labels must be a tuple of nonempty strings")
         if record.created_at is None or record.updated_at is None:
             raise ValueError("Canonical creation/update times are required")
-        if not isinstance(record.document, str) or not isinstance(record.metadata, dict):
-            raise ValueError("Canonical document and metadata must be text and a JSON object")
-        for timestamp in (record.created_at, record.updated_at, record.valid_from, record.valid_to):
-            if timestamp is not None and (type(timestamp) not in (int, float) or not math.isfinite(timestamp)):
+        if not isinstance(record.document, str) or not isinstance(
+            record.metadata, dict
+        ):
+            raise ValueError(
+                "Canonical document and metadata must be text and a JSON object"
+            )
+        for timestamp in (
+            record.created_at,
+            record.updated_at,
+            record.valid_from,
+            record.valid_to,
+        ):
+            if timestamp is not None and (
+                type(timestamp) not in (int, float) or not math.isfinite(timestamp)
+            ):
                 raise ValueError("Memory times must be finite Unix timestamps")
             if timestamp is not None:
                 try:
                     datetime.fromtimestamp(timestamp, UTC)
                 except (OverflowError, OSError, ValueError) as error:
-                    raise ValueError("Memory time is outside the supported calendar") from error
-        metadata_json = json.dumps(record.metadata, ensure_ascii=False, sort_keys=True, allow_nan=False)
+                    raise ValueError(
+                        "Memory time is outside the supported calendar"
+                    ) from error
+        metadata_json = json.dumps(
+            record.metadata, ensure_ascii=False, sort_keys=True, allow_nan=False
+        )
         parsed = derive_memory_units(record)
         values = (
-            record.id, record.agent_name, record.session_id, record.created_at,
-            record.updated_at, record.cwd, record.header, record.status,
-            record.superseded_by, record.subject_key, record.valid_from, record.valid_to,
-            record.evolved_at, record.document_format, record.document,
-            checksum(record.document), metadata_json, checksum(metadata_json),
-            parsed.structured_json, json.dumps(record.kinds), json.dumps(parsed.warnings),
+            record.id,
+            record.agent_name,
+            record.session_id,
+            record.created_at,
+            record.updated_at,
+            record.cwd,
+            record.header,
+            record.status,
+            record.superseded_by,
+            record.subject_key,
+            record.valid_from,
+            record.valid_to,
+            record.evolved_at,
+            record.document_format,
+            record.document,
+            checksum(record.document),
+            metadata_json,
+            checksum(metadata_json),
+            parsed.structured_json,
+            json.dumps(record.kinds),
+            json.dumps(parsed.warnings),
         )
         return parsed, values
 
@@ -267,28 +363,52 @@ class SQLiteMemoryRepository:
                 VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 SQLiteMemoryRepository._unit_values(unit),
             )
-            for table, entries in (("memory_entity", unit.entities), ("memory_tag", unit.tags)):
+            for table, entries in (
+                ("memory_entity", unit.entities),
+                ("memory_tag", unit.tags),
+            ):
                 unique = SQLiteMemoryRepository._exact_values(entries)
                 connection.executemany(
                     f"INSERT INTO {table}(memory_id,unit_id,value,normalized_value) VALUES (?,?,?,?)",
-                    ((record.id, unit.id, value, normalized) for normalized, value in unique.items()),
+                    (
+                        (record.id, unit.id, value, normalized)
+                        for normalized, value in unique.items()
+                    ),
                 )
 
     @staticmethod
     def _unit_values(unit: RetrievalUnit) -> tuple:
         bucket = (
-            "title" if unit.source_field == "HEAD" else
-            "identifiers" if unit.kind in {"entity", "tag", "resource"} else
-            "important" if unit.source_field in {
-                "FLOW/OUTCOME", "INSIGHTS/INSIGHT", "CONVERSATION_NOTES/NOTE",
-            } else "body"
+            "title"
+            if unit.source_field == "HEAD"
+            else "identifiers"
+            if unit.kind in {"entity", "tag", "resource"}
+            else "important"
+            if unit.source_field
+            in {
+                "FLOW/OUTCOME",
+                "INSIGHTS/INSIGHT",
+                "CONVERSATION_NOTES/NOTE",
+            }
+            else "body"
         )
         return (
-            unit.id, unit.memory_id, unit.kind, unit.source_field, unit.text,
-            unit.ordinal, unit.checksum,
-            *(unit.text if bucket == name else "" for name in (
-                "title", "important", "body", "identifiers",
-            )),
+            unit.id,
+            unit.memory_id,
+            unit.kind,
+            unit.source_field,
+            unit.text,
+            unit.ordinal,
+            unit.checksum,
+            *(
+                unit.text if bucket == name else ""
+                for name in (
+                    "title",
+                    "important",
+                    "body",
+                    "identifiers",
+                )
+            ),
         )
 
     @staticmethod
@@ -304,9 +424,14 @@ class SQLiteMemoryRepository:
                 values[name] = float(values[name])
         if values["evolved_at"] is not None:
             values["evolved_at"] = str(values["evolved_at"])
-        return checksum(json.dumps(
-            values, sort_keys=True, ensure_ascii=False, allow_nan=False,
-        ))
+        return checksum(
+            json.dumps(
+                values,
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        )
 
     def migration_counts(self, source_fingerprint: str) -> dict[str, int]:
         """Return aggregate ownership counts without exposing IDs or values."""
@@ -314,8 +439,12 @@ class SQLiteMemoryRepository:
             result = {
                 table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
                 for table in (
-                    "memory_record", "migration_ledger", "retrieval_unit",
-                    "memory_entity", "memory_tag", "memory_fts_docsize",
+                    "memory_record",
+                    "migration_ledger",
+                    "retrieval_unit",
+                    "memory_entity",
+                    "memory_tag",
+                    "memory_fts_docsize",
                 )
             }
             result["foreign_ledger"] = connection.execute(
@@ -332,8 +461,12 @@ class SQLiteMemoryRepository:
             return result
 
     def apply_migration_batch(
-        self, records: list[tuple[MemoryRecord, str]], source_fingerprint: str,
-        *, resume: bool = False, fail_on_parse_error: bool = False,
+        self,
+        records: list[tuple[MemoryRecord, str]],
+        source_fingerprint: str,
+        *,
+        resume: bool = False,
+        fail_on_parse_error: bool = False,
     ) -> tuple[int, int]:
         """Commit canonical/index/ledger rows together, or roll back the entire batch."""
         if len({record.id for record, _ in records}) != len(records):
@@ -350,10 +483,13 @@ class SQLiteMemoryRepository:
                 "SELECT 1 FROM migration_ledger WHERE source_fingerprint!=? LIMIT 1",
                 (source_fingerprint,),
             ).fetchone():
-                raise SQLiteMemoryError("Destination belongs to another source snapshot")
+                raise SQLiteMemoryError(
+                    "Destination belongs to another source snapshot"
+                )
             for record, source_checksum, parsed, values in prepared:
                 exists = connection.execute(
-                    "SELECT 1 FROM memory_record WHERE id=?", (record.id,),
+                    "SELECT 1 FROM memory_record WHERE id=?",
+                    (record.id,),
                 ).fetchone()
                 ledger = connection.execute(
                     "SELECT 1 FROM migration_ledger WHERE source_id=?",
@@ -361,32 +497,55 @@ class SQLiteMemoryRepository:
                 ).fetchone()
                 if exists or ledger:
                     if not resume or not exists or not ledger:
-                        raise SQLiteMemoryError("Unowned or already completed migration record")
+                        raise SQLiteMemoryError(
+                            "Unowned or already completed migration record"
+                        )
                     self._verify_migrated_record(
-                        connection, record, parsed, source_fingerprint, source_checksum,
+                        connection,
+                        record,
+                        parsed,
+                        source_fingerprint,
+                        source_checksum,
                     )
                     skipped += 1
                     continue
                 self._write_record(connection, record, parsed, values)
-                stored = self._record(connection.execute(
-                    "SELECT * FROM memory_record WHERE id=?", (record.id,),
-                ).fetchone())
+                stored = self._record(
+                    connection.execute(
+                        "SELECT * FROM memory_record WHERE id=?",
+                        (record.id,),
+                    ).fetchone()
+                )
                 expected = self.canonical_checksum(record)
                 if expected != self.canonical_checksum(stored):
-                    raise SQLiteMemoryError("Canonical projection changed during migration")
+                    raise SQLiteMemoryError(
+                        "Canonical projection changed during migration"
+                    )
                 connection.execute(
                     "INSERT INTO migration_ledger VALUES (?,?,?,?,?,?)",
-                    (source_fingerprint, record.id, record.id, source_checksum,
-                     expected, datetime.now(UTC).isoformat()),
+                    (
+                        source_fingerprint,
+                        record.id,
+                        record.id,
+                        source_checksum,
+                        expected,
+                        datetime.now(UTC).isoformat(),
+                    ),
                 )
                 inserted += 1
         return inserted, skipped
 
     def _verify_migrated_record(
-        self, connection, record, parsed, source_fingerprint, source_checksum,
+        self,
+        connection,
+        record,
+        parsed,
+        source_fingerprint,
+        source_checksum,
     ) -> None:
         row = connection.execute(
-            "SELECT * FROM memory_record WHERE id=?", (record.id,),
+            "SELECT * FROM memory_record WHERE id=?",
+            (record.id,),
         ).fetchone()
         ledger = connection.execute(
             """SELECT * FROM migration_ledger
@@ -395,7 +554,9 @@ class SQLiteMemoryRepository:
         ).fetchone()
         expected = self.canonical_checksum(record)
         if (
-            row is None or ledger is None or ledger["memory_id"] != record.id
+            row is None
+            or ledger is None
+            or ledger["memory_id"] != record.id
             or ledger["source_checksum"] != source_checksum
             or ledger["destination_checksum"] != expected
             or self.canonical_checksum(self._record(row)) != expected
@@ -422,13 +583,17 @@ class SQLiteMemoryRepository:
             expected_entries = {
                 (unit.id, normalized, value)
                 for unit in parsed.units
-                for normalized, value in self._exact_values(getattr(unit, attribute)).items()
+                for normalized, value in self._exact_values(
+                    getattr(unit, attribute)
+                ).items()
             }
             if {tuple(row) for row in actual} != expected_entries:
                 raise SQLiteMemoryError("Migration exact-index ownership mismatch")
 
     def verify_migration_batch(
-        self, records: list[tuple[MemoryRecord, str]], source_fingerprint: str,
+        self,
+        records: list[tuple[MemoryRecord, str]],
+        source_fingerprint: str,
     ) -> int:
         """Compare every canonical field, parser result, derived row and ledger hash."""
         prepared = [
@@ -438,7 +603,11 @@ class SQLiteMemoryRepository:
         with self._transaction() as connection:
             for record, source_checksum, parsed in prepared:
                 self._verify_migrated_record(
-                    connection, record, parsed, source_fingerprint, source_checksum,
+                    connection,
+                    record,
+                    parsed,
+                    source_fingerprint,
+                    source_checksum,
                 )
         return len(prepared)
 
@@ -446,28 +615,45 @@ class SQLiteMemoryRepository:
         """Disposable repository deletion, not a production forgetting service."""
         with self._transaction(write=True) as connection:
             return connection.execute(
-                "DELETE FROM memory_record WHERE id=? AND agent_name=?", (memory_id, agent_name),
+                "DELETE FROM memory_record WHERE id=? AND agent_name=?",
+                (memory_id, agent_name),
             ).rowcount
 
     @staticmethod
     def _eligibility(query: MemoryQuery) -> tuple[str, list]:
-        clauses = ["m.agent_name=?", "(m.session_id IS NULL OR m.session_id!=?)", "m.status='active'", "m.superseded_by IS NULL"]
+        clauses = [
+            "m.agent_name=?",
+            "(m.session_id IS NULL OR m.session_id!=?)",
+            "m.status='active'",
+            "m.superseded_by IS NULL",
+        ]
         values: list = [query.agent_name, query.current_session_id]
         if query.from_date:
             clauses.append("m.created_at>=?")
-            values.append(datetime.combine(query.from_date, time.min, tzinfo=UTC).timestamp())
+            values.append(
+                datetime.combine(query.from_date, time.min, tzinfo=UTC).timestamp()
+            )
         if query.to_date:
             clauses.append("m.created_at<=?")
-            values.append(datetime.combine(query.to_date, time.max, tzinfo=UTC).timestamp())
+            values.append(
+                datetime.combine(query.to_date, time.max, tzinfo=UTC).timestamp()
+            )
         if query.memory_ids:
             clauses.append(f"m.id IN ({','.join('?' for _ in query.memory_ids)})")
             values.extend(query.memory_ids)
         if query.as_of is not None:
-            clauses.extend(["(m.valid_from IS NULL OR m.valid_from<=?)", "(m.valid_to IS NULL OR m.valid_to>=?)"])
+            clauses.extend(
+                [
+                    "(m.valid_from IS NULL OR m.valid_from<=?)",
+                    "(m.valid_to IS NULL OR m.valid_to>=?)",
+                ]
+            )
             values.extend([query.as_of, query.as_of])
         return " AND ".join(clauses), values
 
-    def copy_local_document_vectors(self, vectors: Mapping[str, Sequence[float]]) -> int:
+    def copy_local_document_vectors(
+        self, vectors: Mapping[str, Sequence[float]]
+    ) -> int:
         """Store already-materialized local vectors. Does not embed or open a network."""
         if not isinstance(vectors, Mapping) or not vectors:
             raise ValueError("Local document vectors must be a nonempty mapping")
@@ -479,39 +665,60 @@ class SQLiteMemoryRepository:
                 not isinstance(vector, Sequence)
                 or isinstance(vector, (str, bytes))
                 or len(vector) != DOCUMENT_VECTOR_DIMENSIONS
-                or any(type(value) not in (int, float) or not math.isfinite(value) for value in vector)
+                or any(
+                    type(value) not in (int, float) or not math.isfinite(value)
+                    for value in vector
+                )
             ):
                 raise ValueError("Document vector must contain 1024 finite numbers")
-            encoded.append((memory_id, struct.pack(f"<{DOCUMENT_VECTOR_DIMENSIONS}f", *vector)))
+            encoded.append(
+                (memory_id, struct.pack(f"<{DOCUMENT_VECTOR_DIMENSIONS}f", *vector))
+            )
         with self._transaction(write=True) as connection:
             self._ensure_vector_table(connection)
             stored = 0
             for memory_id, blob in encoded:
-                if connection.execute("SELECT 1 FROM memory_record WHERE id=?", (memory_id,)).fetchone() is None:
-                    raise ValueError("Document vector requires an existing memory record")
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM memory_record WHERE id=?", (memory_id,)
+                    ).fetchone()
+                    is None
+                ):
+                    raise ValueError(
+                        "Document vector requires an existing memory record"
+                    )
                 connection.execute(
                     f"INSERT OR REPLACE INTO {VECTOR_TABLE}(memory_id,dimensions,vector) VALUES(?,?,?)",
                     (memory_id, DOCUMENT_VECTOR_DIMENSIONS, blob),
                 )
                 stored += 1
-            if connection.execute("SELECT version FROM schema_version").fetchone()[0] != SCHEMA_VERSION:
+            if (
+                connection.execute("SELECT version FROM schema_version").fetchone()[0]
+                != SCHEMA_VERSION
+            ):
                 raise SQLiteMemoryError("Vector copy must not change schema version")
         return stored
 
     @staticmethod
     def _ensure_vector_table(connection: sqlite3.Connection) -> None:
         existing = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (VECTOR_TABLE,),
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (VECTOR_TABLE,),
         ).fetchone()
         if existing is None:
             connection.execute(VECTOR_TABLE_SQL)
             return
-        columns = {row[1] for row in connection.execute(f"PRAGMA table_info({VECTOR_TABLE})")}
+        columns = {
+            row[1] for row in connection.execute(f"PRAGMA table_info({VECTOR_TABLE})")
+        }
         if not {"memory_id", "dimensions", "vector"} <= columns:
             raise SQLiteMemoryError("Optional document-vector table is incompatible")
 
     def candidates(
-        self, query: MemoryQuery, exact_values: tuple[str, ...], fts_expression: str,
+        self,
+        query: MemoryQuery,
+        exact_values: tuple[str, ...],
+        fts_expression: str,
     ) -> CandidateBatch:
         """Filter before ranking/limits; exact indexes drive fenced inner joins.
 
@@ -532,9 +739,27 @@ class SQLiteMemoryRepository:
                     (CandidateSource.ENTITY, "memory_entity", "exact_entity"),
                     (CandidateSource.TAG, "memory_tag", "exact_tag"),
                 ):
-                    sources.append((source, f"{table} x INDEXED BY {index}", f"x.normalized_value IN ({placeholders})", list(exact_values), "x.value", "0"))
+                    sources.append(
+                        (
+                            source,
+                            f"{table} x INDEXED BY {index}",
+                            f"x.normalized_value IN ({placeholders})",
+                            list(exact_values),
+                            "x.value",
+                            "0",
+                        )
+                    )
             if fts_expression:
-                sources.append((CandidateSource.FTS, "JOIN memory_fts ON memory_fts.rowid=u.rowid", "memory_fts MATCH ?", [fts_expression], "'Unicode FTS5 field match'", "bm25(memory_fts,6.0,4.0,1.0,8.0)"))
+                sources.append(
+                    (
+                        CandidateSource.FTS,
+                        "JOIN memory_fts ON memory_fts.rowid=u.rowid",
+                        "memory_fts MATCH ?",
+                        [fts_expression],
+                        "'Unicode FTS5 field match'",
+                        "bm25(memory_fts,6.0,4.0,1.0,8.0)",
+                    )
+                )
             for source, join, predicate, values, detail, score in sources:
                 if source in (CandidateSource.ENTITY, CandidateSource.TAG):
                     from_clause = f"""{join}
@@ -547,7 +772,8 @@ class SQLiteMemoryRepository:
                 late_hydration = source in (CandidateSource.FTS, CandidateSource.ENTITY)
                 projection = (
                     "m.id,u.id AS unit_id,u.source_field,u.ordinal"
-                    if late_hydration else payload
+                    if late_hydration
+                    else payload
                 )
                 sql = f"""WITH matches AS MATERIALIZED (
                     SELECT {projection},
@@ -571,10 +797,16 @@ class SQLiteMemoryRepository:
                 else:
                     sql += """ SELECT * FROM ranked WHERE parent_rank=1
                 ORDER BY source_score,id,unit_id LIMIT ?"""
-                rows = connection.execute(sql, (*scope_values, *values, query.candidate_limit)).fetchall()
+                rows = connection.execute(
+                    sql, (*scope_values, *values, query.candidate_limit)
+                ).fetchall()
                 for rank, row in enumerate(rows, 1):
-                    candidates.append(self._candidate(row, source, rank, row["source_detail"]))
-            candidates.extend(self._semantic_candidates(connection, query, scope, scope_values))
+                    candidates.append(
+                        self._candidate(row, source, rank, row["source_detail"])
+                    )
+            candidates.extend(
+                self._semantic_candidates(connection, query, scope, scope_values)
+            )
             conflicts = connection.execute(
                 f"""SELECT m.subject_key FROM memory_record m WHERE {scope}
                 AND m.subject_key IS NOT NULL AND m.subject_key!=''
@@ -584,16 +816,24 @@ class SQLiteMemoryRepository:
         return CandidateBatch(tuple(candidates), frozenset(row[0] for row in conflicts))
 
     def _semantic_candidates(
-        self, connection: sqlite3.Connection, query: MemoryQuery, scope: str, scope_values: list,
+        self,
+        connection: sqlite3.Connection,
+        query: MemoryQuery,
+        scope: str,
+        scope_values: list,
     ) -> list[MemoryCandidate]:
         if query.query_vector is None or query.semantic_policy.max_distance is None:
             return []
         query_norm = math.hypot(*query.query_vector)
         if not math.isfinite(query_norm) or query_norm == 0:
             return []
-        if connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (VECTOR_TABLE,),
-        ).fetchone() is None:
+        if (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (VECTOR_TABLE,),
+            ).fetchone()
+            is None
+        ):
             return []
         rows = connection.execute(
             f"""SELECT m.id,v.vector FROM {VECTOR_TABLE} v
@@ -604,7 +844,9 @@ class SQLiteMemoryRepository:
 
         def qualified():
             for row in rows:
-                distance = self._cosine_distance(query.query_vector, row["vector"], query_norm)
+                distance = self._cosine_distance(
+                    query.query_vector, row["vector"], query_norm
+                )
                 if query.semantic_policy.qualifies(distance):
                     yield distance, row["id"]
 
@@ -618,15 +860,24 @@ class SQLiteMemoryRepository:
                     SELECT id FROM retrieval_unit WHERE memory_id=m.id
                     ORDER BY CASE WHEN source_field='FLOW/OUTCOME' THEN 0 ELSE 1 END,
                     ordinal,id LIMIT 1
-                ) WHERE m.id=?""", (memory_id,),
+                ) WHERE m.id=?""",
+                (memory_id,),
             ).fetchone()
-            candidates.append(self._candidate(
-                row, CandidateSource.SEMANTIC, rank, f"cosine_distance={distance:.6f}", distance,
-            ))
+            candidates.append(
+                self._candidate(
+                    row,
+                    CandidateSource.SEMANTIC,
+                    rank,
+                    f"cosine_distance={distance:.6f}",
+                    distance,
+                )
+            )
         return candidates
 
     @staticmethod
-    def _cosine_distance(query_vector: tuple[float, ...], blob: bytes, query_norm: float) -> float:
+    def _cosine_distance(
+        query_vector: tuple[float, ...], blob: bytes, query_norm: float
+    ) -> float:
         width = DOCUMENT_VECTOR_DIMENSIONS * 4
         if not isinstance(blob, bytes) or len(blob) != width:
             return math.inf
@@ -643,36 +894,59 @@ class SQLiteMemoryRepository:
         return 1.0 - max(-1.0, min(1.0, similarity))
 
     def _candidate(
-        self, row: sqlite3.Row, source: CandidateSource, rank: int, detail: str,
+        self,
+        row: sqlite3.Row,
+        source: CandidateSource,
+        rank: int,
+        detail: str,
         distance: float | None = None,
     ) -> MemoryCandidate:
         return MemoryCandidate(
             record=self._record(row),
             unit=RetrievalUnit(
-                row["unit_id"], row["id"], row["unit_kind"], row["source_field"],
-                row["unit_text"], row["ordinal"], row["unit_checksum"],
+                row["unit_id"],
+                row["id"],
+                row["unit_kind"],
+                row["source_field"],
+                row["unit_text"],
+                row["ordinal"],
+                row["unit_checksum"],
             ),
             reason=MatchReason(source, rank, detail, distance),
             parse_warnings=tuple(json.loads(row["parse_warnings_json"])),
-            source_headline=(json.loads(row["structured_json"] or "{}").get("HEAD") or [None])[0],
+            source_headline=(
+                json.loads(row["structured_json"] or "{}").get("HEAD") or [None]
+            )[0],
         )
 
     @staticmethod
     def _record(row: sqlite3.Row) -> MemoryRecord:
         return MemoryRecord(
-            id=row["id"], agent_name=row["agent_name"], session_id=row["session_id"],
-            document=row["document"], created_at=row["created_at"], updated_at=row["updated_at"],
-            metadata=json.loads(row["metadata_json"]), cwd=row["cwd"], header=row["header"],
-            status=row["status"], superseded_by=row["superseded_by"], subject_key=row["subject_key"],
-            valid_from=row["valid_from"], valid_to=row["valid_to"], evolved_at=row["evolved_at"],
-            document_format=row["document_format"], kinds=tuple(json.loads(row["kinds_json"])),
+            id=row["id"],
+            agent_name=row["agent_name"],
+            session_id=row["session_id"],
+            document=row["document"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            metadata=json.loads(row["metadata_json"]),
+            cwd=row["cwd"],
+            header=row["header"],
+            status=row["status"],
+            superseded_by=row["superseded_by"],
+            subject_key=row["subject_key"],
+            valid_from=row["valid_from"],
+            valid_to=row["valid_to"],
+            evolved_at=row["evolved_at"],
+            document_format=row["document_format"],
+            kinds=tuple(json.loads(row["kinds_json"])),
         )
 
     def get_record(self, memory_id: str, agent_name: str) -> MemoryRecord | None:
         """Repository inspection for setup/verification, not a retrieval bypass tool."""
         with self._transaction() as connection:
             row = connection.execute(
-                "SELECT * FROM memory_record WHERE id=? AND agent_name=?", (memory_id, agent_name),
+                "SELECT * FROM memory_record WHERE id=? AND agent_name=?",
+                (memory_id, agent_name),
             ).fetchone()
             return self._record(row) if row else None
 
@@ -683,7 +957,9 @@ class SQLiteMemoryRepository:
                 raise SQLiteMemoryError("SQLite integrity check failed")
             if connection.execute("PRAGMA foreign_key_check").fetchone():
                 raise SQLiteMemoryError("Memory foreign key check failed")
-            connection.execute("INSERT INTO memory_fts(memory_fts,rank) VALUES('integrity-check',1)")
+            connection.execute(
+                "INSERT INTO memory_fts(memory_fts,rank) VALUES('integrity-check',1)"
+            )
 
     def list_headers(
         self,
@@ -694,7 +970,12 @@ class SQLiteMemoryRepository:
         limit: int = 20,
     ) -> list[str]:
         """Newest-first header lines for one agent, without CWD (MEM-503)."""
-        clauses = ["agent_name=?", "status='active'", "superseded_by IS NULL", "header IS NOT NULL"]
+        clauses = [
+            "agent_name=?",
+            "status='active'",
+            "superseded_by IS NULL",
+            "header IS NOT NULL",
+        ]
         values: list = [agent_name]
         if exclude_session_id:
             clauses.append("(session_id IS NULL OR session_id!=?)")
@@ -715,7 +996,9 @@ class SQLiteMemoryRepository:
         for row in rows:
             if row["created_at"] and row["created_at"] > 0:
                 try:
-                    stamp = datetime.fromtimestamp(row["created_at"], tz=UTC).strftime("%Y-%m-%d %H:%M")
+                    stamp = datetime.fromtimestamp(row["created_at"], tz=UTC).strftime(
+                        "%Y-%m-%d %H:%M"
+                    )
                 except (OverflowError, OSError, ValueError):
                     stamp = "unknown"
                 headers.append(f"{row['header']} ({stamp})")
@@ -730,7 +1013,12 @@ class SQLiteMemoryRepository:
         exclude_session_id: str | None = None,
     ) -> list[MemoryRecord]:
         """Newest-first corpus records for one agent, excluding evolved memories (MEM-504)."""
-        clauses = ["agent_name=?", "status='active'", "superseded_by IS NULL", "evolved_at IS NULL"]
+        clauses = [
+            "agent_name=?",
+            "status='active'",
+            "superseded_by IS NULL",
+            "evolved_at IS NULL",
+        ]
         values: list = [agent_name]
         if exclude_session_id:
             clauses.append("(session_id IS NULL OR session_id!=?)")
@@ -743,10 +1031,14 @@ class SQLiteMemoryRepository:
             ).fetchall()
         return [self._record(row) for row in rows]
 
-    def mark_records_evolved(self, memory_ids: list[str], agent_name: str, evolved_at: str) -> int:
+    def mark_records_evolved(
+        self, memory_ids: list[str], agent_name: str, evolved_at: str
+    ) -> int:
         """Stamp evolved_at on owned records; returns the number marked (MEM-504)."""
         unique = list(
-            dict.fromkeys(str(memory_id) for memory_id in memory_ids if str(memory_id).strip())
+            dict.fromkeys(
+                str(memory_id) for memory_id in memory_ids if str(memory_id).strip()
+            )
         )
         if not unique:
             return 0
@@ -760,7 +1052,9 @@ class SQLiteMemoryRepository:
     def delete_records(self, memory_ids: list[str], agent_name: str) -> int:
         """Physically remove owned records and every derived row in one transaction (MEM-505)."""
         unique = list(
-            dict.fromkeys(str(memory_id) for memory_id in memory_ids if str(memory_id).strip())
+            dict.fromkeys(
+                str(memory_id) for memory_id in memory_ids if str(memory_id).strip()
+            )
         )
         if not unique:
             return 0
@@ -771,7 +1065,9 @@ class SQLiteMemoryRepository:
                 (agent_name, *unique),
             ).rowcount
 
-    def delete_records_by_session(self, session_id: str, agent_name: str | None = None) -> int:
+    def delete_records_by_session(
+        self, session_id: str, agent_name: str | None = None
+    ) -> int:
         """Physically remove every record of one conversation session (MEM-505)."""
         clauses = ["session_id=?"]
         values: list = [session_id]
@@ -780,7 +1076,8 @@ class SQLiteMemoryRepository:
             values.append(agent_name)
         with self._transaction(write=True) as connection:
             return connection.execute(
-                f"DELETE FROM memory_record WHERE {' AND '.join(clauses)}", values,
+                f"DELETE FROM memory_record WHERE {' AND '.join(clauses)}",
+                values,
             ).rowcount
 
     def delete_records_matching(
@@ -807,7 +1104,7 @@ class SQLiteMemoryRepository:
                 f"""SELECT DISTINCT m.id FROM memory_record m
                 JOIN retrieval_unit u ON u.memory_id=m.id
                 JOIN memory_fts ON memory_fts.rowid=u.rowid
-                WHERE memory_fts MATCH ? AND {' AND '.join(clauses)}
+                WHERE memory_fts MATCH ? AND {" AND ".join(clauses)}
                 ORDER BY m.created_at DESC LIMIT ?""",
                 (*values, limit),
             ).fetchall()
@@ -816,10 +1113,13 @@ class SQLiteMemoryRepository:
                 return 0
             placeholders = ",".join("?" for _ in ids)
             return connection.execute(
-                f"DELETE FROM memory_record WHERE id IN ({placeholders})", ids,
+                f"DELETE FROM memory_record WHERE id IN ({placeholders})",
+                ids,
             ).rowcount
 
-    def delete_records_older_than(self, cutoff_ts: float, agent_name: str | None = None) -> int:
+    def delete_records_older_than(
+        self, cutoff_ts: float, agent_name: str | None = None
+    ) -> int:
         """Explicit retention: remove records created before a cutoff (MEM-506)."""
         clauses = ["created_at<?"]
         values: list = [cutoff_ts]
@@ -828,7 +1128,8 @@ class SQLiteMemoryRepository:
             values.append(agent_name)
         with self._transaction(write=True) as connection:
             return connection.execute(
-                f"DELETE FROM memory_record WHERE {' AND '.join(clauses)}", values,
+                f"DELETE FROM memory_record WHERE {' AND '.join(clauses)}",
+                values,
             ).rowcount
 
     def consolidation_candidates(
@@ -904,7 +1205,9 @@ class SQLiteMemoryRepository:
                     )
             for candidate in candidates.values():
                 if "evidence" not in candidate:
-                    candidate["evidence"] = self._unit_evidence(connection, candidate["id"])
+                    candidate["evidence"] = self._unit_evidence(
+                        connection, candidate["id"]
+                    )
             return list(candidates.values())[:limit]
 
     def _unit_evidence(self, connection, memory_id: str) -> str:

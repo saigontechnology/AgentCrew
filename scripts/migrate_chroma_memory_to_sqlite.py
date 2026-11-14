@@ -8,16 +8,11 @@ workspaces; it never opens the source with Chroma or runs retention.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
-from contextlib import closing, contextmanager, redirect_stderr, redirect_stdout
-from dataclasses import dataclass
-from datetime import UTC, datetime
-import importlib.metadata
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
-from pathlib import Path
 import platform
 import shutil
 import sqlite3
@@ -25,18 +20,29 @@ import subprocess
 import sys
 import tomllib
 import traceback
+from collections import Counter
+from contextlib import closing, contextmanager, redirect_stderr, redirect_stdout
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from AgentCrew.modules.memory.record_parser import checksum
-from AgentCrew.modules.memory.sqlite_repository import SCHEMA_VERSION, SQLiteMemoryRepository
+from AgentCrew.modules.memory.sqlite_repository import (
+    SCHEMA_VERSION,
+    SQLiteMemoryRepository,
+)
 from AgentCrew.modules.memory.types import MemoryRecord
 from verification.memory.capture_baseline import fingerprint
 
 CONTRACT_VERSION = 1
-PRIVATE_ROOTS = (ROOT / "verification/memory/local", ROOT / "verification/memory-migration")
+PRIVATE_ROOTS = (
+    ROOT / "verification/memory/local",
+    ROOT / "verification/memory-migration",
+)
 
 
 class MigrationError(RuntimeError):
@@ -77,11 +83,14 @@ def _ignored(path: Path) -> None:
         raise MigrationError("path_outside_private_workspace")
     if subprocess.run(
         ["git", "check-ignore", "--quiet", "--no-index", str(path.relative_to(ROOT))],
-        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     ).returncode:
         raise MigrationError("private_path_not_ignored")
     if subprocess.check_output(
-        ["git", "ls-files", "--", f":(literal){path.relative_to(ROOT)}"], cwd=ROOT,
+        ["git", "ls-files", "--", f":(literal){path.relative_to(ROOT)}"],
+        cwd=ROOT,
     ).strip():
         raise MigrationError("private_path_is_tracked")
 
@@ -113,18 +122,32 @@ def copy_stable_source(source: Path, destination: Path) -> dict:
 
 
 def validate_options(options: MigrationOptions) -> MigrationOptions:
-    source, destination, work = (_path(value) for value in (
-        options.source, options.destination, options.work_dir,
-    ))
+    source, destination, work = (
+        _path(value)
+        for value in (
+            options.source,
+            options.destination,
+            options.work_dir,
+        )
+    )
     report = _path(options.report) if options.report else work / "report.json"
     for path in (source, destination, work, report):
         _ignored(path)
-    if any(_overlap(left, right) for left, right in (
-        (source, destination), (source, work), (destination, work),
-    )):
+    if any(
+        _overlap(left, right)
+        for left, right in (
+            (source, destination),
+            (source, work),
+            (destination, work),
+        )
+    ):
         raise MigrationError("source_destination_work_overlap")
     if report.parent != work or report.name in {
-        "snapshot.json", "source-backup", "chroma-copy", "sdk.log", ".migration.lock",
+        "snapshot.json",
+        "source-backup",
+        "chroma-copy",
+        "sdk.log",
+        ".migration.lock",
     }:
         raise MigrationError("report_must_be_an_owned_work_directory_file")
     if type(options.batch_size) is not int or not 1 <= options.batch_size <= 1000:
@@ -140,12 +163,23 @@ def validate_options(options: MigrationOptions) -> MigrationOptions:
         raise MigrationError("snapshot_reuse_requires_explicit_resume")
     for suffix in ("-wal", "-shm", "-journal", ".migration.lock"):
         _path(destination.with_name(destination.name + suffix))
-        if not destination.exists() and destination.with_name(destination.name + suffix).exists():
+        if (
+            not destination.exists()
+            and destination.with_name(destination.name + suffix).exists()
+        ):
             if suffix != ".migration.lock":
                 raise MigrationError("orphan_destination_sidecar")
     return MigrationOptions(
-        source, destination, work, options.collection, options.batch_size, report,
-        options.apply, options.resume, options.verify, options.fail_on_parse_error,
+        source,
+        destination,
+        work,
+        options.collection,
+        options.batch_size,
+        report,
+        options.apply,
+        options.resume,
+        options.verify,
+        options.fail_on_parse_error,
     )
 
 
@@ -183,11 +217,13 @@ def _lock(path: Path):
         try:
             if os.name == "nt":
                 import msvcrt
+
                 os.write(descriptor, b"0")
                 os.lseek(descriptor, 0, os.SEEK_SET)
                 msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
+
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, PermissionError) as error:
             raise MigrationError("migration_workspace_locked") from error
@@ -211,12 +247,15 @@ def _sdk_collection(work: Path, collection_name: str):
             with redirect_stdout(log), redirect_stderr(log):
                 import chromadb
                 from chromadb.config import Settings
+
                 client = chromadb.PersistentClient(
                     path=str(work / "chroma-copy"),
                     settings=Settings(anonymized_telemetry=False),
                 )
                 try:
-                    yield client.get_collection(collection_name, embedding_function=None)
+                    yield client.get_collection(
+                        collection_name, embedding_function=None
+                    )
                 finally:
                     close = getattr(client, "close", None)
                     if callable(close):
@@ -233,10 +272,14 @@ def _sdk_collection(work: Path, collection_name: str):
 
 def _snapshot(options: MigrationOptions) -> tuple[str, dict]:
     source_files = fingerprint(options.source)
-    source_hash = checksum(json_text({
-        "source_tree": checksum(json_text(source_files)),
-        "collection": checksum(options.collection),
-    }))
+    source_hash = checksum(
+        json_text(
+            {
+                "source_tree": checksum(json_text(source_files)),
+                "collection": checksum(options.collection),
+            }
+        )
+    )
     state_path = options.work_dir / "snapshot.json"
     expected = {
         "contract_version": CONTRACT_VERSION,
@@ -245,8 +288,12 @@ def _snapshot(options: MigrationOptions) -> tuple[str, dict]:
         "collection_fingerprint": checksum(options.collection),
         "destination_token": checksum(str(options.destination.relative_to(ROOT))),
         "mapping_tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "repository_sha256": hashlib.sha256((ROOT / "AgentCrew/modules/memory/sqlite_repository.py").read_bytes()).hexdigest(),
-        "parser_sha256": hashlib.sha256((ROOT / "AgentCrew/modules/memory/record_parser.py").read_bytes()).hexdigest(),
+        "repository_sha256": hashlib.sha256(
+            (ROOT / "AgentCrew/modules/memory/sqlite_repository.py").read_bytes()
+        ).hexdigest(),
+        "parser_sha256": hashlib.sha256(
+            (ROOT / "AgentCrew/modules/memory/record_parser.py").read_bytes()
+        ).hexdigest(),
     }
     backup = _path(options.work_dir / "source-backup")
     working = _path(options.work_dir / "chroma-copy")
@@ -255,7 +302,10 @@ def _snapshot(options: MigrationOptions) -> tuple[str, dict]:
         saved = json.loads(state_path.read_text(encoding="utf-8"))
         if not options.resume or saved.get("identity") != expected:
             raise MigrationError("snapshot_identity_mismatch")
-        if saved.get("source_files") != source_files or fingerprint(backup) != source_files:
+        if (
+            saved.get("source_files") != source_files
+            or fingerprint(backup) != source_files
+        ):
             raise MigrationError("frozen_snapshot_mismatch")
         if not (working / "chroma.sqlite3").is_file():
             raise MigrationError("working_copy_missing")
@@ -271,7 +321,11 @@ def _snapshot(options: MigrationOptions) -> tuple[str, dict]:
         shutil.copytree(backup, working)
         if fingerprint(working) != source_files:
             raise MigrationError("working_copy_checksum_mismatch")
-        with closing(sqlite3.connect((working / "chroma.sqlite3").as_uri() + "?mode=ro", uri=True)) as connection:
+        with closing(
+            sqlite3.connect(
+                (working / "chroma.sqlite3").as_uri() + "?mode=ro", uri=True
+            )
+        ) as connection:
             if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise MigrationError("chroma_copy_integrity_failed")
         _write_json(state_path, {"identity": expected, "source_files": source_files})
@@ -282,7 +336,9 @@ def _source_rows(collection, batch_size: int):
     count = collection.count()
     seen = set()
     for offset in range(0, count, batch_size):
-        batch = collection.get(limit=batch_size, offset=offset, include=["documents", "metadatas"])
+        batch = collection.get(
+            limit=batch_size, offset=offset, include=["documents", "metadatas"]
+        )
         ids = batch["ids"]
         documents = batch["documents"] or [None] * len(ids)
         metadatas = batch["metadatas"] or [None] * len(ids)
@@ -314,9 +370,17 @@ def map_record(identifier, document, metadata) -> tuple[MemoryRecord, str]:
         if type(evolved) not in (str, int, float):
             raise MigrationError("unmappable_evolution_value")
         evolved = str(evolved)
-    if any(name in metadata for name in (
-        "lifecycle", "lifecycle_status", "deleted", "is_deleted", "superseded", "is_superseded",
-    )):
+    if any(
+        name in metadata
+        for name in (
+            "lifecycle",
+            "lifecycle_status",
+            "deleted",
+            "is_deleted",
+            "superseded",
+            "is_superseded",
+        )
+    ):
         raise MigrationError("unsupported_explicit_lifecycle_fields")
     if "status" not in metadata and "superseded_by" in metadata:
         raise MigrationError("unsupported_explicit_supersession_without_status")
@@ -326,14 +390,27 @@ def map_record(identifier, document, metadata) -> tuple[MemoryRecord, str]:
     if status not in {"active", "superseded", "deleted"}:
         raise MigrationError("unsupported_explicit_status")
     record = MemoryRecord(
-        id=identifier, agent_name=agent, session_id=metadata.get("session_id"),
-        document=document, created_at=timestamp, updated_at=timestamp,
-        metadata=metadata, cwd=None, header=metadata.get("header"),
-        status=status, evolved_at=evolved,
+        id=identifier,
+        agent_name=agent,
+        session_id=metadata.get("session_id"),
+        document=document,
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata=metadata,
+        cwd=None,
+        header=metadata.get("header"),
+        status=status,
+        evolved_at=evolved,
     )
-    source_hash = checksum(json_text({
-        "id": identifier, "document": document, "metadata": metadata,
-    }))
+    source_hash = checksum(
+        json_text(
+            {
+                "id": identifier,
+                "document": document,
+                "metadata": metadata,
+            }
+        )
+    )
     return record, source_hash
 
 
@@ -347,25 +424,49 @@ def _inspect(collection, batch_size: int, report: dict) -> dict:
             try:
                 record, source_hash = map_record(*raw)
                 parsed = SQLiteMemoryRepository.validate_record(record)
-                index[record.id] = (source_hash, SQLiteMemoryRepository.canonical_checksum(record))
+                index[record.id] = (
+                    source_hash,
+                    SQLiteMemoryRepository.canonical_checksum(record),
+                )
                 warning_records += bool(parsed.warnings)
-                parser_failures += any(unit.source_field == "BODY" for unit in parsed.units)
+                parser_failures += any(
+                    unit.source_field == "BODY" for unit in parsed.units
+                )
                 warnings.update(parsed.warnings)
             except (MigrationError, ValueError, TypeError, OverflowError) as error:
-                reason = str(error) if isinstance(error, MigrationError) else "invalid_canonical_record"
+                reason = (
+                    str(error)
+                    if isinstance(error, MigrationError)
+                    else "invalid_canonical_record"
+                )
                 failures[reason] += 1
-    report.update({
-        "source_count": len(index) + sum(failures.values()),
-        "readable_count": len(index), "unmappable_count": sum(failures.values()),
-        "parse_failure_count": parser_failures, "warning_record_count": warning_records,
-        "warning_counts": dict(warnings), "mapping_failure_counts": dict(failures),
-        "source_records_fingerprint": checksum(json_text(sorted(
-            (checksum(identifier), hashes[0]) for identifier, hashes in index.items()
-        ))),
-        "expected_canonical_fingerprint": checksum(json_text(sorted(
-            (checksum(identifier), hashes[1]) for identifier, hashes in index.items()
-        ))),
-    })
+    report.update(
+        {
+            "source_count": len(index) + sum(failures.values()),
+            "readable_count": len(index),
+            "unmappable_count": sum(failures.values()),
+            "parse_failure_count": parser_failures,
+            "warning_record_count": warning_records,
+            "warning_counts": dict(warnings),
+            "mapping_failure_counts": dict(failures),
+            "source_records_fingerprint": checksum(
+                json_text(
+                    sorted(
+                        (checksum(identifier), hashes[0])
+                        for identifier, hashes in index.items()
+                    )
+                )
+            ),
+            "expected_canonical_fingerprint": checksum(
+                json_text(
+                    sorted(
+                        (checksum(identifier), hashes[1])
+                        for identifier, hashes in index.items()
+                    )
+                )
+            ),
+        }
+    )
     if failures:
         raise MigrationError("unmappable_source_records_no_silent_skip")
     return index
@@ -377,7 +478,10 @@ def _records(collection, batch_size: int, expected: dict):
         records = []
         for raw in rows:
             record, source_hash = map_record(*raw)
-            if expected.get(record.id) != (source_hash, SQLiteMemoryRepository.canonical_checksum(record)):
+            if expected.get(record.id) != (
+                source_hash,
+                SQLiteMemoryRepository.canonical_checksum(record),
+            ):
                 raise MigrationError("source_record_changed_after_inspection")
             seen.add(record.id)
             records.append((record, source_hash))
@@ -388,7 +492,9 @@ def _records(collection, batch_size: int, expected: dict):
 
 def _assert_counts(counts: dict, expected: int | None = None) -> None:
     if (
-        counts["foreign_ledger"] or counts["non_null_cwd"] or counts["unitless_active"]
+        counts["foreign_ledger"]
+        or counts["non_null_cwd"]
+        or counts["unitless_active"]
         or counts["memory_record"] != counts["migration_ledger"]
         or counts["retrieval_unit"] != counts["memory_fts_docsize"]
         or (expected is not None and counts["memory_record"] != expected)
@@ -408,23 +514,40 @@ def _destination_fingerprint(path: Path) -> str:
 
 
 def _report_base(options: MigrationOptions) -> dict:
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
     SQLiteMemoryRepository.check_fts5()
     return {
-        "contract_version": CONTRACT_VERSION, "schema_version": SCHEMA_VERSION,
+        "contract_version": CONTRACT_VERSION,
+        "schema_version": SCHEMA_VERSION,
         "captured_at": datetime.now(UTC).isoformat(),
-        "checkout_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-        "checkout_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()),
+        "checkout_commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip(),
+        "checkout_dirty": bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain"], cwd=ROOT, text=True
+            ).strip()
+        ),
         "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "package_version": project["version"], "python": platform.python_version(),
-        "sqlite": sqlite3.sqlite_version, "chromadb": importlib.metadata.version("chromadb"),
-        "mode": "apply" if options.apply else "dry-run", "resume": options.resume,
+        "package_version": project["version"],
+        "python": platform.python_version(),
+        "sqlite": sqlite3.sqlite_version,
+        "chromadb": importlib.metadata.version("chromadb"),
+        "mode": "apply" if options.apply else "dry-run",
+        "resume": options.resume,
         "verification_requested": options.verify,
-        "strict_parse": options.fail_on_parse_error, "writers_confirmed_paused": False,
-        "source_sdk_opened": False, "retention_run": False,
-        "destination_opened": False, "destination_write_opened": False,
+        "strict_parse": options.fail_on_parse_error,
+        "writers_confirmed_paused": False,
+        "source_sdk_opened": False,
+        "retention_run": False,
+        "destination_opened": False,
+        "destination_write_opened": False,
         "fts5_available": True,
-        "inserted": 0, "skipped": 0, "verified": 0,
+        "inserted": 0,
+        "skipped": 0,
+        "verified": 0,
     }
 
 
@@ -450,21 +573,34 @@ def migrate(options: MigrationOptions) -> dict:
                 expected = _inspect(collection, options.batch_size, report)
                 state_path = options.work_dir / "snapshot.json"
                 state = json.loads(state_path.read_text(encoding="utf-8"))
-                inspection = {name: report[name] for name in (
-                    "source_count", "source_records_fingerprint", "expected_canonical_fingerprint",
-                )}
+                inspection = {
+                    name: report[name]
+                    for name in (
+                        "source_count",
+                        "source_records_fingerprint",
+                        "expected_canonical_fingerprint",
+                    )
+                }
                 if "inspection" in state and state["inspection"] != inspection:
                     raise MigrationError("working_copy_logical_content_changed")
                 if "inspection" not in state:
                     if options.destination.exists():
-                        raise MigrationError("missing_inspection_checkpoint_for_existing_records")
+                        raise MigrationError(
+                            "missing_inspection_checkpoint_for_existing_records"
+                        )
                     state["inspection"] = inspection
                     _write_json(state_path, state)
                 if options.fail_on_parse_error and report["warning_record_count"]:
-                    raise MigrationError("strict_parse_warning_before_destination_writes")
+                    raise MigrationError(
+                        "strict_parse_warning_before_destination_writes"
+                    )
                 if options.apply:
                     _private_directory(options.destination.parent)
-                    with _lock(options.destination.with_name(options.destination.name + ".migration.lock")):
+                    with _lock(
+                        options.destination.with_name(
+                            options.destination.name + ".migration.lock"
+                        )
+                    ):
                         if options.destination.exists():
                             if not options.resume:
                                 raise MigrationError("destination_created_concurrently")
@@ -474,32 +610,54 @@ def migrate(options: MigrationOptions) -> dict:
                         report["destination_write_opened"] = True
                         _assert_counts(repository.migration_counts(source_hash))
                         repository.check_integrity()
-                        for records in _records(collection, options.batch_size, expected):
+                        for records in _records(
+                            collection, options.batch_size, expected
+                        ):
                             inserted, skipped = repository.apply_migration_batch(
-                                records, source_hash, resume=options.resume,
+                                records,
+                                source_hash,
+                                resume=options.resume,
                                 fail_on_parse_error=options.fail_on_parse_error,
                             )
                             report["inserted"] += inserted
                             report["skipped"] += skipped
                         if options.verify:
-                            for records in _records(collection, options.batch_size, expected):
-                                report["verified"] += repository.verify_migration_batch(records, source_hash)
+                            for records in _records(
+                                collection, options.batch_size, expected
+                            ):
+                                report["verified"] += repository.verify_migration_batch(
+                                    records, source_hash
+                                )
                         repository.check_integrity()
                         counts = repository.migration_counts(source_hash)
                         _assert_counts(counts, len(expected))
                         report["destination_counts"] = counts
-                        report["destination_files_fingerprint"] = _destination_fingerprint(options.destination)
+                        report["destination_files_fingerprint"] = (
+                            _destination_fingerprint(options.destination)
+                        )
                         if options.verify:
-                            report["verified_canonical_fingerprint"] = report["expected_canonical_fingerprint"]
+                            report["verified_canonical_fingerprint"] = report[
+                                "expected_canonical_fingerprint"
+                            ]
                 if fingerprint(options.source) != source_files:
                     raise MigrationError("source_changed_during_migration")
                 if fingerprint(options.work_dir / "source-backup") != source_files:
                     raise MigrationError("frozen_backup_changed")
                 report["source_and_backup_unchanged"] = True
-                report["status"] = "verified" if options.verify else "applied" if options.apply else "inspected"
+                report["status"] = (
+                    "verified"
+                    if options.verify
+                    else "applied"
+                    if options.apply
+                    else "inspected"
+                )
         except BaseException as error:
             report["status"] = "blocked"
-            report["reason"] = str(error) if isinstance(error, MigrationError) else type(error).__name__
+            report["reason"] = (
+                str(error)
+                if isinstance(error, MigrationError)
+                else type(error).__name__
+            )
             diagnostic = _path(options.work_dir / "sdk.log")
             with diagnostic.open("a", encoding="utf-8") as log:
                 os.chmod(diagnostic, 0o600)
@@ -528,13 +686,24 @@ def main() -> int:
     parser.add_argument("--fail-on-parse-error", action="store_true")
     args = parser.parse_args()
     try:
-        report = migrate(MigrationOptions(
-            args.source, args.destination, args.work_dir, args.collection,
-            args.batch_size, args.report, args.apply, args.resume, args.verify,
-            args.fail_on_parse_error,
-        ))
+        report = migrate(
+            MigrationOptions(
+                args.source,
+                args.destination,
+                args.work_dir,
+                args.collection,
+                args.batch_size,
+                args.report,
+                args.apply,
+                args.resume,
+                args.verify,
+                args.fail_on_parse_error,
+            )
+        )
     except BaseException as error:
-        reason = str(error) if isinstance(error, MigrationError) else type(error).__name__
+        reason = (
+            str(error) if isinstance(error, MigrationError) else type(error).__name__
+        )
         print(json.dumps({"status": "blocked", "reason": reason}), file=sys.stderr)
         return 130 if isinstance(error, KeyboardInterrupt) else 1
     print(json.dumps(report, indent=2))

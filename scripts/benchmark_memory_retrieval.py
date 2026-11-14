@@ -7,16 +7,10 @@ benchmark ground truth. A private holdout requires a frozen calibration record.
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
-from contextlib import ExitStack, closing
-from dataclasses import asdict, replace
-from datetime import UTC, datetime
 import hashlib
 import importlib.metadata
-import json
 import math
 import os
-from pathlib import Path
 import re
 import shutil
 import sqlite3
@@ -24,31 +18,69 @@ import subprocess
 import sys
 import time
 import uuid
+from collections import defaultdict
+from contextlib import ExitStack, closing
+from dataclasses import asdict
+from datetime import UTC, datetime
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from AgentCrew.modules.memory.benchmark import (
-    BenchmarkError, Calls, Dataset, FakeAdapter, POLICY, PROMPT, RemoteJSONAdapter,
-    aggregate, check, digest, encode, evaluate_answer, expand_queries, file_hash,
-    cached_query_vector, identifies_consumed_holdout, load_calibration_dataset, load_dataset,
-    load_fresh_holdout_dataset, local_document_vectors, measure, percentile,
-    query_from_case, read_json, read_jsonl, record_from_row, rerank_hits, _stored_vector,
-    scope_eligible, lifecycle_eligible, question_key,
+    POLICY,
+    PROMPT,
+    BenchmarkError,
+    Calls,
+    Dataset,
+    FakeAdapter,
+    RemoteJSONAdapter,
+    _stored_vector,
+    aggregate,
+    cached_query_vector,
+    check,
+    digest,
+    encode,
+    evaluate_answer,
+    expand_queries,
+    file_hash,
+    identifies_consumed_holdout,
+    lifecycle_eligible,
+    load_calibration_dataset,
+    load_dataset,
+    load_fresh_holdout_dataset,
+    local_document_vectors,
+    measure,
+    percentile,
+    query_from_case,
+    question_key,
+    read_json,
+    read_jsonl,
+    rerank_hits,
+    scope_eligible,
 )
-from AgentCrew.modules.memory.types import SQLiteSemanticPolicy
 from AgentCrew.modules.memory.retrieval import MemorySearchCoordinator
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
+from AgentCrew.modules.memory.types import SQLiteSemanticPolicy
 from scripts.migrate_chroma_memory_to_sqlite import (
-    _ignored, _lock, _overlap, _path, _private_directory, _sdk_collection,
-    _write_json, fingerprint, json_text,
+    _ignored,
+    _lock,
+    _overlap,
+    _path,
+    _private_directory,
+    _sdk_collection,
+    _write_json,
+    fingerprint,
 )
 
 ASSETS = ROOT / "verification/memory"
 MODES = {"chroma", "sqlite", "sqlite-expand", "sqlite-rerank"}
 CALIBRATION_EVIDENCE_FIELDS = (
-    "calibration_export_sha256", "parent_review_manifest_sha256", "parent_cases_sha256",
-    "calibration_provenance_contract", "calibration_derivation",
+    "calibration_export_sha256",
+    "parent_review_manifest_sha256",
+    "parent_cases_sha256",
+    "calibration_provenance_contract",
+    "calibration_derivation",
 )
 
 
@@ -68,7 +100,10 @@ def input_path(value: Path, public: str | None = None) -> Path:
 
 def new_output(value: Path, inputs: list[Path]) -> Path:
     output = private_path(value)
-    check(not output.exists() and not any(_overlap(output, value) for value in inputs), "unsafe_or_reused_output")
+    check(
+        not output.exists() and not any(_overlap(output, value) for value in inputs),
+        "unsafe_or_reused_output",
+    )
     _private_directory(output)
     return output
 
@@ -81,42 +116,86 @@ def write_text(path: Path, value: str) -> None:
 
 
 def code_identity() -> dict:
-    files = [Path(__file__), ROOT / "scripts/extract_memory_calibration.py",
-             ROOT / "AgentCrew/modules/memory/benchmark.py",
-             ROOT / "AgentCrew/modules/memory/retrieval.py", ROOT / "AgentCrew/modules/memory/sqlite_repository.py",
-             ROOT / "AgentCrew/modules/memory/record_parser.py", ROOT / "AgentCrew/modules/memory/types.py",
-             ROOT / "AgentCrew/modules/memory/voyageai_ef.py"]
+    files = [
+        Path(__file__),
+        ROOT / "scripts/extract_memory_calibration.py",
+        ROOT / "AgentCrew/modules/memory/benchmark.py",
+        ROOT / "AgentCrew/modules/memory/retrieval.py",
+        ROOT / "AgentCrew/modules/memory/sqlite_repository.py",
+        ROOT / "AgentCrew/modules/memory/record_parser.py",
+        ROOT / "AgentCrew/modules/memory/types.py",
+        ROOT / "AgentCrew/modules/memory/voyageai_ef.py",
+    ]
     return {
-        "checkout_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-        "checkout_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()),
+        "checkout_commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip(),
+        "checkout_dirty": bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain"], cwd=ROOT, text=True
+            ).strip()
+        ),
         "code_hash": digest({str(p.relative_to(ROOT)): file_hash(p) for p in files}),
-        "policy": POLICY, "prompt_template_hash": digest(PROMPT),
-        "sqlite_version": sqlite3.sqlite_version, "chroma_version": importlib.metadata.version("chromadb"),
+        "policy": POLICY,
+        "prompt_template_hash": digest(PROMPT),
+        "sqlite_version": sqlite3.sqlite_version,
+        "chroma_version": importlib.metadata.version("chromadb"),
         "python": sys.version.split()[0],
     }
 
 
 def signature(hits: list[dict]):
-    return [{key: hit.get(key) for key in ("memory_id", "citation", "score", "reasons")} for hit in hits]
+    return [
+        {key: hit.get(key) for key in ("memory_id", "citation", "score", "reasons")}
+        for hit in hits
+    ]
 
 
-def sqlite_hits(coordinator, case, k: int, query_vector=None, semantic_policy=None) -> list[dict]:
+def sqlite_hits(
+    coordinator, case, k: int, query_vector=None, semantic_policy=None
+) -> list[dict]:
     result = coordinator.search(query_from_case(case, k, query_vector, semantic_policy))
-    return [{**asdict(hit), "citation": hit.citation, "cwd_label": hit.cwd if hit.cwd is not None else "Unknown (legacy memory)"} for hit in result.hits]
+    return [
+        {
+            **asdict(hit),
+            "citation": hit.citation,
+            "cwd_label": hit.cwd if hit.cwd is not None else "Unknown (legacy memory)",
+        }
+        for hit in result.hits
+    ]
 
 
 def assert_candidate(repository, dataset: Dataset) -> None:
     with repository._transaction() as connection:
         rows = connection.execute("SELECT * FROM memory_record").fetchall()
         actual = {row["id"]: repository._record(row) for row in rows}
-        expected = {key: value for key, value in dataset.records.items() if value.status != "deleted"}
+        expected = {
+            key: value
+            for key, value in dataset.records.items()
+            if value.status != "deleted"
+        }
         check(actual.keys() == expected.keys(), "sqlite_corpus_id_mismatch")
-        check(all(repository.canonical_checksum(actual[key]) == repository.canonical_checksum(value) for key, value in expected.items()), "sqlite_corpus_content_mismatch")
+        check(
+            all(
+                repository.canonical_checksum(actual[key])
+                == repository.canonical_checksum(value)
+                for key, value in expected.items()
+            ),
+            "sqlite_corpus_content_mismatch",
+        )
         for key, record in dataset.records.items():
             if record.status == "deleted":
                 for table in ("retrieval_unit", "memory_entity", "memory_tag"):
-                    check(not connection.execute(f"SELECT 1 FROM {table} WHERE memory_id=?", (key,)).fetchone(), "deleted_derived_rows_present")
-        check(connection.execute("PRAGMA foreign_key_check").fetchone() is None, "candidate_fk_failure")
+                    check(
+                        not connection.execute(
+                            f"SELECT 1 FROM {table} WHERE memory_id=?", (key,)
+                        ).fetchone(),
+                        "deleted_derived_rows_present",
+                    )
+        check(
+            connection.execute("PRAGMA foreign_key_check").fetchone() is None,
+            "candidate_fk_failure",
+        )
 
 
 def synthetic_embedding(text: str) -> list[float]:
@@ -134,10 +213,25 @@ class ChromaBaseline:
     Intentionally no lifecycle/kind repair. A synthetic hash embedding is a
     contract simulation, never relevance evidence about the configured service.
     """
-    def __init__(self, collection, dataset: Dataset, source: str, calls: Calls,
-                 allow_remote: bool, cache_path: Path | None, source_hash: str,
-                 *, cache_rows: tuple[dict, ...] | None = None):
-        self.collection, self.dataset, self.source, self.calls = collection, dataset, source, calls
+
+    def __init__(
+        self,
+        collection,
+        dataset: Dataset,
+        source: str,
+        calls: Calls,
+        allow_remote: bool,
+        cache_path: Path | None,
+        source_hash: str,
+        *,
+        cache_rows: tuple[dict, ...] | None = None,
+    ):
+        self.collection, self.dataset, self.source, self.calls = (
+            collection,
+            dataset,
+            source,
+            calls,
+        )
         self.allow_remote, self.cache, self.source_hash = allow_remote, {}, source_hash
         self.used = False
         self.provider = self.model = None
@@ -145,34 +239,84 @@ class ChromaBaseline:
         self.embedder = None
         self.cached_vectors = {}
         self.unsupported = []
-        check(collection.configuration.get("hnsw", {}).get("space") == "cosine", "chroma_noncosine_not_repaired")
-        expected = {key: value for key, value in dataset.records.items() if value.status != "deleted"}
+        check(
+            collection.configuration.get("hnsw", {}).get("space") == "cosine",
+            "chroma_noncosine_not_repaired",
+        )
+        expected = {
+            key: value
+            for key, value in dataset.records.items()
+            if value.status != "deleted"
+        }
         page = collection.get(include=["documents", "metadatas"])
         check(set(page["ids"]) == set(expected), "chroma_corpus_id_mismatch")
-        for key, document, metadata in zip(page["ids"], page["documents"], page["metadatas"]):
-            check(document == expected[key].document and metadata == expected[key].metadata, "chroma_corpus_content_mismatch")
+        for key, document, metadata in zip(
+            page["ids"], page["documents"], page["metadatas"]
+        ):
+            check(
+                document == expected[key].document
+                and metadata == expected[key].metadata,
+                "chroma_corpus_content_mismatch",
+            )
         if cache_path or cache_rows is not None:
-            for item in cache_rows if cache_rows is not None else read_jsonl(cache_path):
-                check(item.get("schema_version") == 1 and item.get("source_fingerprint") == source_hash,
-                      "embedding_cache_source_mismatch")
-                check(item.get("provenance") == "independent-configured-query" and item.get("reviewed_locally") is True,
-                      "embedding_cache_unreviewed")
-                check(item["query_sha256"] not in self.cached_vectors, "duplicate_cached_query")
+            for item in (
+                cache_rows if cache_rows is not None else read_jsonl(cache_path)
+            ):
+                check(
+                    item.get("schema_version") == 1
+                    and item.get("source_fingerprint") == source_hash,
+                    "embedding_cache_source_mismatch",
+                )
+                check(
+                    item.get("provenance") == "independent-configured-query"
+                    and item.get("reviewed_locally") is True,
+                    "embedding_cache_unreviewed",
+                )
+                check(
+                    item["query_sha256"] not in self.cached_vectors,
+                    "duplicate_cached_query",
+                )
                 self.cached_vectors[item["query_sha256"]] = item
         if source == "synthetic-hash":
             check(dataset.synthetic, "fake_private_embeddings_forbidden")
             self.threshold = 0.30
         elif source == "configured":
             if os.getenv("VOYAGE_API_KEY"):
-                check(allow_remote and all(dataset.synthetic or c.get("query_sanitized") is True for c in dataset.cases), "remote_embedding_not_authorized")
-                from AgentCrew.modules.memory.voyageai_ef import VoyageEmbeddingFunction, VOYAGE_RELEVANT_THRESHOLD
-                self.embedder = VoyageEmbeddingFunction(api_key=os.getenv("VOYAGE_API_KEY"), model_name="voyage-4")
+                check(
+                    allow_remote
+                    and all(
+                        dataset.synthetic or c.get("query_sanitized") is True
+                        for c in dataset.cases
+                    ),
+                    "remote_embedding_not_authorized",
+                )
+                from AgentCrew.modules.memory.voyageai_ef import (
+                    VOYAGE_RELEVANT_THRESHOLD,
+                    VoyageEmbeddingFunction,
+                )
+
+                self.embedder = VoyageEmbeddingFunction(
+                    api_key=os.getenv("VOYAGE_API_KEY"), model_name="voyage-4"
+                )
                 self.threshold = VOYAGE_RELEVANT_THRESHOLD
             else:
-                from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+                from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import (
+                    ONNXMiniLM_L6_V2,
+                )
+
                 model_dir = Path(ONNXMiniLM_L6_V2.DOWNLOAD_PATH) / "onnx"
-                required = ("config.json", "model.onnx", "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json", "vocab.txt")
-                check(all((model_dir / name).is_file() for name in required), "local_embedding_cache_unavailable_no_download")
+                required = (
+                    "config.json",
+                    "model.onnx",
+                    "special_tokens_map.json",
+                    "tokenizer.json",
+                    "tokenizer_config.json",
+                    "vocab.txt",
+                )
+                check(
+                    all((model_dir / name).is_file() for name in required),
+                    "local_embedding_cache_unavailable_no_download",
+                )
                 self.embedder = ONNXMiniLM_L6_V2()
                 self.threshold = 0.30
         elif source == "cache":
@@ -182,7 +326,11 @@ class ChromaBaseline:
             self.unsupported.append("query_embedding_disabled")
         else:
             raise BenchmarkError("unknown_embedding_source")
-        self.fidelity = "synthetic-only hash simulation" if source == "synthetic-hash" else "runtime embedding branch; historical provider compatibility is dimension-checked, not independently established"
+        self.fidelity = (
+            "synthetic-only hash simulation"
+            if source == "synthetic-hash"
+            else "runtime embedding branch; historical provider compatibility is dimension-checked, not independently established"
+        )
 
     def embedding(self, case):
         query = case["query"]
@@ -193,8 +341,15 @@ class ChromaBaseline:
         if self.source == "cache":
             item = self.cached_vectors.get(key)
             check(item is not None, "cached_query_embedding_missing")
-            provider, model = ("voyage", "voyage-4") if os.getenv("VOYAGE_API_KEY") else ("onnx", "all-MiniLM-L6-v2")
-            check(item.get("provider") == provider and item.get("model") == model, "cached_embedding_identity_mismatch")
+            provider, model = (
+                ("voyage", "voyage-4")
+                if os.getenv("VOYAGE_API_KEY")
+                else ("onnx", "all-MiniLM-L6-v2")
+            )
+            check(
+                item.get("provider") == provider and item.get("model") == model,
+                "cached_embedding_identity_mismatch",
+            )
             vector = item["embedding"]
             self.provider, self.model = provider, model
         elif self.source == "synthetic-hash":
@@ -203,22 +358,36 @@ class ChromaBaseline:
             self.calls.embedding += 1
         else:
             remote = bool(os.getenv("VOYAGE_API_KEY"))
-            check(not remote or self.allow_remote and (self.dataset.synthetic or case.get("query_sanitized") is True), "unsafe_embedding_query")
+            check(
+                not remote
+                or self.allow_remote
+                and (self.dataset.synthetic or case.get("query_sanitized") is True),
+                "unsafe_embedding_query",
+            )
             self.calls.embedding += 1
             self.calls.remote_embedding += int(remote)
             vector = list(self.embedder([query])[0])
-            self.provider, self.model = ("voyage", "voyage-4") if remote else ("onnx", "all-MiniLM-L6-v2")
-        check(isinstance(vector, list) and 0 < len(vector) <= 16384
-              and all(type(v) in (float, int) and math.isfinite(v) for v in vector)
-              and math.isfinite(math.hypot(*vector))
-              and math.hypot(*vector) > 0, "invalid_query_vector")
+            self.provider, self.model = (
+                ("voyage", "voyage-4") if remote else ("onnx", "all-MiniLM-L6-v2")
+            )
+        check(
+            isinstance(vector, list)
+            and 0 < len(vector) <= 16384
+            and all(type(v) in (float, int) and math.isfinite(v) for v in vector)
+            and math.isfinite(math.hypot(*vector))
+            and math.hypot(*vector) > 0,
+            "invalid_query_vector",
+        )
         self.cache[key] = vector
         self.used = True
         return vector
 
     def search(self, case: dict, k: int) -> list[dict]:
         query = query_from_case(case, k)
-        conditions = [{"session_id": {"$ne": query.current_session_id}}, {"agent": query.agent_name}]
+        conditions = [
+            {"session_id": {"$ne": query.current_session_id}},
+            {"agent": query.agent_name},
+        ]
         for value, operation in ((query.from_date, "$gte"), (query.to_date, "$lte")):
             if value:
                 stamp = datetime.combine(value, datetime.min.time(), UTC).timestamp()
@@ -226,31 +395,69 @@ class ChromaBaseline:
                     stamp += 86400 - 0.000001
                 if stamp:
                     conditions.append({"date": {operation: stamp}})
-        result = self.collection.query(query_embeddings=[self.embedding(case)], n_results=10,
-                                       where={"$and": conditions}, include=["documents", "metadatas", "distances"])
-        rows = sorted(zip(result["ids"][0], result["documents"][0], result["metadatas"][0], result["distances"][0]), key=lambda r: r[3])
+        result = self.collection.query(
+            query_embeddings=[self.embedding(case)],
+            n_results=10,
+            where={"$and": conditions},
+            include=["documents", "metadatas", "distances"],
+        )
+        rows = sorted(
+            zip(
+                result["ids"][0],
+                result["documents"][0],
+                result["metadatas"][0],
+                result["distances"][0],
+            ),
+            key=lambda r: r[3],
+        )
         hits = []
         for key, document, metadata, distance in rows[:3]:
-            check(type(float(distance)) is float and math.isfinite(float(distance)), "invalid_chroma_distance")
+            check(
+                type(float(distance)) is float and math.isfinite(float(distance)),
+                "invalid_chroma_distance",
+            )
             if distance > self.threshold:
                 continue
             stamp = metadata.get("date") or metadata.get("timestamp")
-            when = datetime.fromtimestamp(stamp, UTC).date().isoformat() if type(stamp) in (int, float) else None
-            hits.append({"memory_id": key, "citation": f"chroma:{key}", "unit_id": None,
-                         "date": when, "cwd": None, "kind": None, "conflict": None,
-                         "excerpt": document, "reasons": [{"source": "chroma_distance", "distance": float(distance)}],
-                         "score": 1 - float(distance), "confidence": None})
+            when = (
+                datetime.fromtimestamp(stamp, UTC).date().isoformat()
+                if type(stamp) in (int, float)
+                else None
+            )
+            hits.append(
+                {
+                    "memory_id": key,
+                    "citation": f"chroma:{key}",
+                    "unit_id": None,
+                    "date": when,
+                    "cwd": None,
+                    "kind": None,
+                    "conflict": None,
+                    "excerpt": document,
+                    "reasons": [
+                        {"source": "chroma_distance", "distance": float(distance)}
+                    ],
+                    "score": 1 - float(distance),
+                    "confidence": None,
+                }
+            )
         return hits[:k]
 
 
 def copy_chroma(source: Path, work: Path) -> str:
     check((source / "chroma.sqlite3").is_file(), "chroma_source_marker_missing")
     for path in source.rglob("*"):
-        check(not path.is_symlink() and (path.is_file() or path.is_dir()), "unsafe_chroma_tree")
+        check(
+            not path.is_symlink() and (path.is_file() or path.is_dir()),
+            "unsafe_chroma_tree",
+        )
     before = fingerprint(source)
     _private_directory(work)
     shutil.copytree(source, work / "source-backup")
-    check(fingerprint(source) == before == fingerprint(work / "source-backup"), "chroma_source_unstable")
+    check(
+        fingerprint(source) == before == fingerprint(work / "source-backup"),
+        "chroma_source_unstable",
+    )
     shutil.copytree(work / "source-backup", work / "chroma-copy")
     check(fingerprint(work / "chroma-copy") == before, "chroma_working_copy_mismatch")
     return digest(before)
@@ -264,75 +471,145 @@ def load_run_dataset(args, corpus: Path, cases: Path, review: Path | None) -> Da
     execution = getattr(args, "derivation_execution_evidence", None)
     trusted = getattr(args, "trusted_derivation_sha256", None)
     if scope == "calibration-only":
-        check(args.split == "calibration" and args.freeze_manifest is None,
-              "calibration_only_run_required")
-        check(review is not None and parent_review is not None,
-              "calibration_export_reviews_required")
+        check(
+            args.split == "calibration" and args.freeze_manifest is None,
+            "calibration_only_run_required",
+        )
+        check(
+            review is not None and parent_review is not None,
+            "calibration_export_reviews_required",
+        )
         return load_calibration_dataset(
-            corpus, cases, review, input_path(parent_review),
-            extraction_evidence=input_path(extraction) if extraction is not None else None,
+            corpus,
+            cases,
+            review,
+            input_path(parent_review),
+            extraction_evidence=input_path(extraction)
+            if extraction is not None
+            else None,
             execution_evidence=input_path(execution) if execution is not None else None,
             trusted_derivation_sha256=trusted,
         )
-    check(scope == "full-cohort" and parent_review is None and extraction is None and execution is None and trusted is None,
-          "invalid_dataset_scope_inputs")
+    check(
+        scope == "full-cohort"
+        and parent_review is None
+        and extraction is None
+        and execution is None
+        and trusted is None,
+        "invalid_dataset_scope_inputs",
+    )
     return load_dataset(corpus, cases, review)
 
 
 def dataset_evidence(dataset: Dataset) -> dict:
     derivation = asdict(dataset.derivation) if dataset.derivation is not None else None
     if derivation is not None:
-        derivation["shared_source_hashes"] = dict(dataset.derivation.shared_source_hashes)
-    return {"dataset_scope": dataset.dataset_scope,
-            "dataset_provenance_kind": "full-cohort" if dataset.dataset_scope == "full-cohort" else "calibration-only",
-            "calibration_provenance_contract": dataset.calibration_provenance_contract,
-            "calibration_derivation": derivation,
-            "calibration_export_sha256": dataset.cases_hash if dataset.dataset_scope == "calibration-only" else None,
-            "parent_review_manifest_sha256": dataset.parent_review_manifest_hash,
-            "parent_cases_sha256": dataset.parent_cases_hash}
+        derivation["shared_source_hashes"] = dict(
+            dataset.derivation.shared_source_hashes
+        )
+    return {
+        "dataset_scope": dataset.dataset_scope,
+        "dataset_provenance_kind": "full-cohort"
+        if dataset.dataset_scope == "full-cohort"
+        else "calibration-only",
+        "calibration_provenance_contract": dataset.calibration_provenance_contract,
+        "calibration_derivation": derivation,
+        "calibration_export_sha256": dataset.cases_hash
+        if dataset.dataset_scope == "calibration-only"
+        else None,
+        "parent_review_manifest_sha256": dataset.parent_review_manifest_hash,
+        "parent_cases_sha256": dataset.parent_cases_hash,
+    }
 
 
 def _full_cohort_report(report: dict) -> bool:
-    return (isinstance(report, dict) and report.get("dataset_scope") == "full-cohort" and report.get("dataset_provenance_kind") == "full-cohort"
-            and all(key in report and report[key] is None for key in CALIBRATION_EVIDENCE_FIELDS))
+    return (
+        isinstance(report, dict)
+        and report.get("dataset_scope") == "full-cohort"
+        and report.get("dataset_provenance_kind") == "full-cohort"
+        and all(
+            key in report and report[key] is None for key in CALIBRATION_EVIDENCE_FIELDS
+        )
+    )
 
 
 def frozen_protocol(report: dict, embedding: dict) -> dict:
     check(_full_cohort_report(report), "calibration_only_freeze_unsupported")
-    return {**{key: report[key] for key in ("dataset_scope", "dataset_provenance_kind", *CALIBRATION_EVIDENCE_FIELDS)},
-            "k": report["k"], "warmups": report["warmups"], "repetitions": report["repetitions"],
-            "sqlite_source_sha256": report["sqlite_source_sha256"],
-            "chroma_source_fingerprint": report["chroma_source_fingerprint"],
-            "collection_sha256": report["collection_sha256"],
-            "embedding_cache_sha256": report["embedding_cache_sha256"],
-            "document_vector_cache_sha256": report["document_vector_cache_sha256"],
-            "sqlite_semantic_policy": report["sqlite_semantic_policy"],
-            "review_manifest_sha256": report["review_manifest_sha256"],
-            "embedding": {key: embedding[key] for key in ("embedding_source", "provider", "model", "threshold")}}
+    return {
+        **{
+            key: report[key]
+            for key in (
+                "dataset_scope",
+                "dataset_provenance_kind",
+                *CALIBRATION_EVIDENCE_FIELDS,
+            )
+        },
+        "k": report["k"],
+        "warmups": report["warmups"],
+        "repetitions": report["repetitions"],
+        "sqlite_source_sha256": report["sqlite_source_sha256"],
+        "chroma_source_fingerprint": report["chroma_source_fingerprint"],
+        "collection_sha256": report["collection_sha256"],
+        "embedding_cache_sha256": report["embedding_cache_sha256"],
+        "document_vector_cache_sha256": report["document_vector_cache_sha256"],
+        "sqlite_semantic_policy": report["sqlite_semantic_policy"],
+        "review_manifest_sha256": report["review_manifest_sha256"],
+        "embedding": {
+            key: embedding[key]
+            for key in ("embedding_source", "provider", "model", "threshold")
+        },
+    }
 
 
 def reserve_holdout(freeze: dict, dataset: Dataset, identity: dict) -> str:
-    check(dataset.dataset_scope == "full-cohort" and dataset.parent_review_manifest_hash is None
-          and dataset.parent_cases_hash is None and dataset.calibration_provenance_contract is None
-          and dataset.derivation is None, "calibration_only_holdout_forbidden")
-    check(freeze.get("schema_version") == 1 and freeze.get("corpus_sha256") == dataset.corpus_hash
-          and freeze.get("cases_sha256") == dataset.cases_hash and freeze.get("code_hash") == identity["code_hash"]
-          and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash
-          and freeze.get("policy") == POLICY and freeze.get("calibration_complete") is True, "holdout_freeze_mismatch")
-    questions = [question_key(case, dataset.records) for case in dataset.cases
-                 if case.get("split") == "holdout"]
-    check(bool(questions) and len(set(questions)) == len(questions), "distinct_holdout_questions_required")
+    check(
+        dataset.dataset_scope == "full-cohort"
+        and dataset.parent_review_manifest_hash is None
+        and dataset.parent_cases_hash is None
+        and dataset.calibration_provenance_contract is None
+        and dataset.derivation is None,
+        "calibration_only_holdout_forbidden",
+    )
+    check(
+        freeze.get("schema_version") == 1
+        and freeze.get("corpus_sha256") == dataset.corpus_hash
+        and freeze.get("cases_sha256") == dataset.cases_hash
+        and freeze.get("code_hash") == identity["code_hash"]
+        and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash
+        and freeze.get("policy") == POLICY
+        and freeze.get("calibration_complete") is True,
+        "holdout_freeze_mismatch",
+    )
+    questions = [
+        question_key(case, dataset.records)
+        for case in dataset.cases
+        if case.get("split") == "holdout"
+    ]
+    check(
+        bool(questions) and len(set(questions)) == len(questions),
+        "distinct_holdout_questions_required",
+    )
     token = digest(sorted(questions))
     ledger = private_path(ROOT / "verification/memory/local/benchmark-holdout-ledger")
     _private_directory(ledger)
     path = ledger / (token + ".json")
     with _lock(ledger / ".reservation.lock"):
-        check(not path.exists()
-              and not any((ledger / ("question-" + key + ".json")).exists() for key in questions),
-              "holdout_already_consumed_or_invalidated")
-        entry = {"schema_version": 1, "holdout_input_hash": token,
-                 "freeze_hash": digest(freeze), "consumed_before_execution": True}
-        for target in [ledger / ("question-" + key + ".json") for key in questions] + [path]:
+        check(
+            not path.exists()
+            and not any(
+                (ledger / ("question-" + key + ".json")).exists() for key in questions
+            ),
+            "holdout_already_consumed_or_invalidated",
+        )
+        entry = {
+            "schema_version": 1,
+            "holdout_input_hash": token,
+            "freeze_hash": digest(freeze),
+            "consumed_before_execution": True,
+        }
+        for target in [ledger / ("question-" + key + ".json") for key in questions] + [
+            path
+        ]:
             with target.open("x", encoding="utf-8") as stream:
                 os.chmod(target, 0o600)
                 stream.write(encode(entry) + "\n")
@@ -342,46 +619,78 @@ def reserve_holdout(freeze: dict, dataset: Dataset, identity: dict) -> str:
 def input_evidence(args, dataset: Dataset, modes: list[str]):
     """Reject changed evidence before backend setup or holdout consumption."""
     scope = getattr(dataset, "dataset_scope", "full-cohort")
-    check(scope in {"full-cohort", "calibration-only"}
-          and getattr(args, "dataset_scope", scope) == scope, "dataset_scope_mismatch")
+    check(
+        scope in {"full-cohort", "calibration-only"}
+        and getattr(args, "dataset_scope", scope) == scope,
+        "dataset_scope_mismatch",
+    )
     if scope == "calibration-only":
-        check(args.split == "calibration" and args.freeze_manifest is None,
-              "calibration_only_run_required")
+        check(
+            args.split == "calibration" and args.freeze_manifest is None,
+            "calibration_only_run_required",
+        )
         parent = getattr(args, "parent_review_manifest", None)
-        check(parent is not None and dataset.parent_review_manifest_hash is not None,
-              "calibration_export_reviews_required")
+        check(
+            parent is not None and dataset.parent_review_manifest_hash is not None,
+            "calibration_export_reviews_required",
+        )
         parent_path = input_path(parent)
-        check(file_hash(parent_path) == dataset.parent_review_manifest_hash,
-              "calibration_parent_review_changed_after_loading")
+        check(
+            file_hash(parent_path) == dataset.parent_review_manifest_hash,
+            "calibration_parent_review_changed_after_loading",
+        )
     else:
-        check(getattr(args, "parent_review_manifest", None) is None
-              and getattr(dataset, "calibration_provenance_contract", None) is None
-              and getattr(dataset, "derivation", None) is None, "invalid_dataset_scope_inputs")
+        check(
+            getattr(args, "parent_review_manifest", None) is None
+            and getattr(dataset, "calibration_provenance_contract", None) is None
+            and getattr(dataset, "derivation", None) is None,
+            "invalid_dataset_scope_inputs",
+        )
     derivation = getattr(dataset, "derivation", None)
     extraction = getattr(args, "derivation_extraction_evidence", None)
     execution = getattr(args, "derivation_execution_evidence", None)
     trusted = getattr(args, "trusted_derivation_sha256", None)
     if derivation is not None:
-        check(scope == "calibration-only" and extraction is not None and execution is not None
-              and trusted == derivation.trusted_acceptance_hash == dataset.review_manifest_hash,
-              "mechanical_derivation_inputs_changed")
-        read_json(input_path(extraction), expected_sha256=derivation.extraction_evidence_hash)
-        read_json(input_path(execution), expected_sha256=derivation.execution_evidence_hash)
+        check(
+            scope == "calibration-only"
+            and extraction is not None
+            and execution is not None
+            and trusted
+            == derivation.trusted_acceptance_hash
+            == dataset.review_manifest_hash,
+            "mechanical_derivation_inputs_changed",
+        )
+        read_json(
+            input_path(extraction), expected_sha256=derivation.extraction_evidence_hash
+        )
+        read_json(
+            input_path(execution), expected_sha256=derivation.execution_evidence_hash
+        )
     else:
-        check(extraction is None and execution is None and trusted is None, "unused_mechanical_derivation_inputs")
+        check(
+            extraction is None and execution is None and trusted is None,
+            "unused_mechanical_derivation_inputs",
+        )
     if not dataset.synthetic:
-        check(args.review_manifest is not None and dataset.review_manifest_hash is not None,
-              "private_review_evidence_missing")
+        check(
+            args.review_manifest is not None
+            and dataset.review_manifest_hash is not None,
+            "private_review_evidence_missing",
+        )
         review = input_path(args.review_manifest)
-        check(file_hash(review) == dataset.review_manifest_hash,
-              "review_manifest_changed_after_loading")
+        check(
+            file_hash(review) == dataset.review_manifest_hash,
+            "review_manifest_changed_after_loading",
+        )
         if derivation is not None:
             read_json(review, expected_sha256=derivation.trusted_acceptance_hash)
     cache = None
     cache_hash = None
     if args.embedding_source == "cache":
-        check("chroma" in modes and args.embedding_cache is not None,
-              "query_embedding_cache_required")
+        check(
+            "chroma" in modes and args.embedding_cache is not None,
+            "query_embedding_cache_required",
+        )
         cache = input_path(args.embedding_cache)
         cache_hash = file_hash(cache)
     else:
@@ -389,64 +698,120 @@ def input_evidence(args, dataset: Dataset, modes: list[str]):
     vector_path = None
     vector_hash = None
     if getattr(args, "document_vector_cache", None) is not None:
-        check(any(mode.startswith("sqlite") for mode in modes), "unused_document_vector_cache")
+        check(
+            any(mode.startswith("sqlite") for mode in modes),
+            "unused_document_vector_cache",
+        )
         vector_path = input_path(args.document_vector_cache)
         vector_hash = file_hash(vector_path)
     try:
-        semantic_policy = SQLiteSemanticPolicy(getattr(args, "sqlite_semantic_max_distance", None))
+        semantic_policy = SQLiteSemanticPolicy(
+            getattr(args, "sqlite_semantic_max_distance", None)
+        )
     except ValueError:
         raise BenchmarkError("invalid_sqlite_semantic_policy") from None
     freeze = None
     if args.split == "holdout":
-        check(args.freeze_manifest is not None and {"chroma", "sqlite"} <= set(modes),
-              "holdout_freeze_and_baseline_required")
+        check(
+            args.freeze_manifest is not None and {"chroma", "sqlite"} <= set(modes),
+            "holdout_freeze_and_baseline_required",
+        )
         freeze = read_json(input_path(args.freeze_manifest))
         protocol = freeze.get("protocol") if isinstance(freeze, dict) else None
-        check(isinstance(protocol, dict) and _full_cohort_report(protocol)
-              and "embedding_cache_sha256" in protocol
-              and "review_manifest_sha256" in protocol
-              and "document_vector_cache_sha256" in protocol
-              and "sqlite_semantic_policy" in protocol,
-              "frozen_input_evidence_missing")
-        check(protocol["embedding_cache_sha256"] == cache_hash
-              and protocol["review_manifest_sha256"] == dataset.review_manifest_hash
-              and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash
-              and protocol["document_vector_cache_sha256"] == vector_hash
-              and protocol["sqlite_semantic_policy"] == asdict(semantic_policy),
-              "frozen_input_evidence_changed")
-    cache_rows = tuple(read_jsonl(cache, expected_sha256=cache_hash)) if cache is not None else None
-    document_vectors = local_document_vectors(
-        read_jsonl(vector_path, expected_sha256=vector_hash)
-    ) if vector_path is not None else None
-    return cache_hash, cache_rows, freeze, vector_hash, document_vectors, semantic_policy
+        check(
+            isinstance(protocol, dict)
+            and _full_cohort_report(protocol)
+            and "embedding_cache_sha256" in protocol
+            and "review_manifest_sha256" in protocol
+            and "document_vector_cache_sha256" in protocol
+            and "sqlite_semantic_policy" in protocol,
+            "frozen_input_evidence_missing",
+        )
+        check(
+            protocol["embedding_cache_sha256"] == cache_hash
+            and protocol["review_manifest_sha256"] == dataset.review_manifest_hash
+            and freeze.get("review_manifest_sha256") == dataset.review_manifest_hash
+            and protocol["document_vector_cache_sha256"] == vector_hash
+            and protocol["sqlite_semantic_policy"] == asdict(semantic_policy),
+            "frozen_input_evidence_changed",
+        )
+    cache_rows = (
+        tuple(read_jsonl(cache, expected_sha256=cache_hash))
+        if cache is not None
+        else None
+    )
+    document_vectors = (
+        local_document_vectors(read_jsonl(vector_path, expected_sha256=vector_hash))
+        if vector_path is not None
+        else None
+    )
+    return (
+        cache_hash,
+        cache_rows,
+        freeze,
+        vector_hash,
+        document_vectors,
+        semantic_policy,
+    )
 
 
 def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
-    check(1 <= args.k <= 20 and 0 <= args.warmups <= 20 and 1 <= args.repetitions <= 100, "invalid_run_bounds")
+    check(
+        1 <= args.k <= 20 and 0 <= args.warmups <= 20 and 1 <= args.repetitions <= 100,
+        "invalid_run_bounds",
+    )
     modes = args.modes.split(",")
-    check(len(modes) == len(set(modes)) and set(modes) <= MODES and modes, "invalid_modes")
+    check(
+        len(modes) == len(set(modes)) and set(modes) <= MODES and modes, "invalid_modes"
+    )
     modes.sort(key=lambda mode: (mode != "chroma", mode))
     if dataset.synthetic:
         check(args.split == "synthetic", "synthetic_split_required")
         manifest = read_json(ASSETS / "fixture-manifest.json")
-        check(dataset.corpus_hash == manifest["hashes_sha256"]["synthetic-corpus.jsonl"]
-              and dataset.cases_hash == manifest["hashes_sha256"]["benchmark-cases.jsonl"], "unrecognized_synthetic_corpus")
+        check(
+            dataset.corpus_hash == manifest["hashes_sha256"]["synthetic-corpus.jsonl"]
+            and dataset.cases_hash
+            == manifest["hashes_sha256"]["benchmark-cases.jsonl"],
+            "unrecognized_synthetic_corpus",
+        )
     else:
         check(args.split in {"calibration", "holdout"}, "private_split_required")
         check(not args.allow_remote_llm, "private_evidence_remote_llm_forbidden")
-    check(not args.allow_remote_embeddings or args.embedding_source == "configured", "embedding_opt_in_mismatch")
-    cache_hash, cache_rows, freeze, vector_hash, document_vectors, semantic_policy = input_evidence(args, dataset, modes)
+    check(
+        not args.allow_remote_embeddings or args.embedding_source == "configured",
+        "embedding_opt_in_mismatch",
+    )
+    cache_hash, cache_rows, freeze, vector_hash, document_vectors, semantic_policy = (
+        input_evidence(args, dataset, modes)
+    )
     check(1 <= args.model_call_budget <= 10_000, "invalid_model_budget")
-    assisted = any(mode in {"sqlite-expand", "sqlite-rerank"} for mode in modes) or args.answer_eval
-    check(not assisted or args.adapter in {"fake", "remote"}, "explicit_adapter_required")
+    assisted = (
+        any(mode in {"sqlite-expand", "sqlite-rerank"} for mode in modes)
+        or args.answer_eval
+    )
+    check(
+        not assisted or args.adapter in {"fake", "remote"}, "explicit_adapter_required"
+    )
     adapter = None
     if assisted:
         if args.adapter == "fake":
             adapter = FakeAdapter()
         else:
-            check(args.allow_remote_llm and dataset.synthetic, "remote_llm_not_authorized")
-            adapter = RemoteJSONAdapter(args.llm_endpoint, args.llm_provider, args.llm_model, args.llm_key_env, authorized=True)
-    selected = [case for case in dataset.cases if dataset.synthetic or case["split"] == args.split]
+            check(
+                args.allow_remote_llm and dataset.synthetic, "remote_llm_not_authorized"
+            )
+            adapter = RemoteJSONAdapter(
+                args.llm_endpoint,
+                args.llm_provider,
+                args.llm_model,
+                args.llm_key_env,
+                authorized=True,
+            )
+    selected = [
+        case
+        for case in dataset.cases
+        if dataset.synthetic or case["split"] == args.split
+    ]
     check(selected, "no_selected_cases")
     sqlite_source = input_path(args.sqlite_source)
     repository = SQLiteMemoryRepository(sqlite_source, read_only=True)
@@ -454,7 +819,12 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
     sqlite_before = file_hash(sqlite_source)
     if document_vectors:
         destination = output / "sqlite-semantic-candidate.sqlite3"
-        with closing(sqlite3.connect(sqlite_source.resolve().as_uri() + "?mode=ro", uri=True)) as origin, closing(sqlite3.connect(destination)) as target:
+        with (
+            closing(
+                sqlite3.connect(sqlite_source.resolve().as_uri() + "?mode=ro", uri=True)
+            ) as origin,
+            closing(sqlite3.connect(destination)) as target,
+        ):
             origin.backup(target)
         repository = SQLiteMemoryRepository(destination)
         repository.copy_local_document_vectors(document_vectors)
@@ -462,61 +832,139 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
     calls = Calls()
     coordinator = MemorySearchCoordinator(repository)
     report = {
-        "schema_version": 1, "started_at": datetime.now(UTC).isoformat(), "synthetic": dataset.synthetic,
-        "split": args.split, "corpus_sha256": dataset.corpus_hash, "cases_sha256": dataset.cases_hash,
+        "schema_version": 1,
+        "started_at": datetime.now(UTC).isoformat(),
+        "synthetic": dataset.synthetic,
+        "split": args.split,
+        "corpus_sha256": dataset.corpus_hash,
+        "cases_sha256": dataset.cases_hash,
         "embedding_cache_sha256": cache_hash,
         "document_vector_cache_sha256": vector_hash,
         "sqlite_semantic_policy": asdict(semantic_policy),
         "review_manifest_sha256": dataset.review_manifest_hash,
         **dataset_evidence(dataset),
-        "corpus_records": len(dataset.records), "selected_cases": len(selected), **identity,
-        "k": args.k, "warmups": args.warmups, "repetitions": args.repetitions,
-        "sqlite_source_sha256": sqlite_before, "answer_eval": args.answer_eval,
+        "corpus_records": len(dataset.records),
+        "selected_cases": len(selected),
+        **identity,
+        "k": args.k,
+        "warmups": args.warmups,
+        "repetitions": args.repetitions,
+        "sqlite_source_sha256": sqlite_before,
+        "answer_eval": args.answer_eval,
         "collection_sha256": digest(args.collection) if "chroma" in modes else None,
-        "answer_prompt_sampling": {"template_hash": digest(PROMPT), "temperature": 0, "max_tokens": 256, "input_chars": 8000},
+        "answer_prompt_sampling": {
+            "template_hash": digest(PROMPT),
+            "temperature": 0,
+            "max_tokens": 256,
+            "input_chars": 8000,
+        },
         "call_counter_semantics": "Model and embedding counts are adapter invocations; offline-fake and synthetic-hash are not real models. Tokens/costs are observed subtotals with coverage counts; transport retries and exact HTTP requests are unsupported.",
-        "limitations": ["No semantic fact scoring without an explicit correctness hook", "Chroma ignores kind/lifecycle/CWD; returns at most three", "Case context is metadata, not silently rewritten into search keywords", "Warm query embeddings cached; cold latency recorded separately; HTTP retries and embedding token/cost totals unsupported"],
-        "modes": {}, "cases": [],
+        "limitations": [
+            "No semantic fact scoring without an explicit correctness hook",
+            "Chroma ignores kind/lifecycle/CWD; returns at most three",
+            "Case context is metadata, not silently rewritten into search keywords",
+            "Warm query embeddings cached; cold latency recorded separately; HTTP retries and embedding token/cost totals unsupported",
+        ],
+        "modes": {},
+        "cases": [],
     }
     failures = []
     with ExitStack() as stack:
         chroma = None
         source = None
         if "chroma" in modes:
-            check(args.chroma_source is not None and args.embedding_source is not None, "explicit_chroma_inputs_required")
+            check(
+                args.chroma_source is not None and args.embedding_source is not None,
+                "explicit_chroma_inputs_required",
+            )
             source = private_path(args.chroma_source)
             check(not _overlap(source, output), "chroma_output_overlap")
             source_hash = copy_chroma(source, output / "chroma")
-            collection = stack.enter_context(_sdk_collection(output / "chroma", args.collection))
-            chroma = ChromaBaseline(collection, dataset, args.embedding_source, calls,
-                                    args.allow_remote_embeddings, None, source_hash,
-                                    cache_rows=cache_rows)
+            collection = stack.enter_context(
+                _sdk_collection(output / "chroma", args.collection)
+            )
+            chroma = ChromaBaseline(
+                collection,
+                dataset,
+                args.embedding_source,
+                calls,
+                args.allow_remote_embeddings,
+                None,
+                source_hash,
+                cache_rows=cache_rows,
+            )
             report["chroma_source_fingerprint"] = source_hash
         if args.split == "holdout":
-            provider, model = ("voyage", "voyage-4") if os.getenv("VOYAGE_API_KEY") else ("onnx", "all-MiniLM-L6-v2")
-            preview = {"embedding_source": args.embedding_source, "provider": provider,
-                       "model": model, "threshold": chroma.threshold}
-            check(freeze.get("protocol") == frozen_protocol(report, preview), "frozen_backend_or_run_protocol_changed")
+            provider, model = (
+                ("voyage", "voyage-4")
+                if os.getenv("VOYAGE_API_KEY")
+                else ("onnx", "all-MiniLM-L6-v2")
+            )
+            preview = {
+                "embedding_source": args.embedding_source,
+                "provider": provider,
+                "model": model,
+                "threshold": chroma.threshold,
+            }
+            check(
+                freeze.get("protocol") == frozen_protocol(report, preview),
+                "frozen_backend_or_run_protocol_changed",
+            )
             report["holdout_reservation"] = reserve_holdout(freeze, dataset, identity)
         invocations = defaultdict(lambda: {"total": 0, "assisted": 0})
+
         def raw_retrieve(mode, case):
             if mode == "chroma":
                 return chroma.search(case, args.k)
             queries = [case["query"]]
             if mode in {"sqlite-expand", "sqlite-rerank"}:
-                queries = expand_queries(adapter, case["query"], synthetic=dataset.synthetic, calls=calls, budget=args.model_call_budget)
+                queries = expand_queries(
+                    adapter,
+                    case["query"],
+                    synthetic=dataset.synthetic,
+                    calls=calls,
+                    budget=args.model_call_budget,
+                )
             by_id, scores = {}, defaultdict(float)
             for text in queries:
                 vector = cached_query_vector(cache_rows, text)
-                for rank, hit in enumerate(sqlite_hits(coordinator, {**case, "query": text}, args.k, vector, semantic_policy), 1):
+                for rank, hit in enumerate(
+                    sqlite_hits(
+                        coordinator,
+                        {**case, "query": text},
+                        args.k,
+                        vector,
+                        semantic_policy,
+                    ),
+                    1,
+                ):
                     key = hit["memory_id"]
-                    check(scope_eligible(dataset.records[key], case) and lifecycle_eligible(dataset.records[key]), "assisted_scope_violation")
+                    check(
+                        scope_eligible(dataset.records[key], case)
+                        and lifecycle_eligible(dataset.records[key]),
+                        "assisted_scope_violation",
+                    )
                     by_id.setdefault(key, hit)
                     scores[key] += 1 / (60 + rank)
-            hits = sorted(by_id.values(), key=lambda hit: (-scores[hit["memory_id"]], hit["memory_id"]))[:args.k] if len(queries) > 1 else list(by_id.values())
+            hits = (
+                sorted(
+                    by_id.values(),
+                    key=lambda hit: (-scores[hit["memory_id"]], hit["memory_id"]),
+                )[: args.k]
+                if len(queries) > 1
+                else list(by_id.values())
+            )
             if mode == "sqlite-rerank":
-                hits = rerank_hits(adapter, case["query"], hits, synthetic=dataset.synthetic, calls=calls, budget=args.model_call_budget)
+                hits = rerank_hits(
+                    adapter,
+                    case["query"],
+                    hits,
+                    synthetic=dataset.synthetic,
+                    calls=calls,
+                    budget=args.model_call_budget,
+                )
             return hits
+
         def retrieve(mode, case):
             before = calls.model
             try:
@@ -524,6 +972,7 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
             finally:
                 invocations[mode]["total"] += 1
                 invocations[mode]["assisted"] += calls.model > before
+
         for mode in modes:
             evaluated, times, cold, category = [], [], [], defaultdict(list)
             errors, busy, unstable, cwd_failures = 0, 0, 0, 0
@@ -541,51 +990,119 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
                         last = retrieve(mode, case)
                         times.append((time.perf_counter() - started) * 1000)
                         unstable += signature(last) != signature(first)
-                    changed = retrieve(mode, {**case, "current_cwd": "benchmark-cwd-invariance-probe"})
+                    changed = retrieve(
+                        mode, {**case, "current_cwd": "benchmark-cwd-invariance-probe"}
+                    )
                     invariant = signature(changed) == signature(last)
                     cwd_failures += not invariant
                     metrics = measure(case, last, dataset.records, args.k)
                     evaluated.append(metrics)
                     for name in case["categories"]:
                         category[name].append(metrics)
-                    row = {"mode": mode, "case_id": case["case_id"], "metrics": metrics, "hits": last}
+                    row = {
+                        "mode": mode,
+                        "case_id": case["case_id"],
+                        "metrics": metrics,
+                        "hits": last,
+                    }
                     if args.answer_eval:
-                        row["answer_metrics"] = evaluate_answer(adapter, case, last, synthetic=dataset.synthetic, calls=calls, budget=args.model_call_budget)
+                        row["answer_metrics"] = evaluate_answer(
+                            adapter,
+                            case,
+                            last,
+                            synthetic=dataset.synthetic,
+                            calls=calls,
+                            budget=args.model_call_budget,
+                        )
                     report["cases"].append(row)
-                    if (set(case["expected_memory_ids"]) - {h["memory_id"] for h in last}
-                            or metrics["excluded_leaks"] or metrics["scope_leaks"] or metrics["deletion_leaks"]
-                            or metrics["abstention_correct"] == 0 or metrics["conflict_correct"] == 0
-                            or metrics["provenance_correct"] == 0 or not invariant
-                            or (not case["expected_memory_ids"] and case["acceptable_memory_ids"]
-                                and not (set(case["acceptable_memory_ids"]) & {h["memory_id"] for h in last}))):
+                    if (
+                        set(case["expected_memory_ids"])
+                        - {h["memory_id"] for h in last}
+                        or metrics["excluded_leaks"]
+                        or metrics["scope_leaks"]
+                        or metrics["deletion_leaks"]
+                        or metrics["abstention_correct"] == 0
+                        or metrics["conflict_correct"] == 0
+                        or metrics["provenance_correct"] == 0
+                        or not invariant
+                        or (
+                            not case["expected_memory_ids"]
+                            and case["acceptable_memory_ids"]
+                            and not (
+                                set(case["acceptable_memory_ids"])
+                                & {h["memory_id"] for h in last}
+                            )
+                        )
+                    ):
                         failures.append(row)
                 except Exception as error:
                     errors += 1
-                    busy += isinstance(error, sqlite3.OperationalError) and ((getattr(error, "sqlite_errorcode", 0) or 0) & 255) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
-                    failures.append({"mode": mode, "case_id": case["case_id"], "error_code": str(error) if isinstance(error, BenchmarkError) else type(error).__name__})
+                    busy += isinstance(error, sqlite3.OperationalError) and (
+                        (getattr(error, "sqlite_errorcode", 0) or 0) & 255
+                    ) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+                    failures.append(
+                        {
+                            "mode": mode,
+                            "case_id": case["case_id"],
+                            "error_code": str(error)
+                            if isinstance(error, BenchmarkError)
+                            else type(error).__name__,
+                        }
+                    )
             after = calls.data()
             summary = {
-                **aggregate(evaluated), "backend_errors": errors, "observable_sqlite_busy_events": busy,
-                "cwd_invariance_failures": cwd_failures, "repeat_signature_changes": unstable,
-                "p50_ms": percentile(times, .50), "p95_ms": percentile(times, .95), "cold_p95_ms": percentile(cold, .95),
-                "per_category": {name: aggregate(rows) for name, rows in sorted(category.items())},
-                "calls": {name: after[name] - mode_calls_before[name] if after[name] is not None and mode_calls_before[name] is not None else after[name] for name in after},
+                **aggregate(evaluated),
+                "backend_errors": errors,
+                "observable_sqlite_busy_events": busy,
+                "cwd_invariance_failures": cwd_failures,
+                "repeat_signature_changes": unstable,
+                "p50_ms": percentile(times, 0.50),
+                "p95_ms": percentile(times, 0.95),
+                "cold_p95_ms": percentile(cold, 0.95),
+                "per_category": {
+                    name: aggregate(rows) for name, rows in sorted(category.items())
+                },
+                "calls": {
+                    name: after[name] - mode_calls_before[name]
+                    if after[name] is not None and mode_calls_before[name] is not None
+                    else after[name]
+                    for name in after
+                },
             }
-            summary["assisted_invocation_rate"] = invocations[mode]["assisted"] / invocations[mode]["total"] if invocations[mode]["total"] else None
+            summary["assisted_invocation_rate"] = (
+                invocations[mode]["assisted"] / invocations[mode]["total"]
+                if invocations[mode]["total"]
+                else None
+            )
             report["modes"][mode] = summary
         check(file_hash(sqlite_source) == sqlite_before, "sqlite_input_changed")
         if source:
-            check(fingerprint(source) == fingerprint(output / "chroma/source-backup"), "chroma_source_changed")
-            report["chroma"] = {"embedding_source": args.embedding_source, "provider": chroma.provider if chroma.used else None,
-                                "model": chroma.model if chroma.used else None, "threshold": chroma.threshold,
-                                "fidelity": chroma.fidelity, "actual_http_requests": None,
-                                "k_cap": 3, "query_candidates": 10, "kind_filter": "unsupported", "lifecycle_filter": "not present in source service"}
+            check(
+                fingerprint(source) == fingerprint(output / "chroma/source-backup"),
+                "chroma_source_changed",
+            )
+            report["chroma"] = {
+                "embedding_source": args.embedding_source,
+                "provider": chroma.provider if chroma.used else None,
+                "model": chroma.model if chroma.used else None,
+                "threshold": chroma.threshold,
+                "fidelity": chroma.fidelity,
+                "actual_http_requests": None,
+                "k_cap": 3,
+                "query_candidates": 10,
+                "kind_filter": "unsupported",
+                "lifecycle_filter": "not present in source service",
+            }
     report["calls"] = calls.data()
-    report["llm"] = {"provider": adapter.provider, "model": adapter.model} if calls.model else None
+    report["llm"] = (
+        {"provider": adapter.provider, "model": adapter.model} if calls.model else None
+    )
     report["acceptance"] = acceptance(report)
     report["finished_at"] = datetime.now(UTC).isoformat()
     _write_json(output / "results.json", report)
-    write_text(output / "failures.jsonl", "".join(encode(row) + "\n" for row in failures))
+    write_text(
+        output / "failures.jsonl", "".join(encode(row) + "\n" for row in failures)
+    )
     write_text(output / "summary.md", markdown_summary(report))
     return report
 
@@ -593,46 +1110,122 @@ def run_benchmark(args, dataset: Dataset, output: Path) -> dict:
 def acceptance(report: dict) -> dict:
     sqlite = report["modes"].get("sqlite", {})
     chroma = report["modes"].get("chroma", {})
-    available = all(m.get("evaluated_cases") == report["selected_cases"] and not m.get("backend_errors") for m in (sqlite, chroma))
+    available = all(
+        m.get("evaluated_cases") == report["selected_cases"]
+        and not m.get("backend_errors")
+        for m in (sqlite, chroma)
+    )
     tests = {
         "official_k5_protocol": report.get("k") == 5,
-        "zero_leaks": all(sqlite.get(key) == 0 for key in ("excluded_leaks", "scope_leaks", "lifecycle_leaks", "deletion_leaks", "unknown_id_leaks")) if sqlite else None,
-        "zero_duplicate_parents": sqlite.get("duplicate_parent_hits") == 0 if sqlite else None,
+        "zero_leaks": all(
+            sqlite.get(key) == 0
+            for key in (
+                "excluded_leaks",
+                "scope_leaks",
+                "lifecycle_leaks",
+                "deletion_leaks",
+                "unknown_id_leaks",
+            )
+        )
+        if sqlite
+        else None,
+        "zero_duplicate_parents": sqlite.get("duplicate_parent_hits") == 0
+        if sqlite
+        else None,
         "cwd_invariant": sqlite.get("cwd_invariance_failures") == 0 if sqlite else None,
-        "recall_at_5_at_least_chroma": sqlite["recall_at_5"] >= chroma["recall_at_5"] if available and sqlite.get("recall_at_5") is not None and chroma.get("recall_at_5") is not None else None,
-        "precision_at_5_within_5pp": sqlite.get("precision_at_5", -1) >= chroma.get("precision_at_5", 2) - .05 if available else None,
-        "no_relevant_abstention_at_least_95pct": sqlite["no_relevant_abstention"] >= .95 if sqlite.get("no_relevant_abstention") is not None else None,
-        "local_p95_below_100ms": sqlite.get("p95_ms") < 100 if sqlite.get("p95_ms") is not None else None,
+        "recall_at_5_at_least_chroma": sqlite["recall_at_5"] >= chroma["recall_at_5"]
+        if available
+        and sqlite.get("recall_at_5") is not None
+        and chroma.get("recall_at_5") is not None
+        else None,
+        "precision_at_5_within_5pp": sqlite.get("precision_at_5", -1)
+        >= chroma.get("precision_at_5", 2) - 0.05
+        if available
+        else None,
+        "no_relevant_abstention_at_least_95pct": sqlite["no_relevant_abstention"]
+        >= 0.95
+        if sqlite.get("no_relevant_abstention") is not None
+        else None,
+        "local_p95_below_100ms": sqlite.get("p95_ms") < 100
+        if sqlite.get("p95_ms") is not None
+        else None,
     }
-    genuine = report.get("chroma", {}).get("embedding_source") in {"configured", "cache"}
-    passed = _full_cohort_report(report) and not report["synthetic"] and report["split"] == "holdout" and available and genuine and all(value is True for value in tests.values())
-    return {"targets_are_proposed": True, "tests": tests, "passed": passed,
-            "status": "passed" if passed else "blocked", "private_real_gate": not report["synthetic"] and _full_cohort_report(report),
-            "dataset_scope": report.get("dataset_scope", "full-cohort")}
+    genuine = report.get("chroma", {}).get("embedding_source") in {
+        "configured",
+        "cache",
+    }
+    passed = (
+        _full_cohort_report(report)
+        and not report["synthetic"]
+        and report["split"] == "holdout"
+        and available
+        and genuine
+        and all(value is True for value in tests.values())
+    )
+    return {
+        "targets_are_proposed": True,
+        "tests": tests,
+        "passed": passed,
+        "status": "passed" if passed else "blocked",
+        "private_real_gate": not report["synthetic"] and _full_cohort_report(report),
+        "dataset_scope": report.get("dataset_scope", "full-cohort"),
+    }
 
 
 def markdown_summary(report: dict) -> str:
-    lines = ["# Memory benchmark (private report)", "", "Proposed gates; not production/cutover approval.", "",
-             "Dataset scope: " + report.get("dataset_scope", "full-cohort"), "",
-             "| Mode | Evaluated | Recall@5 | Precision@5 | p95 ms | Errors |", "|---|---:|---:|---:|---:|---:|"]
+    lines = [
+        "# Memory benchmark (private report)",
+        "",
+        "Proposed gates; not production/cutover approval.",
+        "",
+        "Dataset scope: " + report.get("dataset_scope", "full-cohort"),
+        "",
+        "| Mode | Evaluated | Recall@5 | Precision@5 | p95 ms | Errors |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
     for mode, row in report["modes"].items():
-        lines.append(f"| {mode} | {row.get('evaluated_cases', 0)} | {row.get('recall_at_5')} | {row.get('precision_at_5')} | {row.get('p95_ms')} | {row['backend_errors']} |")
-    lines += ["", "Acceptance: " + report["acceptance"]["status"], "", "Unavailable values remain null; case-level traces remain private.", ""]
+        lines.append(
+            f"| {mode} | {row.get('evaluated_cases', 0)} | {row.get('recall_at_5')} | {row.get('precision_at_5')} | {row.get('p95_ms')} | {row['backend_errors']} |"
+        )
+    lines += [
+        "",
+        "Acceptance: " + report["acceptance"]["status"],
+        "",
+        "Unavailable values remain null; case-level traces remain private.",
+        "",
+    ]
     return "\n".join(lines)
 
 
 def draft_review(sqlite_source: Path, output: Path) -> dict:
     repository = SQLiteMemoryRepository(sqlite_source, read_only=True)
     with repository._transaction() as connection:
-        records = [repository._record(row) for row in connection.execute("SELECT * FROM memory_record ORDER BY id")]
+        records = [
+            repository._record(row)
+            for row in connection.execute("SELECT * FROM memory_record ORDER BY id")
+        ]
     rows = []
     for record in records:
-        rows.append({"schema_version": 1, "synthetic": False, "id": record.id, "document": record.document,
-                     "metadata": record.metadata, "cwd": record.cwd, "status": record.status,
-                     "subject_key": record.subject_key, "superseded_by": record.superseded_by,
-                     "document_format": record.document_format, "kinds": list(record.kinds),
-                     "created_at": record.created_at, "updated_at": record.updated_at,
-                     "valid_from": record.valid_from, "valid_to": record.valid_to, "evolved_at": record.evolved_at})
+        rows.append(
+            {
+                "schema_version": 1,
+                "synthetic": False,
+                "id": record.id,
+                "document": record.document,
+                "metadata": record.metadata,
+                "cwd": record.cwd,
+                "status": record.status,
+                "subject_key": record.subject_key,
+                "superseded_by": record.superseded_by,
+                "document_format": record.document_format,
+                "kinds": list(record.kinds),
+                "created_at": record.created_at,
+                "updated_at": record.updated_at,
+                "valid_from": record.valid_from,
+                "valid_to": record.valid_to,
+                "evolved_at": record.evolved_at,
+            }
+        )
     eligible = [r for r in records if lifecycle_eligible(r)]
     check(len(eligible) >= 14, "insufficient_records_for_draft_topics")
     chosen = sorted(eligible, key=lambda r: digest(r.id))[:14]
@@ -640,57 +1233,166 @@ def draft_review(sqlite_source: Path, output: Path) -> dict:
     session = "benchmark-review-session-" + uuid.uuid4().hex
     for index, record in enumerate(chosen):
         parsed = SQLiteMemoryRepository.validate_record(record)
-        term = next((entity for unit in parsed.units for entity in unit.entities if len(entity) <= 120), None)
+        term = next(
+            (
+                entity
+                for unit in parsed.units
+                for entity in unit.entities
+                if len(entity) <= 120
+            ),
+            None,
+        )
         term = term or (record.header or record.document)[:100]
         split = "calibration" if index < 7 else "holdout"
         for variant in range(2):
-            query = f"Find the literal identifier {term}." if variant == 0 else f"What was recorded about {term}?"
-            cases.append({"schema_version": 1, "synthetic": False, "case_id": "draft-" + uuid.uuid4().hex,
-                          "categories": ["exact_identifier", "draft_needs_semantic_review"], "query": query,
-                          "agent_name": record.agent_name, "current_session_id": session,
-                          "current_cwd": None, "from_date": None, "to_date": None, "kinds": [],
-                          "expected_memory_ids": [record.id], "acceptable_memory_ids": [], "excluded_memory_ids": [],
-                          "expected_facts": [], "expected_cwds": {record.id: record.cwd}, "must_abstain": False,
-                          "split": split, "reviewed_locally": False, "query_sanitized": False, "draft": True})
+            query = (
+                f"Find the literal identifier {term}."
+                if variant == 0
+                else f"What was recorded about {term}?"
+            )
+            cases.append(
+                {
+                    "schema_version": 1,
+                    "synthetic": False,
+                    "case_id": "draft-" + uuid.uuid4().hex,
+                    "categories": ["exact_identifier", "draft_needs_semantic_review"],
+                    "query": query,
+                    "agent_name": record.agent_name,
+                    "current_session_id": session,
+                    "current_cwd": None,
+                    "from_date": None,
+                    "to_date": None,
+                    "kinds": [],
+                    "expected_memory_ids": [record.id],
+                    "acceptable_memory_ids": [],
+                    "excluded_memory_ids": [],
+                    "expected_facts": [],
+                    "expected_cwds": {record.id: record.cwd},
+                    "must_abstain": False,
+                    "split": split,
+                    "reviewed_locally": False,
+                    "query_sanitized": False,
+                    "draft": True,
+                }
+            )
     for index in range(4):
         nonce = "never-recorded-benchmark-" + uuid.uuid4().hex
-        check(all(nonce not in r.document for r in records), "abstention_draft_collision")
-        cases.append({"schema_version": 1, "synthetic": False, "case_id": "draft-" + uuid.uuid4().hex,
-                      "categories": ["no_relevant_memory", "draft_needs_semantic_review"],
-                      "query": f"Find the exact identifier {nonce}.", "agent_name": chosen[0].agent_name,
-                      "current_session_id": session, "current_cwd": None, "from_date": None, "to_date": None, "kinds": [],
-                      "expected_memory_ids": [], "acceptable_memory_ids": [], "excluded_memory_ids": [], "expected_facts": [],
-                      "expected_cwds": {}, "must_abstain": True, "split": "calibration" if index < 2 else "holdout",
-                      "reviewed_locally": False, "query_sanitized": False, "draft": True})
+        check(
+            all(nonce not in r.document for r in records), "abstention_draft_collision"
+        )
+        cases.append(
+            {
+                "schema_version": 1,
+                "synthetic": False,
+                "case_id": "draft-" + uuid.uuid4().hex,
+                "categories": ["no_relevant_memory", "draft_needs_semantic_review"],
+                "query": f"Find the exact identifier {nonce}.",
+                "agent_name": chosen[0].agent_name,
+                "current_session_id": session,
+                "current_cwd": None,
+                "from_date": None,
+                "to_date": None,
+                "kinds": [],
+                "expected_memory_ids": [],
+                "acceptable_memory_ids": [],
+                "excluded_memory_ids": [],
+                "expected_facts": [],
+                "expected_cwds": {},
+                "must_abstain": True,
+                "split": "calibration" if index < 2 else "holdout",
+                "reviewed_locally": False,
+                "query_sanitized": False,
+                "draft": True,
+            }
+        )
     write_text(output / "corpus.jsonl", "".join(encode(row) + "\n" for row in rows))
     write_text(output / "cases.jsonl", "".join(encode(case) + "\n" for case in cases))
-    summary = {"schema_version": 1, "status": "blocked_pending_local_human_review", "reviewed_locally": False,
-               "corpus_records": len(rows), "draft_cases": len(cases), "calibration": 16, "holdout": 16,
-               "distinct_candidate_records": 14, "no_relevant_drafts": 4,
-               "category_coverage": ["exact_identifier", "no_relevant_memory", "draft_needs_semantic_review"],
-               "corpus_sha256": file_hash(output / "corpus.jsonl"), "cases_sha256": file_hash(output / "cases.jsonl"),
-               "review_method": None, "semantic_labels_verified": False, "private_metrics": None,
-               "review_requirements": ["Read source evidence locally", "Replace draft questions/labels with verified exact/paraphrase/decision/preference/constraint/unresolved/follow-up cases", "Genuinely present multilingual only", "Review and sanitize queries before any remote embedding", "Set draft=false and reviewed_locally=true only after real review", "Update hashes and attest review_method=local-human", "Keep topic split fixed; tune calibration only; freeze before holdout"]}
+    summary = {
+        "schema_version": 1,
+        "status": "blocked_pending_local_human_review",
+        "reviewed_locally": False,
+        "corpus_records": len(rows),
+        "draft_cases": len(cases),
+        "calibration": 16,
+        "holdout": 16,
+        "distinct_candidate_records": 14,
+        "no_relevant_drafts": 4,
+        "category_coverage": [
+            "exact_identifier",
+            "no_relevant_memory",
+            "draft_needs_semantic_review",
+        ],
+        "corpus_sha256": file_hash(output / "corpus.jsonl"),
+        "cases_sha256": file_hash(output / "cases.jsonl"),
+        "review_method": None,
+        "semantic_labels_verified": False,
+        "private_metrics": None,
+        "review_requirements": [
+            "Read source evidence locally",
+            "Replace draft questions/labels with verified exact/paraphrase/decision/preference/constraint/unresolved/follow-up cases",
+            "Genuinely present multilingual only",
+            "Review and sanitize queries before any remote embedding",
+            "Set draft=false and reviewed_locally=true only after real review",
+            "Update hashes and attest review_method=local-human",
+            "Keep topic split fixed; tune calibration only; freeze before holdout",
+        ],
+    }
     _write_json(output / "review-manifest.json", summary)
-    write_text(output / "review-instructions.md", "# Private review required\n\nThese proposals are NOT ground truth. No semantic review is asserted.\n\n" + "\n".join("- " + step for step in summary["review_requirements"]) + "\n")
+    write_text(
+        output / "review-instructions.md",
+        "# Private review required\n\nThese proposals are NOT ground truth. No semantic review is asserted.\n\n"
+        + "\n".join("- " + step for step in summary["review_requirements"])
+        + "\n",
+    )
     return summary
 
 
 def freeze_calibration(report_path: Path, output: Path) -> dict:
     report = read_json(report_path)
     check(_full_cohort_report(report), "calibration_only_freeze_unsupported")
-    check(report.get("schema_version") == 1 and report.get("synthetic") is False and report.get("split") == "calibration", "real_calibration_report_required")
-    check(all(report.get("modes", {}).get(mode, {}).get("evaluated_cases") == report.get("selected_cases")
-              and not report["modes"][mode].get("backend_errors") for mode in ("chroma", "sqlite")), "calibration_baseline_unavailable")
-    check(report.get("chroma", {}).get("embedding_source") in {"configured", "cache"}, "genuine_chroma_baseline_required")
-    check(report.get("code_hash") == code_identity()["code_hash"] and report.get("policy") == POLICY, "calibration_code_or_policy_changed")
+    check(
+        report.get("schema_version") == 1
+        and report.get("synthetic") is False
+        and report.get("split") == "calibration",
+        "real_calibration_report_required",
+    )
+    check(
+        all(
+            report.get("modes", {}).get(mode, {}).get("evaluated_cases")
+            == report.get("selected_cases")
+            and not report["modes"][mode].get("backend_errors")
+            for mode in ("chroma", "sqlite")
+        ),
+        "calibration_baseline_unavailable",
+    )
+    check(
+        report.get("chroma", {}).get("embedding_source") in {"configured", "cache"},
+        "genuine_chroma_baseline_required",
+    )
+    check(
+        report.get("code_hash") == code_identity()["code_hash"]
+        and report.get("policy") == POLICY,
+        "calibration_code_or_policy_changed",
+    )
     check(report.get("k") == 5, "official_calibration_requires_k5")
-    check(all(key in report for key in ("embedding_cache_sha256", "review_manifest_sha256",
-                                        "document_vector_cache_sha256", "sqlite_semantic_policy")),
-          "calibration_input_evidence_missing")
+    check(
+        all(
+            key in report
+            for key in (
+                "embedding_cache_sha256",
+                "review_manifest_sha256",
+                "document_vector_cache_sha256",
+                "sqlite_semantic_policy",
+            )
+        ),
+        "calibration_input_evidence_missing",
+    )
     try:
-        check(asdict(SQLiteSemanticPolicy(**report["sqlite_semantic_policy"])) == report["sqlite_semantic_policy"],
-              "invalid_sqlite_semantic_policy")
+        check(
+            asdict(SQLiteSemanticPolicy(**report["sqlite_semantic_policy"]))
+            == report["sqlite_semantic_policy"],
+            "invalid_sqlite_semantic_policy",
+        )
     except (TypeError, ValueError):
         raise BenchmarkError("invalid_sqlite_semantic_policy") from None
     cache_source = report["chroma"]["embedding_source"] == "cache"
@@ -701,15 +1403,27 @@ def freeze_calibration(report_path: Path, output: Path) -> dict:
         hashes.append(report["embedding_cache_sha256"])
     else:
         check(report["embedding_cache_sha256"] is None, "unused_calibration_cache_hash")
-    check(all(isinstance(value, str) and len(value) == 64
-              and all(char in "0123456789abcdef" for char in value) for value in hashes),
-          "invalid_calibration_evidence_hash")
-    frozen = {"schema_version": 1, "calibration_complete": True,
-              "protocol": frozen_protocol(report, report["chroma"]), "corpus_sha256": report["corpus_sha256"],
-              "cases_sha256": report["cases_sha256"],
-              "review_manifest_sha256": report["review_manifest_sha256"],
-              "code_hash": report["code_hash"], "policy": POLICY,
-              "calibration_report_sha256": file_hash(report_path), "frozen_at": datetime.now(UTC).isoformat()}
+    check(
+        all(
+            isinstance(value, str)
+            and len(value) == 64
+            and all(char in "0123456789abcdef" for char in value)
+            for value in hashes
+        ),
+        "invalid_calibration_evidence_hash",
+    )
+    frozen = {
+        "schema_version": 1,
+        "calibration_complete": True,
+        "protocol": frozen_protocol(report, report["chroma"]),
+        "corpus_sha256": report["corpus_sha256"],
+        "cases_sha256": report["cases_sha256"],
+        "review_manifest_sha256": report["review_manifest_sha256"],
+        "code_hash": report["code_hash"],
+        "policy": POLICY,
+        "calibration_report_sha256": file_hash(report_path),
+        "frozen_at": datetime.now(UTC).isoformat(),
+    }
     _write_json(output / "freeze.json", frozen)
     return {"status": "frozen", "freeze_hash": digest(frozen)}
 
@@ -742,7 +1456,13 @@ def reserve_fresh_holdout(dataset: Dataset, ledger: Path) -> str:
     for child in list(ledger.iterdir()):
         if child.name.startswith(".partial-"):
             _discard_partial_reservation(child)
-    token = digest({"cases": dataset.cases_hash, "review": dataset.review_manifest_hash, "scope": "fresh-holdout"})
+    token = digest(
+        {
+            "cases": dataset.cases_hash,
+            "review": dataset.review_manifest_hash,
+            "scope": "fresh-holdout",
+        }
+    )
     keys = [question_key(case, dataset.records) for case in dataset.cases]
     if _fresh_reserved(ledger, keys):
         raise BenchmarkError("fresh_holdout_already_reserved")
@@ -750,12 +1470,16 @@ def reserve_fresh_holdout(dataset: Dataset, ledger: Path) -> str:
     try:
         staging.mkdir(mode=0o700)
         for key in keys:
-            descriptor = os.open(staging / f"{key}.consumed", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            descriptor = os.open(
+                staging / f"{key}.consumed", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+            )
             try:
                 os.write(descriptor, (token + "\n").encode())
             finally:
                 os.close(descriptor)
-        marker = os.open(staging / "packet.complete", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        marker = os.open(
+            staging / "packet.complete", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+        )
         try:
             os.write(marker, (token + "\n").encode())
         finally:
@@ -776,36 +1500,73 @@ def _fresh_vectors(dataset: Dataset, cache: Path) -> tuple[str, tuple[dict, ...]
     cache_hash = file_hash(cache)
     rows = tuple(read_jsonl(cache, expected_sha256=cache_hash))
     for item in rows:
-        check(isinstance(item, dict) and item.get("schema_version") == 1, "embedding_cache_unreviewed")
-        check(item.get("provenance") == "independent-configured-query" and item.get("reviewed_locally") is True,
-              "embedding_cache_unreviewed")
-        check(item.get("provider") == "voyage" and item.get("model") == "voyage-4", "fresh_holdout_embedding_identity_required")
-        check(_stored_vector(item.get("embedding")) is not None, "cached_query_embedding_missing")
+        check(
+            isinstance(item, dict) and item.get("schema_version") == 1,
+            "embedding_cache_unreviewed",
+        )
+        check(
+            item.get("provenance") == "independent-configured-query"
+            and item.get("reviewed_locally") is True,
+            "embedding_cache_unreviewed",
+        )
+        check(
+            item.get("provider") == "voyage" and item.get("model") == "voyage-4",
+            "fresh_holdout_embedding_identity_required",
+        )
+        check(
+            _stored_vector(item.get("embedding")) is not None,
+            "cached_query_embedding_missing",
+        )
     for case in dataset.cases:
-        check(cached_query_vector(rows, case["query"]) is not None, "cached_query_embedding_missing")
-    check(os.getenv("VOYAGE_API_KEY") is not None, "fresh_holdout_voyage_identity_required")
+        check(
+            cached_query_vector(rows, case["query"]) is not None,
+            "cached_query_embedding_missing",
+        )
+    check(
+        os.getenv("VOYAGE_API_KEY") is not None,
+        "fresh_holdout_voyage_identity_required",
+    )
     return cache_hash, rows
 
 
 def run_fresh_lexical_holdout(
-    corpus: Path, cases: Path, review: Path, sqlite_source: Path, embedding_cache: Path, output: Path, *,
-    chroma_source: Path | None = None, collection_name: str = "conversation", collection=None,
-    source_hash: str | None = None, ledger: Path | None = None, semantic_max_distance=None,
-    k: int = 5, warmups: int = 1, repetitions: int = 3,
+    corpus: Path,
+    cases: Path,
+    review: Path,
+    sqlite_source: Path,
+    embedding_cache: Path,
+    output: Path,
+    *,
+    chroma_source: Path | None = None,
+    collection_name: str = "conversation",
+    collection=None,
+    source_hash: str | None = None,
+    ledger: Path | None = None,
+    semantic_max_distance=None,
+    k: int = 5,
+    warmups: int = 1,
+    repetitions: int = 3,
 ) -> dict:
     """Run one lexical-only fresh holdout. Reserve only after backends are ready."""
     check(semantic_max_distance is None, "fresh_holdout_semantic_cutoff_forbidden")
-    check(k == 5 and warmups == 1 and repetitions == 3, "fresh_holdout_protocol_required")
+    check(
+        k == 5 and warmups == 1 and repetitions == 3, "fresh_holdout_protocol_required"
+    )
     paths = [corpus, cases, review, sqlite_source, embedding_cache, output]
     if chroma_source is not None:
         paths.append(chroma_source)
     if ledger is not None:
         paths.append(ledger)
     for path in paths:
-        check(not identifies_consumed_holdout(Path(path)), "consumed_holdout_ledger_rejected")
+        check(
+            not identifies_consumed_holdout(Path(path)),
+            "consumed_holdout_ledger_rejected",
+        )
     ledger = ledger or FRESH_HOLDOUT_LEDGER
     check(not identifies_consumed_holdout(ledger), "consumed_holdout_ledger_rejected")
-    dataset = load_fresh_holdout_dataset(input_path(corpus), input_path(cases), input_path(review))
+    dataset = load_fresh_holdout_dataset(
+        input_path(corpus), input_path(cases), input_path(review)
+    )
     cache_hash, rows = _fresh_vectors(dataset, input_path(embedding_cache))
     repository = SQLiteMemoryRepository(input_path(sqlite_source), read_only=True)
     assert_candidate(repository, dataset)
@@ -818,12 +1579,23 @@ def run_fresh_lexical_holdout(
             work.mkdir(mode=0o700)
             source_hash = copy_chroma(private_path(chroma_source), work)
             collection = stack.enter_context(_sdk_collection(work, collection_name))
-        chroma = ChromaBaseline(collection, dataset, "cache", Calls(), False, input_path(embedding_cache), source_hash or "", cache_rows=rows)
+        chroma = ChromaBaseline(
+            collection,
+            dataset,
+            "cache",
+            Calls(),
+            False,
+            input_path(embedding_cache),
+            source_hash or "",
+            cache_rows=rows,
+        )
         token = reserve_fresh_holdout(dataset, ledger)
 
         def retrieve(mode: str, case: dict):
             if mode == "sqlite":
-                return sqlite_hits(coordinator, case, k, None, SQLiteSemanticPolicy(None))
+                return sqlite_hits(
+                    coordinator, case, k, None, SQLiteSemanticPolicy(None)
+                )
             return chroma.search(case, k)
 
         modes = {}
@@ -842,42 +1614,89 @@ def run_fresh_lexical_holdout(
                         last = retrieve(mode, case)
                         times.append((time.perf_counter() - started) * 1000)
                         unstable += signature(last) != signature(first)
-                    changed = retrieve(mode, {**case, "current_cwd": "benchmark-cwd-invariance-probe"})
+                    changed = retrieve(
+                        mode, {**case, "current_cwd": "benchmark-cwd-invariance-probe"}
+                    )
                     cwd_failures += signature(changed) != signature(last)
                     evaluated.append(measure(case, last, dataset.records, k))
                 except Exception:
                     errors += 1
-            modes[mode] = {**aggregate(evaluated), "backend_errors": errors, "cwd_invariance_failures": cwd_failures,
-                           "repeat_signature_changes": unstable, "cold_p95_ms": percentile(cold, 0.95),
-                           "p50_ms": percentile(times, 0.5), "p95_ms": percentile(times, 0.95)}
+            modes[mode] = {
+                **aggregate(evaluated),
+                "backend_errors": errors,
+                "cwd_invariance_failures": cwd_failures,
+                "repeat_signature_changes": unstable,
+                "cold_p95_ms": percentile(cold, 0.95),
+                "p50_ms": percentile(times, 0.5),
+                "p95_ms": percentile(times, 0.95),
+            }
         sqlite, baseline = modes["sqlite"], modes["chroma"]
         failures = []
-        leak_keys = ("scope_leaks", "lifecycle_leaks", "deletion_leaks", "excluded_leaks", "unknown_id_leaks",
-                     "duplicate_parent_hits", "cwd_invariance_failures", "repeat_signature_changes", "backend_errors")
+        leak_keys = (
+            "scope_leaks",
+            "lifecycle_leaks",
+            "deletion_leaks",
+            "excluded_leaks",
+            "unknown_id_leaks",
+            "duplicate_parent_hits",
+            "cwd_invariance_failures",
+            "repeat_signature_changes",
+            "backend_errors",
+        )
         if any(sqlite[key] or baseline[key] for key in leak_keys):
             failures.append("leak_or_repeat_failure")
         if sqlite["recall_at_5"] < baseline["recall_at_5"]:
             failures.append("recall_regression")
         if sqlite["precision_at_5"] < baseline["precision_at_5"] - 0.05:
             failures.append("precision_regression")
-        if sqlite["no_relevant_abstention"] is None or sqlite["no_relevant_abstention"] < 0.95:
+        if (
+            sqlite["no_relevant_abstention"] is None
+            or sqlite["no_relevant_abstention"] < 0.95
+        ):
             failures.append("abstention_failure")
         if sqlite["p95_ms"] >= 100:
             failures.append("latency_regression")
         if chroma.calls.embedding or chroma.calls.remote_embedding:
             failures.append("embedding_call_forbidden")
         report = {
-            "schema_version": 1, "kind": "fresh-lexical-holdout", "dataset_scope": "fresh-holdout",
-            "not_production_approval": True, "user_acceptance_is_not_semantic_nonoverlap_audit": True,
-            "selected_cases": len(dataset.cases), "reservation_token": token, "code": code_identity(),
-            "corpus_sha256": dataset.corpus_hash, "cases_sha256": dataset.cases_hash,
-            "review_manifest_sha256": dataset.review_manifest_hash, "query_embedding_cache_sha256": cache_hash,
-            "policy": {"name": "lexical-only", "sqlite_semantic_max_distance": None, "k": k, "warmups": warmups, "repetitions": repetitions},
-            "modes": modes, "calls": {"embedding": chroma.calls.embedding, "remote_embedding": chroma.calls.remote_embedding},
-            "acceptance": {"status": "blocked" if failures else "passed", "proposed_only": True, "production_approved": False, "failures": failures},
+            "schema_version": 1,
+            "kind": "fresh-lexical-holdout",
+            "dataset_scope": "fresh-holdout",
+            "not_production_approval": True,
+            "user_acceptance_is_not_semantic_nonoverlap_audit": True,
+            "selected_cases": len(dataset.cases),
+            "reservation_token": token,
+            "code": code_identity(),
+            "corpus_sha256": dataset.corpus_hash,
+            "cases_sha256": dataset.cases_hash,
+            "review_manifest_sha256": dataset.review_manifest_hash,
+            "query_embedding_cache_sha256": cache_hash,
+            "policy": {
+                "name": "lexical-only",
+                "sqlite_semantic_max_distance": None,
+                "k": k,
+                "warmups": warmups,
+                "repetitions": repetitions,
+            },
+            "modes": modes,
+            "calls": {
+                "embedding": chroma.calls.embedding,
+                "remote_embedding": chroma.calls.remote_embedding,
+            },
+            "acceptance": {
+                "status": "blocked" if failures else "passed",
+                "proposed_only": True,
+                "production_approved": False,
+                "failures": failures,
+            },
         }
         _write_json(output / "results.json", report)
-        write_text(output / "summary.md", "# Fresh lexical holdout\n\nStatus: " + report["acceptance"]["status"] + "\n\nNot production approval.\n")
+        write_text(
+            output / "summary.md",
+            "# Fresh lexical holdout\n\nStatus: "
+            + report["acceptance"]["status"]
+            + "\n\nNot production approval.\n",
+        )
         return report
     finally:
         stack.close()
@@ -890,24 +1709,39 @@ def main() -> int:
     for name in ("corpus", "cases", "sqlite-source", "output"):
         run.add_argument("--" + name, type=Path, required=True)
     run.add_argument("--modes", required=True)
-    run.add_argument("--split", choices=("synthetic", "calibration", "holdout"), required=True)
+    run.add_argument(
+        "--split", choices=("synthetic", "calibration", "holdout"), required=True
+    )
     for name in ("k", "warmups", "repetitions"):
         run.add_argument("--" + name, type=int, required=True)
-    run.add_argument("--dataset-scope", choices=("full-cohort", "calibration-only"), default="full-cohort",
-                     help="Calibration-only requires a separate reviewed export, never combined case filtering.")
+    run.add_argument(
+        "--dataset-scope",
+        choices=("full-cohort", "calibration-only"),
+        default="full-cohort",
+        help="Calibration-only requires a separate reviewed export, never combined case filtering.",
+    )
     run.add_argument("--parent-review-manifest", type=Path)
     run.add_argument("--derivation-extraction-evidence", type=Path)
     run.add_argument("--derivation-execution-evidence", type=Path)
-    run.add_argument("--trusted-derivation-sha256", help="PIC-trusted acceptance-record digest obtained out-of-band")
+    run.add_argument(
+        "--trusted-derivation-sha256",
+        help="PIC-trusted acceptance-record digest obtained out-of-band",
+    )
     run.add_argument("--review-manifest", type=Path)
     run.add_argument("--freeze-manifest", type=Path)
     run.add_argument("--chroma-source", type=Path)
     run.add_argument("--collection", default="conversation")
-    run.add_argument("--embedding-source", choices=("disabled", "cache", "configured", "synthetic-hash"))
+    run.add_argument(
+        "--embedding-source",
+        choices=("disabled", "cache", "configured", "synthetic-hash"),
+    )
     run.add_argument("--embedding-cache", type=Path)
     run.add_argument("--document-vector-cache", type=Path)
-    run.add_argument("--sqlite-semantic-max-distance", type=float,
-                     help="Explicit SQLite-only cosine cutoff; unset disables semantics. Not a calibrated default.")
+    run.add_argument(
+        "--sqlite-semantic-max-distance",
+        type=float,
+        help="Explicit SQLite-only cosine cutoff; unset disables semantics. Not a calibrated default.",
+    )
     run.add_argument("--allow-remote-embeddings", action="store_true")
     run.add_argument("--allow-remote-llm", action="store_true")
     run.add_argument("--adapter", choices=("fake", "remote"))
@@ -922,7 +1756,14 @@ def main() -> int:
     freeze.add_argument("--calibration-report", type=Path, required=True)
     freeze.add_argument("--output", type=Path, required=True)
     fresh = subs.add_parser("fresh-holdout")
-    for name in ("corpus", "cases", "review-manifest", "sqlite-source", "embedding-cache", "output"):
+    for name in (
+        "corpus",
+        "cases",
+        "review-manifest",
+        "sqlite-source",
+        "embedding-cache",
+        "output",
+    ):
         fresh.add_argument("--" + name, type=Path, required=True)
     fresh.add_argument("--chroma-source", type=Path)
     fresh.add_argument("--collection", default="conversation")
@@ -935,7 +1776,22 @@ def main() -> int:
             source = input_path(args.sqlite_source)
             output = new_output(args.output, [source])
             result = draft_review(source, output)
-            result = {key: result[key] for key in ("status", "reviewed_locally", "corpus_records", "draft_cases", "calibration", "holdout", "distinct_candidate_records", "no_relevant_drafts", "category_coverage", "corpus_sha256", "cases_sha256")}
+            result = {
+                key: result[key]
+                for key in (
+                    "status",
+                    "reviewed_locally",
+                    "corpus_records",
+                    "draft_cases",
+                    "calibration",
+                    "holdout",
+                    "distinct_candidate_records",
+                    "no_relevant_drafts",
+                    "category_coverage",
+                    "corpus_sha256",
+                    "cases_sha256",
+                )
+            }
         elif args.command == "freeze":
             source = input_path(args.calibration_report)
             output = new_output(args.output, [source])
@@ -954,11 +1810,22 @@ def main() -> int:
                 inputs.append(chroma)
             output = new_output(args.output, inputs)
             report = run_fresh_lexical_holdout(
-                corpus, cases, review, sqlite, cache, output, chroma_source=chroma,
-                collection_name=args.collection, semantic_max_distance=args.sqlite_semantic_max_distance,
+                corpus,
+                cases,
+                review,
+                sqlite,
+                cache,
+                output,
+                chroma_source=chroma,
+                collection_name=args.collection,
+                semantic_max_distance=args.sqlite_semantic_max_distance,
             )
-            result = {"status": report["acceptance"]["status"], "production_approved": False,
-                      "selected_cases": report["selected_cases"], "failures": report["acceptance"]["failures"]}
+            result = {
+                "status": report["acceptance"]["status"],
+                "production_approved": False,
+                "selected_cases": report["selected_cases"],
+                "failures": report["acceptance"]["failures"],
+            }
         else:
             corpus = input_path(args.corpus, "synthetic-corpus.jsonl")
             cases = input_path(args.cases, "benchmark-cases.jsonl")
@@ -973,28 +1840,58 @@ def main() -> int:
                 inputs.append(review)
             if args.parent_review_manifest is not None:
                 inputs.append(input_path(args.parent_review_manifest))
-            for artifact in (args.derivation_extraction_evidence, args.derivation_execution_evidence):
+            for artifact in (
+                args.derivation_extraction_evidence,
+                args.derivation_execution_evidence,
+            ):
                 if artifact is not None:
                     inputs.append(input_path(artifact))
             output = new_output(args.output, inputs)
             dataset = load_run_dataset(args, corpus, cases, review)
             report = run_benchmark(args, dataset, output)
-            result = {"status": report["acceptance"]["status"], "synthetic": dataset.synthetic,
-                      "selected_cases": report["selected_cases"], "modes": {mode: {key: value for key, value in metrics.items() if key != "per_category"} for mode, metrics in report["modes"].items()},
-                      "calls": report["calls"], "acceptance": report["acceptance"]}
+            result = {
+                "status": report["acceptance"]["status"],
+                "synthetic": dataset.synthetic,
+                "selected_cases": report["selected_cases"],
+                "modes": {
+                    mode: {
+                        key: value
+                        for key, value in metrics.items()
+                        if key != "per_category"
+                    }
+                    for mode, metrics in report["modes"].items()
+                },
+                "calls": report["calls"],
+                "acceptance": report["acceptance"],
+            }
         print(encode(result))
         return 0
     except BaseException as error:
-        reason = str(error) if isinstance(error, BenchmarkError) else type(error).__name__
-        result = {"status": "blocked", "reason": reason, "metrics": None, "reproducibility": code_identity()}
+        reason = (
+            str(error) if isinstance(error, BenchmarkError) else type(error).__name__
+        )
+        result = {
+            "status": "blocked",
+            "reason": reason,
+            "metrics": None,
+            "reproducibility": code_identity(),
+        }
         if output:
             _write_json(output / "blocked.json", result)
             if not (output / "results.json").exists():
                 _write_json(output / "results.json", result)
             if not (output / "summary.md").exists():
-                write_text(output / "summary.md", "# Blocked benchmark\n\nNo comparable metrics asserted.\n\nReason: " + reason + "\n")
+                write_text(
+                    output / "summary.md",
+                    "# Blocked benchmark\n\nNo comparable metrics asserted.\n\nReason: "
+                    + reason
+                    + "\n",
+                )
             if not (output / "failures.jsonl").exists():
-                write_text(output / "failures.jsonl", encode({"error_code": reason, "metrics": None}) + "\n")
+                write_text(
+                    output / "failures.jsonl",
+                    encode({"error_code": reason, "metrics": None}) + "\n",
+                )
         print(encode(result), file=sys.stderr)
         return 130 if isinstance(error, KeyboardInterrupt) else 1
     finally:

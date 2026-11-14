@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
-import math
 from typing import Any
 
 
@@ -39,7 +39,9 @@ class SQLiteSemanticPolicy:
             or not 0 <= self.max_distance <= 2
             or not math.isfinite(self.max_distance)
         ):
-            raise ValueError("SQLite semantic cutoff must be finite within cosine distance [0, 2]")
+            raise ValueError(
+                "SQLite semantic cutoff must be finite within cosine distance [0, 2]"
+            )
 
     def qualifies(self, distance: float | None) -> bool:
         return (
@@ -68,12 +70,19 @@ class MemoryQuery:
     def __post_init__(self) -> None:
         for value in (self.query, self.agent_name, self.current_session_id):
             if not isinstance(value, str) or not value.strip():
-                raise ValueError("Query, agent and explicit current session are required")
+                raise ValueError(
+                    "Query, agent and explicit current session are required"
+                )
         if len(self.query) > 4096 or not any(c.isalnum() for c in self.query):
-            raise ValueError("Query must contain meaningful text within 4096 characters")
+            raise ValueError(
+                "Query must contain meaningful text within 4096 characters"
+            )
         if type(self.limit) is not int or not 1 <= self.limit <= 20:
             raise ValueError("Result limit must be between 1 and 20")
-        if type(self.candidate_limit) is not int or not 1 <= self.candidate_limit <= 500:
+        if (
+            type(self.candidate_limit) is not int
+            or not 1 <= self.candidate_limit <= 500
+        ):
             raise ValueError("Candidate limit must be between 1 and 500")
         for value in (self.from_date, self.to_date):
             if value is not None and type(value) is not date:

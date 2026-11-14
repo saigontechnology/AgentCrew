@@ -98,38 +98,70 @@ def module_scope_chromadb_imports(relative: str) -> list[str]:
             continue
         if isinstance(node, ast.Import):
             bad.extend(a.name for a in node.names if a.name.split(".")[0] == "chromadb")
-        elif isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] == "chromadb" and node.level == 0:
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.split(".")[0] == "chromadb"
+            and node.level == 0
+        ):
             bad.append(node.module)
     return bad
 
 
 def checks_engine_config() -> None:
-    require(engine_selection.resolve_memory_engine({}) == "sqlite", "Default engine must be sqlite")
-    require(engine_selection.resolve_memory_engine({"memory_engine": "chromadb"}) == "chromadb", "chromadb engine must be selectable")
-    require(engine_selection.resolve_memory_engine({"memory_engine": " SQLite "}) == "sqlite", "Engine value must be case-insensitive")
+    require(
+        engine_selection.resolve_memory_engine({}) == "sqlite",
+        "Default engine must be sqlite",
+    )
+    require(
+        engine_selection.resolve_memory_engine({"memory_engine": "chromadb"})
+        == "chromadb",
+        "chromadb engine must be selectable",
+    )
+    require(
+        engine_selection.resolve_memory_engine({"memory_engine": " SQLite "})
+        == "sqlite",
+        "Engine value must be case-insensitive",
+    )
     try:
         engine_selection.resolve_memory_engine({"memory_engine": "lancedb"})
         raise AssertionError("Invalid engine must fail fast")
     except engine_selection.MemoryEngineError as error:
         text = str(error)
         require("lancedb" in text, "Engine error must name the invalid value")
-        require("sqlite" in text and "chromadb" in text, "Engine error must name the valid values")
+        require(
+            "sqlite" in text and "chromadb" in text,
+            "Engine error must name the valid values",
+        )
     print("PASS checks_engine_config")
 
 
 def checks_selection_wiring() -> None:
     source = (ROOT / "AgentCrew/setup.py").read_text(encoding="utf-8")
-    require("resolve_memory_engine(global_settings)" in source, "setup must resolve the engine from global_settings")
+    require(
+        "resolve_memory_engine(global_settings)" in source,
+        "setup must resolve the engine from global_settings",
+    )
     require("SQLiteMemoryService(" in source, "setup must construct the SQLite engine")
     require("ChromaMemoryService(" in source, "setup must construct the Chroma engine")
-    require("require_chromadb()" in source, "chromadb engine must require the extra at startup")
-    require("ensure_sqlite_store(" in source, "setup must run the store decision matrix")
-    for relative in ("AgentCrew/modules/memory/chroma_service.py", "AgentCrew/modules/memory/sqlite_service.py"):
+    require(
+        "require_chromadb()" in source,
+        "chromadb engine must require the extra at startup",
+    )
+    require(
+        "ensure_sqlite_store(" in source, "setup must run the store decision matrix"
+    )
+    for relative in (
+        "AgentCrew/modules/memory/chroma_service.py",
+        "AgentCrew/modules/memory/sqlite_service.py",
+    ):
         text = (ROOT / relative).read_text(encoding="utf-8")
         require("def shutdown(self)" in text, f"{relative} must keep a shutdown method")
     for relative in SQLITE_CHAIN:
         bad = module_scope_chromadb_imports(relative)
-        require(not bad, f"Sqlite chain module-scope chromadb import in {relative}: {bad}")
+        require(
+            not bad, f"Sqlite chain module-scope chromadb import in {relative}: {bad}"
+        )
     print("PASS checks_selection_wiring")
 
 
@@ -143,13 +175,22 @@ def checks_sqlite_chain_chromadb_free() -> None:
             work = base / "memory_db" / "migration-work"
             result = engine_selection.ensure_sqlite_store(db, base / "no-chroma", work)
             require(result == db, "Fresh start must return the configured db path")
-            require(not db.exists(), "Fresh start must not create the db before service init")
+            require(
+                not db.exists(),
+                "Fresh start must not create the db before service init",
+            )
         try:
             engine_selection.require_chromadb()
             raise AssertionError("Blocked chromadb must fail the requirement")
         except engine_selection.MemoryEngineError as error:
-            require("uv sync --extra chromadb" in str(error), "Install hint must mention the uv extra")
-            require("agentcrew-ai[chromadb]" in str(error), "Install hint must mention the pip extra")
+            require(
+                "uv sync --extra chromadb" in str(error),
+                "Install hint must mention the uv extra",
+            )
+            require(
+                "agentcrew-ai[chromadb]" in str(error),
+                "Install hint must mention the pip extra",
+            )
     finally:
         if sentinel is None:
             sys.modules.pop("chromadb", None)
@@ -172,16 +213,31 @@ def checks_auto_migration() -> None:
         require(db.is_file(), "Migration must produce the SQLite store")
         report = json.loads((work / "report.json").read_text(encoding="utf-8"))
         require(report["status"] == "verified", "Migration report must be verified")
-        require(report.get("inserted") == 1 and report.get("verified") == 1, "Migration counts must match the fictional record")
-        require(report.get("verified_canonical_fingerprint") == report.get("expected_canonical_fingerprint"), "Canonical checksums must match")
+        require(
+            report.get("inserted") == 1 and report.get("verified") == 1,
+            "Migration counts must match the fictional record",
+        )
+        require(
+            report.get("verified_canonical_fingerprint")
+            == report.get("expected_canonical_fingerprint"),
+            "Canonical checksums must match",
+        )
         require(fingerprint(src) == before, "Chroma source must stay untouched")
-        record = SQLiteMemoryRepository(db).get_record("sess-1_FictionalAgent", "FictionalAgent")
-        require(record is not None and record.document == MEMORY_XML, "Migrated record must round-trip")
+        record = SQLiteMemoryRepository(db).get_record(
+            "sess-1_FictionalAgent", "FictionalAgent"
+        )
+        require(
+            record is not None and record.document == MEMORY_XML,
+            "Migrated record must round-trip",
+        )
         second = engine_selection.ensure_sqlite_store(db, src, work)
         require(second == db, "Completed migration must be reused without re-migration")
         service = SQLiteMemoryService(db_path=db, llm_service=None)
         try:
-            require(service.list_memory_headers(agent_name="FictionalAgent"), "Migrated store must serve headers")
+            require(
+                service.list_memory_headers(agent_name="FictionalAgent"),
+                "Migrated store must serve headers",
+            )
         finally:
             service.shutdown()
     print("PASS checks_auto_migration")
@@ -202,9 +258,18 @@ def checks_fail_fast_without_chromadb() -> None:
                 raise AssertionError("Chroma data without chromadb must fail fast")
             except engine_selection.MemoryEngineError as error:
                 text = str(error)
-                require("uv sync --extra chromadb" in text, "Fail-fast must mention the uv extra")
-                require("agentcrew-ai[chromadb]" in text, "Fail-fast must mention the pip extra")
-                require("automatic migration" in text, "Fail-fast must explain the migration need")
+                require(
+                    "uv sync --extra chromadb" in text,
+                    "Fail-fast must mention the uv extra",
+                )
+                require(
+                    "agentcrew-ai[chromadb]" in text,
+                    "Fail-fast must mention the pip extra",
+                )
+                require(
+                    "automatic migration" in text,
+                    "Fail-fast must explain the migration need",
+                )
                 require(
                     "migrate_chroma_memory_to_sqlite" in text,
                     "Fail-fast must mention the manual migration fallback",
@@ -213,7 +278,9 @@ def checks_fail_fast_without_chromadb() -> None:
                     "memory_engine is 'chromadb'" not in text,
                     "Migration fail-fast must not claim the engine is chromadb",
                 )
-            require(not db.exists(), "Fail-fast must never silently start an empty store")
+            require(
+                not db.exists(), "Fail-fast must never silently start an empty store"
+            )
         finally:
             if sentinel is None:
                 sys.modules.pop("chromadb", None)
@@ -243,11 +310,16 @@ def checks_migration_failure_abort() -> None:
             raise AssertionError("Unmappable record must abort the migration")
         except Exception as error:
             require(
-                "unmappable" in str(error) or "agent" in str(error) or "metadata" in str(error),
+                "unmappable" in str(error)
+                or "agent" in str(error)
+                or "metadata" in str(error),
                 f"Abort must carry the mapping reason: {error}",
             )
         report = json.loads((work / "report.json").read_text(encoding="utf-8"))
-        require(report["status"] == "blocked", "Failed migration must record a blocked report")
+        require(
+            report["status"] == "blocked",
+            "Failed migration must record a blocked report",
+        )
         require(report["reason"], "Blocked report must carry the reason")
     print("PASS checks_migration_failure_abort")
 
@@ -263,8 +335,16 @@ def checks_mid_apply_crash_resume() -> None:
         work = base / "g" / "migration-work"
         original = repo_mod.SQLiteMemoryRepository.apply_migration_batch
 
-        def crashing(self, records, source_fingerprint, resume=False, fail_on_parse_error=False):
-            original(self, records, source_fingerprint, resume=resume, fail_on_parse_error=fail_on_parse_error)
+        def crashing(
+            self, records, source_fingerprint, resume=False, fail_on_parse_error=False
+        ):
+            original(
+                self,
+                records,
+                source_fingerprint,
+                resume=resume,
+                fail_on_parse_error=fail_on_parse_error,
+            )
             raise RuntimeError("fictional mid-apply crash")
 
         repo_mod.SQLiteMemoryRepository.apply_migration_batch = crashing
@@ -273,15 +353,22 @@ def checks_mid_apply_crash_resume() -> None:
                 engine_selection.ensure_sqlite_store(db, src, work)
                 raise AssertionError("Simulated crash must propagate")
             except RuntimeError as error:
-                require("fictional mid-apply crash" in str(error), "Crash must abort startup")
+                require(
+                    "fictional mid-apply crash" in str(error),
+                    "Crash must abort startup",
+                )
         finally:
             repo_mod.SQLiteMemoryRepository.apply_migration_batch = original
         require(db.is_file(), "Crashed migration may leave a partial store")
         engine_selection.ensure_sqlite_store(db, src, work)
         report = json.loads((work / "report.json").read_text(encoding="utf-8"))
         require(report["status"] == "verified", "Resume must complete the migration")
-        require(report.get("skipped", 0) >= 1, "Resume must skip already-applied records")
-        record = SQLiteMemoryRepository(db).get_record("sess-1_FictionalAgent", "FictionalAgent")
+        require(
+            report.get("skipped", 0) >= 1, "Resume must skip already-applied records"
+        )
+        record = SQLiteMemoryRepository(db).get_record(
+            "sess-1_FictionalAgent", "FictionalAgent"
+        )
         require(record is not None, "Resumed store must contain the record")
     print("PASS checks_mid_apply_crash_resume")
 
@@ -292,19 +379,34 @@ def checks_packaging() -> None:
     data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     dependencies = [str(item) for item in data["project"]["dependencies"]]
     extras = data["project"]["optional-dependencies"]
-    require(not any(item.startswith("chromadb") for item in dependencies), "chromadb must not be a hard dependency")
-    require(not any(item.startswith("voyageai") for item in dependencies), "voyageai must not be a hard dependency")
+    require(
+        not any(item.startswith("chromadb") for item in dependencies),
+        "chromadb must not be a hard dependency",
+    )
+    require(
+        not any(item.startswith("voyageai") for item in dependencies),
+        "voyageai must not be a hard dependency",
+    )
     require("chromadb" in extras, "The chromadb extra must exist")
     extra = [str(item) for item in extras["chromadb"]]
-    require(any(item.startswith("chromadb==") for item in extra), "The extra must pin chromadb")
-    require(any(item.startswith("voyageai==") for item in extra), "The extra must pin voyageai")
+    require(
+        any(item.startswith("chromadb==") for item in extra),
+        "The extra must pin chromadb",
+    )
+    require(
+        any(item.startswith("voyageai==") for item in extra),
+        "The extra must pin voyageai",
+    )
     require("cpu" in extras and "gui" in extras, "Existing extras must stay intact")
     voyage_sources = []
     for path in (ROOT / "AgentCrew").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         if "import voyageai" in text or "from voyageai" in text:
             voyage_sources.append(path.name)
-    require(set(voyage_sources) == {"voyageai_ef.py"}, f"voyageai must only be imported by the Chroma embedding path: {voyage_sources}")
+    require(
+        set(voyage_sources) == {"voyageai_ef.py"},
+        f"voyageai must only be imported by the Chroma embedding path: {voyage_sources}",
+    )
     print("PASS checks_packaging")
 
 
@@ -322,8 +424,14 @@ def checks_mem604_surfaces() -> None:
             chroma_sites.append(str(path.relative_to(ROOT)))
         if "SQLiteMemoryService(" in text and "class SQLiteMemoryService" not in text:
             sqlite_sites.append(str(path.relative_to(ROOT)))
-    require(chroma_sites == ["AgentCrew/setup.py"], f"Chroma construction must stay centralized: {chroma_sites}")
-    require(sqlite_sites == ["AgentCrew/setup.py"], f"SQLite construction must stay centralized: {sqlite_sites}")
+    require(
+        chroma_sites == ["AgentCrew/setup.py"],
+        f"Chroma construction must stay centralized: {chroma_sites}",
+    )
+    require(
+        sqlite_sites == ["AgentCrew/setup.py"],
+        f"SQLite construction must stay centralized: {sqlite_sites}",
+    )
     for surface in (
         "AgentCrew/modules/agents/local_agent.py",
         "AgentCrew/modules/agents/tools/delegate.py",
@@ -332,7 +440,10 @@ def checks_mem604_surfaces() -> None:
         "AgentCrew/modules/agents/cursor_agent.py",
     ):
         text = (ROOT / surface).read_text(encoding="utf-8")
-        require("MemoryService(" not in text, f"{surface} must receive the service instead of constructing one")
+        require(
+            "MemoryService(" not in text,
+            f"{surface} must receive the service instead of constructing one",
+        )
     print("PASS checks_mem604_surfaces")
 
 

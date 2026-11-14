@@ -72,7 +72,9 @@ class SQLiteMemoryPersistence:
         self._repository.upsert_record(memory_record)
 
     def consolidation_candidates(
-        self, operation_data: dict[str, Any], built: BuiltMemoryRecord,
+        self,
+        operation_data: dict[str, Any],
+        built: BuiltMemoryRecord,
     ) -> list[dict[str, Any]]:
         query_text = build_consolidation_query(built.memory_data)
         expression = fts_or_expression(query_text)
@@ -181,9 +183,7 @@ class SQLiteMemoryService(BaseMemoryService):
         parsed_from = (
             datetime.fromtimestamp(from_date, tz=UTC).date() if from_date else None
         )
-        parsed_to = (
-            datetime.fromtimestamp(to_date, tz=UTC).date() if to_date else None
-        )
+        parsed_to = datetime.fromtimestamp(to_date, tz=UTC).date() if to_date else None
         return MemoryQuery(
             query=keywords,
             agent_name=agent_name,

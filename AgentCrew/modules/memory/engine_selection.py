@@ -40,7 +40,9 @@ class MemoryEngineError(RuntimeError):
 
 def resolve_memory_engine(global_settings: dict[str, Any]) -> str:
     """Return the configured memory engine or raise a clear startup error."""
-    engine = str(global_settings.get("memory_engine", DEFAULT_MEMORY_ENGINE)).strip().lower()
+    engine = (
+        str(global_settings.get("memory_engine", DEFAULT_MEMORY_ENGINE)).strip().lower()
+    )
     if engine not in MEMORY_ENGINES:
         raise MemoryEngineError(
             f"Invalid memory_engine '{engine}' in config.json global_settings. "
@@ -122,7 +124,9 @@ def _migration_completed(work_dir: Path) -> bool:
     if not report_path.is_file():
         return False
     try:
-        return str(json.loads(report_path.read_text(encoding="utf-8")).get("status")) in (
+        return str(
+            json.loads(report_path.read_text(encoding="utf-8")).get("status")
+        ) in (
             "applied",
             "verified",
         )
@@ -130,7 +134,9 @@ def _migration_completed(work_dir: Path) -> bool:
         return False
 
 
-def _snapshot_state(work_dir: Path, source_files: dict[str, str], source_hash: str, collection: str) -> dict:
+def _snapshot_state(
+    work_dir: Path, source_files: dict[str, str], source_hash: str, collection: str
+) -> dict:
     return {
         "identity": str(uuid.uuid4()),
         "source_files": source_files,
@@ -139,7 +145,9 @@ def _snapshot_state(work_dir: Path, source_files: dict[str, str], source_hash: s
     }
 
 
-def _production_snapshot(source: Path, work_dir: Path, collection: str, resume: bool) -> tuple[str, dict[str, str]]:
+def _production_snapshot(
+    source: Path, work_dir: Path, collection: str, resume: bool
+) -> tuple[str, dict[str, str]]:
     """Offline copy of the Chroma source with frozen-backup verification."""
     from scripts.migrate_chroma_memory_to_sqlite import MigrationError, _write_json
     from verification.memory.capture_baseline import fingerprint
@@ -175,7 +183,10 @@ def _production_snapshot(source: Path, work_dir: Path, collection: str, resume: 
             *_NON_CHROMA_NAMES, *(f"{prefix}*" for prefix in _NON_CHROMA_PREFIXES)
         ),
     )
-    if _production_fingerprint(source) != source_files or fingerprint(backup) != source_files:
+    if (
+        _production_fingerprint(source) != source_files
+        or fingerprint(backup) != source_files
+    ):
         raise MigrationError("source_unstable_during_copy")
     shutil.copytree(backup, working)
     if fingerprint(working) != source_files:
@@ -244,10 +255,15 @@ def _migrate_chroma_to_sqlite(
     os.chmod(work_dir, 0o700)
     with _lock(work_dir / ".migration.lock"):
         previous_umask = os.umask(0o077)
-        report: dict[str, Any] = {"status": "initializing", "writers_confirmed_paused": True}
+        report: dict[str, Any] = {
+            "status": "initializing",
+            "writers_confirmed_paused": True,
+        }
         try:
             report.update(_report_base(options))
-            source_hash, source_files = _production_snapshot(source, work_dir, collection, resume)
+            source_hash, source_files = _production_snapshot(
+                source, work_dir, collection, resume
+            )
             report["source_fingerprint"] = source_hash
             report["source_tree_fingerprint"] = checksum(json_text(source_files))
             if destination.exists():
@@ -256,7 +272,9 @@ def _migrate_chroma_to_sqlite(
                 _assert_counts(repository.migration_counts(source_hash))
             with _sdk_collection(work_dir, collection) as collection_obj:
                 expected = _inspect(collection_obj, MIGRATION_BATCH_SIZE, report)
-                state = json.loads((work_dir / "snapshot.json").read_text(encoding="utf-8"))
+                state = json.loads(
+                    (work_dir / "snapshot.json").read_text(encoding="utf-8")
+                )
                 inspection = {
                     name: report[name]
                     for name in (
@@ -269,11 +287,15 @@ def _migrate_chroma_to_sqlite(
                     raise MigrationError("working_copy_logical_content_changed")
                 if "inspection" not in state:
                     if destination.exists():
-                        raise MigrationError("missing_inspection_checkpoint_for_existing_records")
+                        raise MigrationError(
+                            "missing_inspection_checkpoint_for_existing_records"
+                        )
                     state["inspection"] = inspection
                     _write_json(work_dir / "snapshot.json", state)
                 if report["warning_record_count"]:
-                    raise MigrationError("strict_parse_warning_before_destination_writes")
+                    raise MigrationError(
+                        "strict_parse_warning_before_destination_writes"
+                    )
                 with _lock(destination.with_name(destination.name + ".migration.lock")):
                     if destination.exists() and not resume:
                         raise MigrationError("destination_created_concurrently")
@@ -285,19 +307,30 @@ def _migrate_chroma_to_sqlite(
                     logger.info(
                         f"Applying {report['source_count']} memory records to the SQLite store"
                     )
-                    for records in _records(collection_obj, MIGRATION_BATCH_SIZE, expected):
+                    for records in _records(
+                        collection_obj, MIGRATION_BATCH_SIZE, expected
+                    ):
                         inserted, skipped = repository.apply_migration_batch(
-                            records, source_hash, resume=resume, fail_on_parse_error=True
+                            records,
+                            source_hash,
+                            resume=resume,
+                            fail_on_parse_error=True,
                         )
                         report["inserted"] += inserted
                         report["skipped"] += skipped
-                    for records in _records(collection_obj, MIGRATION_BATCH_SIZE, expected):
-                        report["verified"] += repository.verify_migration_batch(records, source_hash)
+                    for records in _records(
+                        collection_obj, MIGRATION_BATCH_SIZE, expected
+                    ):
+                        report["verified"] += repository.verify_migration_batch(
+                            records, source_hash
+                        )
                     repository.check_integrity()
                     counts = repository.migration_counts(source_hash)
                     _assert_counts(counts, len(expected))
                     report["destination_counts"] = counts
-                    report["destination_files_fingerprint"] = _destination_fingerprint(destination)
+                    report["destination_files_fingerprint"] = _destination_fingerprint(
+                        destination
+                    )
                     report["verified_canonical_fingerprint"] = report[
                         "expected_canonical_fingerprint"
                     ]
@@ -312,7 +345,9 @@ def _migrate_chroma_to_sqlite(
         except BaseException as error:
             report["status"] = "blocked"
             report["reason"] = (
-                str(error) if isinstance(error, MigrationError) else type(error).__name__
+                str(error)
+                if isinstance(error, MigrationError)
+                else type(error).__name__
             )
             _write_json(report_path, report)
             raise
@@ -341,7 +376,9 @@ def ensure_sqlite_store(
     resume = work_dir.exists()
     if db_path.exists() and not resume:
         return db_path
-    chroma_present = chroma_source is not None and (chroma_source / "chroma.sqlite3").is_file()
+    chroma_present = (
+        chroma_source is not None and (chroma_source / "chroma.sqlite3").is_file()
+    )
     if not chroma_present:
         if resume:
             raise MemoryEngineError(

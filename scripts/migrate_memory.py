@@ -11,14 +11,14 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import traceback
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import uuid
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -65,12 +65,16 @@ def resolve_source(explicit: Path | None) -> tuple[Path, str]:
     fallback = Path.cwd() / "memory_db"
     if configured is not None:
         if not configured.strip():
-            raise migration.MigrationError("empty_memorydb_path_requires_explicit_source")
+            raise migration.MigrationError(
+                "empty_memorydb_path_requires_explicit_source"
+            )
         source = migration.validate_source_tree(Path(configured))
         if fallback.exists() or fallback.is_symlink():
             other = migration._path(fallback)
             if (other / "chroma.sqlite3").is_file() and other != source:
-                raise migration.MigrationError("ambiguous_source_requires_explicit_source")
+                raise migration.MigrationError(
+                    "ambiguous_source_requires_explicit_source"
+                )
         return source, "MEMORYDB_PATH"
     if not (fallback / "chroma.sqlite3").is_file():
         raise migration.MigrationError("source_required_no_unambiguous_default")
@@ -81,11 +85,15 @@ def require_untracked_source(source: Path) -> None:
     """Refuse source files tracked by the source directory's enclosing Git repo."""
     result = subprocess.run(
         ["git", "-c", "core.fsmonitor=false", "ls-files", "--", "."],
-        cwd=source, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        cwd=source,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
     )
     if result.returncode == 0 and result.stdout.strip():
         raise migration.MigrationError("source_contains_tracked_files")
-    if result.returncode == 128 and any((parent / ".git").exists() for parent in (source, *source.parents)):
+    if result.returncode == 128 and any(
+        (parent / ".git").exists() for parent in (source, *source.parents)
+    ):
         raise migration.MigrationError("source_tracking_check_failed")
     if result.returncode not in (0, 128):
         raise migration.MigrationError("source_tracking_check_failed")
@@ -111,10 +119,26 @@ def operate(options: OperatorOptions) -> dict:
             raise migration.MigrationError("prepare_review_requires_apply")
         if type(options.batch_size) is not int or not 1 <= options.batch_size <= 1000:
             raise migration.MigrationError("invalid_batch_size")
-        if not isinstance(options.collection, str) or not options.collection.strip() or len(options.collection) > 200:
+        if (
+            not isinstance(options.collection, str)
+            or not options.collection.strip()
+            or len(options.collection) > 200
+        ):
             raise migration.MigrationError("invalid_collection")
-        label = options.run_id if options.run_id is not None else ("memory-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:12])
-        if not isinstance(label, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", label) is None:
+        label = (
+            options.run_id
+            if options.run_id is not None
+            else (
+                "memory-"
+                + datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+                + "-"
+                + uuid.uuid4().hex[:12]
+            )
+        )
+        if (
+            not isinstance(label, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", label) is None
+        ):
             raise migration.MigrationError("invalid_run_id")
         stage = "source_resolution"
         source, selection = resolve_source(options.source)
@@ -144,36 +168,63 @@ def operate(options: OperatorOptions) -> dict:
         destination = run / "candidate.sqlite3"
         work = run / "migration"
         manifest = {
-            "schema_version": 1, "status": "running", "run_id": label,
-            "writers_paused_attested": True, "writers_confirmed_paused": False,
-            "source_selection": selection, "source_sdk_opened": False,
+            "schema_version": 1,
+            "status": "running",
+            "run_id": label,
+            "writers_paused_attested": True,
+            "writers_confirmed_paused": False,
+            "source_selection": selection,
+            "source_sdk_opened": False,
             "operator_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            "checkout_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-            "production_backend_changed": False, "phase4_started": False,
-            "artifacts": {"staged_source": "staged-source", "sqlite_candidate": "candidate.sqlite3", "migration_work": "migration"},
+            "checkout_commit": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip(),
+            "production_backend_changed": False,
+            "phase4_started": False,
+            "artifacts": {
+                "staged_source": "staged-source",
+                "sqlite_candidate": "candidate.sqlite3",
+                "migration_work": "migration",
+            },
         }
         migration._write_json(run / "operator.json", manifest)
         stage = "stage_source"
         before = migration.copy_stable_source(source, staged)
-        manifest["source_tree_fingerprint"] = migration.checksum(migration.json_text(before))
+        manifest["source_tree_fingerprint"] = migration.checksum(
+            migration.json_text(before)
+        )
         migration._write_json(run / "operator.json", manifest)
         stage = "inspect_migration"
-        inspection = migration.migrate(migration.MigrationOptions(
-            source=staged, destination=destination, work_dir=work,
-            collection=options.collection, batch_size=options.batch_size,
-            report=work / "inspection.json", fail_on_parse_error=options.fail_on_parse_error,
-        ))
+        inspection = migration.migrate(
+            migration.MigrationOptions(
+                source=staged,
+                destination=destination,
+                work_dir=work,
+                collection=options.collection,
+                batch_size=options.batch_size,
+                report=work / "inspection.json",
+                fail_on_parse_error=options.fail_on_parse_error,
+            )
+        )
         if migration.fingerprint(source) != before:
             raise migration.MigrationError("source_changed_after_staging")
         result = inspection
         if options.apply:
             stage = "apply_verify_migration"
-            result = migration.migrate(migration.MigrationOptions(
-                source=staged, destination=destination, work_dir=work,
-                collection=options.collection, batch_size=options.batch_size,
-                report=work / "apply.json", apply=True, resume=True, verify=True,
-                fail_on_parse_error=options.fail_on_parse_error,
-            ))
+            result = migration.migrate(
+                migration.MigrationOptions(
+                    source=staged,
+                    destination=destination,
+                    work_dir=work,
+                    collection=options.collection,
+                    batch_size=options.batch_size,
+                    report=work / "apply.json",
+                    apply=True,
+                    resume=True,
+                    verify=True,
+                    fail_on_parse_error=options.fail_on_parse_error,
+                )
+            )
             if result.get("status") != "verified":
                 raise migration.MigrationError("verified_candidate_required")
             if migration.fingerprint(source) != before:
@@ -182,34 +233,60 @@ def operate(options: OperatorOptions) -> dict:
         if options.prepare_review:
             stage = "prepare_review"
             review_result = benchmark.draft_review(
-                benchmark.input_path(destination), benchmark.new_output(review, [destination]),
+                benchmark.input_path(destination),
+                benchmark.new_output(review, [destination]),
             )
         stage = "verify_source_unchanged"
-        if migration.fingerprint(source) != before or migration.fingerprint(staged) != before:
+        if (
+            migration.fingerprint(source) != before
+            or migration.fingerprint(staged) != before
+        ):
             raise migration.MigrationError("source_changed_after_staging")
         counts = result.get("destination_counts", {})
         summary = {
-            "schema_version": 1, "status": "verified" if options.apply else "inspected",
-            "stage": "complete", "run_id": label, "apply": options.apply,
-            "source_selection": selection, "writers_paused_attested": True,
-            "writers_confirmed_paused": False, "source_sdk_opened": False,
-            "source_bytes_unchanged": True, "sqlite_source": str(destination) if options.apply else None,
-            "source_records": result["source_count"], "records": counts.get("memory_record", 0),
-            "ledger_records": counts.get("migration_ledger", 0), "verified_records": result["verified"],
-            "inserted": result["inserted"], "skipped": result["skipped"],
+            "schema_version": 1,
+            "status": "verified" if options.apply else "inspected",
+            "stage": "complete",
+            "run_id": label,
+            "apply": options.apply,
+            "source_selection": selection,
+            "writers_paused_attested": True,
+            "writers_confirmed_paused": False,
+            "source_sdk_opened": False,
+            "source_bytes_unchanged": True,
+            "sqlite_source": str(destination) if options.apply else None,
+            "source_records": result["source_count"],
+            "records": counts.get("memory_record", 0),
+            "ledger_records": counts.get("migration_ledger", 0),
+            "verified_records": result["verified"],
+            "inserted": result["inserted"],
+            "skipped": result["skipped"],
             "parse_failures": result["parse_failure_count"],
-            "review_status": "unreviewed_proposals" if review_result is not None else "not_requested",
+            "review_status": "unreviewed_proposals"
+            if review_result is not None
+            else "not_requested",
             "review_directory": str(review) if review_result is not None else None,
-            "draft_cases": review_result["draft_cases"] if review_result is not None else 0,
-            "reviewed_locally": False, "production_backend_changed": False, "phase4_started": False,
+            "draft_cases": review_result["draft_cases"]
+            if review_result is not None
+            else 0,
+            "reviewed_locally": False,
+            "production_backend_changed": False,
+            "phase4_started": False,
         }
         migration._write_json(run / "operator.json", {**manifest, **summary})
         return summary
     except BaseException as error:
         code = static_code(error)
         if owned is not None:
-            failure = {"schema_version": 1, "status": "blocked", "stage": stage, "reason": code,
-                       "writers_confirmed_paused": False, "production_backend_changed": False, "phase4_started": False}
+            failure = {
+                "schema_version": 1,
+                "status": "blocked",
+                "stage": stage,
+                "reason": code,
+                "writers_confirmed_paused": False,
+                "production_backend_changed": False,
+                "phase4_started": False,
+            }
             try:
                 migration._write_json(owned / "operator-error.json", failure)
                 diagnostic = migration._path(owned / "operator.log")
@@ -223,25 +300,60 @@ def operate(options: OperatorOptions) -> dict:
 
 def main() -> int:
     parser = OperatorParser(description=__doc__)
-    parser.add_argument("--source", type=Path, help="Existing Chroma persistence directory, not a SQLite file. Relative to your shell CWD.")
-    parser.add_argument("--writers-paused", action="store_true", help="Attest that all AgentCrew/memory writers are stopped; this is not auto-detected.")
+    parser.add_argument(
+        "--source",
+        type=Path,
+        help="Existing Chroma persistence directory, not a SQLite file. Relative to your shell CWD.",
+    )
+    parser.add_argument(
+        "--writers-paused",
+        action="store_true",
+        help="Attest that all AgentCrew/memory writers are stopped; this is not auto-detected.",
+    )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--apply", action="store_true", help="After inspection, create and verify a fresh SQLite candidate.")
-    mode.add_argument("--inspect-only", action="store_true", help="Inspect and stage only; do not create a SQLite destination (default).")
-    parser.add_argument("--prepare-review", action="store_true", help="After verified --apply, generate unreviewed proposals, never a human attestation.")
-    parser.add_argument("--run-id", help="Optional fresh run label: letters, digits, underscore and hyphen, up to 64 characters.")
+    mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="After inspection, create and verify a fresh SQLite candidate.",
+    )
+    mode.add_argument(
+        "--inspect-only",
+        action="store_true",
+        help="Inspect and stage only; do not create a SQLite destination (default).",
+    )
+    parser.add_argument(
+        "--prepare-review",
+        action="store_true",
+        help="After verified --apply, generate unreviewed proposals, never a human attestation.",
+    )
+    parser.add_argument(
+        "--run-id",
+        help="Optional fresh run label: letters, digits, underscore and hyphen, up to 64 characters.",
+    )
     parser.add_argument("--collection", default="conversation")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--fail-on-parse-error", action="store_true")
     try:
         args = parser.parse_args()
-        result = operate(OperatorOptions(
-            source=args.source, writers_paused=args.writers_paused, apply=args.apply,
-            prepare_review=args.prepare_review, run_id=args.run_id, collection=args.collection,
-            batch_size=args.batch_size, fail_on_parse_error=args.fail_on_parse_error,
-        ))
+        result = operate(
+            OperatorOptions(
+                source=args.source,
+                writers_paused=args.writers_paused,
+                apply=args.apply,
+                prepare_review=args.prepare_review,
+                run_id=args.run_id,
+                collection=args.collection,
+                batch_size=args.batch_size,
+                fail_on_parse_error=args.fail_on_parse_error,
+            )
+        )
     except OperatorFailure as error:
-        print(json.dumps({"status": "blocked", "stage": error.stage, "reason": error.code}), file=sys.stderr)
+        print(
+            json.dumps(
+                {"status": "blocked", "stage": error.stage, "reason": error.code}
+            ),
+            file=sys.stderr,
+        )
         return 130 if error.code == "KeyboardInterrupt" else 1
     print(json.dumps(result, indent=2))
     return 0

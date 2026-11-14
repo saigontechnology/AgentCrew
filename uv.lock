@@ -105,7 +105,6 @@ dependencies = [
     { name = "a2a-sdk", extra = ["http-server"] },
     { name = "agent-client-protocol" },
     { name = "anthropic" },
-    { name = "chromadb" },
     { name = "click" },
     { name = "cursor-sdk" },
     { name = "elevenlabs" },
@@ -135,11 +134,14 @@ dependencies = [
     { name = "together" },
     { name = "tomli-w" },
     { name = "tree-sitter-language-pack" },
-    { name = "voyageai" },
     { name = "xmltodict" },
 ]
 
 [package.optional-dependencies]
+chromadb = [
+    { name = "chromadb" },
+    { name = "voyageai" },
+]
 cpu = [
     { name = "docling" },
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple/" }, marker = "(sys_platform == 'darwin' and extra == 'extra-12-agentcrew-ai-cpu') or (extra == 'extra-12-agentcrew-ai-cpu' and extra == 'extra-12-agentcrew-ai-nvidia')" },
@@ -176,7 +178,7 @@ requires-dist = [
     { name = "a2a-sdk", extras = ["http-server"], specifier = "==1.2.3" },
     { name = "agent-client-protocol", specifier = "==0.12.1" },
     { name = "anthropic", specifier = "==1.0.0" },
-    { name = "chromadb", specifier = "==1.5.9" },
+    { name = "chromadb", marker = "extra == 'chromadb'", specifier = "==1.5.9" },
     { name = "click", specifier = "==8.4.2" },
     { name = "cursor-sdk", specifier = "==0.1.9" },
     { name = "docling", marker = "extra == 'cpu'", specifier = "==2.122.0" },
@@ -220,10 +222,10 @@ requires-dist = [
     { name = "torchvision", marker = "sys_platform != 'darwin' and extra == 'cpu'", specifier = "==0.26.0", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "agentcrew-ai", extra = "cpu" } },
     { name = "torchvision", marker = "extra == 'nvidia'", specifier = "==0.26.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "agentcrew-ai", extra = "nvidia" } },
     { name = "tree-sitter-language-pack", specifier = "==1.15.8" },
-    { name = "voyageai", specifier = "==0.5.0" },
+    { name = "voyageai", marker = "extra == 'chromadb'", specifier = "==0.5.0" },
     { name = "xmltodict", specifier = "==1.0.4" },
 ]
-provides-extras = ["cpu", "nvidia", "redis", "gui"]
+provides-extras = ["chromadb", "cpu", "nvidia", "redis", "gui"]
 
 [package.metadata.requires-dev]
 dev = [

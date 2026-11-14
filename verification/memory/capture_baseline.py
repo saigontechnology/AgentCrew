@@ -7,7 +7,6 @@ import hashlib
 import importlib.metadata
 import json
 import os
-from pathlib import Path
 import platform
 import shutil
 import sqlite3
@@ -15,13 +14,20 @@ import subprocess
 import sys
 import tomllib
 from datetime import UTC, datetime
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PRIVATE_ROOT = ROOT / "verification/memory/local"
 SAFE_METADATA_KEYS = {
-    "agent", "session_id", "conversation_id", "date", "timestamp", "type",
-    "header", "evolved_at", "cwd",
+    "agent",
+    "session_id",
+    "conversation_id",
+    "date",
+    "timestamp",
+    "type",
+    "header",
+    "evolved_at",
+    "cwd",
 }
 
 
@@ -47,7 +53,9 @@ def capture(source: Path, destination: Path, source_label: str) -> dict:
     if destination.is_relative_to(source) or source.is_relative_to(destination):
         raise ValueError("Source and destination must not overlap")
     if destination.exists() or not (source / "chroma.sqlite3").is_file():
-        raise ValueError("Require an existing Chroma source and an unused snapshot directory")
+        raise ValueError(
+            "Require an existing Chroma source and an unused snapshot directory"
+        )
     PRIVATE_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(PRIVATE_ROOT, 0o700)
     before = fingerprint(source)
@@ -57,11 +65,21 @@ def capture(source: Path, destination: Path, source_label: str) -> dict:
     shutil.copytree(source, backup)
     after = fingerprint(source)
     if before != after or before != fingerprint(backup):
-        raise RuntimeError("Source changed during copy; pause writers and retry with a fresh snapshot")
+        raise RuntimeError(
+            "Source changed during copy; pause writers and retry with a fresh snapshot"
+        )
     with sqlite3.connect(":memory:") as probe:
         probe.execute("CREATE VIRTUAL TABLE capability_probe USING fts5(body)")
-        probe.execute("INSERT INTO capability_probe VALUES (?)", ("retrieval capability",))
-        fts5 = probe.execute("SELECT count(*) FROM capability_probe WHERE capability_probe MATCH ?", ("retrieval",)).fetchone()[0] == 1
+        probe.execute(
+            "INSERT INTO capability_probe VALUES (?)", ("retrieval capability",)
+        )
+        fts5 = (
+            probe.execute(
+                "SELECT count(*) FROM capability_probe WHERE capability_probe MATCH ?",
+                ("retrieval",),
+            ).fetchone()[0]
+            == 1
+        )
     shutil.copytree(backup, working_copy)
     if fingerprint(working_copy) != before:
         raise RuntimeError("Working copy does not match frozen backup")
@@ -74,7 +92,8 @@ def capture(source: Path, destination: Path, source_label: str) -> dict:
     from chromadb.config import Settings
 
     client = chromadb.PersistentClient(
-        path=str(working_copy), settings=Settings(anonymized_telemetry=False),
+        path=str(working_copy),
+        settings=Settings(anonymized_telemetry=False),
     )
     collection = client.get_collection("conversation", embedding_function=None)
     count = collection.count()
@@ -90,16 +109,26 @@ def capture(source: Path, destination: Path, source_label: str) -> dict:
     if not keys <= SAFE_METADATA_KEYS:
         raise ValueError("Unknown metadata key names withheld; private review required")
     if fingerprint(source) != before or fingerprint(backup) != before:
-        raise RuntimeError("Source or frozen backup changed during inventory; take a new baseline")
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+        raise RuntimeError(
+            "Source or frozen backup changed during inventory; take a new baseline"
+        )
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
-    chroma_lock = next(item["version"] for item in lock["package"] if item["name"] == "chromadb")
+    chroma_lock = next(
+        item["version"] for item in lock["package"] if item["name"] == "chromadb"
+    )
     return {
         "schema_version": 1,
         "captured_at": datetime.now(UTC).isoformat(),
         "implementation_baseline_commit": "a6c186fde41f7252fb311abd2af8e6d2abde87f1",
-        "checkout_commit_at_capture": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-        "capture_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "checkout_commit_at_capture": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip(),
+        "capture_script_sha256": hashlib.sha256(
+            Path(__file__).read_bytes()
+        ).hexdigest(),
         "package_version": project["version"],
         "python_requirement": project["requires-python"],
         "runtime_python": platform.python_version(),
@@ -125,7 +154,15 @@ def capture(source: Path, destination: Path, source_label: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default=os.getenv("MEMORYDB_PATH"))
-    parser.add_argument("--source-label", choices=["MEMORYDB_PATH", "repository-development-default", "operator-selected"], default="MEMORYDB_PATH")
+    parser.add_argument(
+        "--source-label",
+        choices=[
+            "MEMORYDB_PATH",
+            "repository-development-default",
+            "operator-selected",
+        ],
+        default="MEMORYDB_PATH",
+    )
     parser.add_argument("--snapshot-dir", required=True)
     args = parser.parse_args()
     try:
@@ -133,9 +170,14 @@ def main() -> int:
             raise ValueError("Set MEMORYDB_PATH or provide --source explicitly")
         report = capture(Path(args.source), Path(args.snapshot_dir), args.source_label)
         output = ROOT / "verification/memory/baseline.json"
-        output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        output.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
     except Exception as error:
-        print(f"Baseline capture blocked ({type(error).__name__}); inspect privately, do not publish exception values.", file=sys.stderr)
+        print(
+            f"Baseline capture blocked ({type(error).__name__}); inspect privately, do not publish exception values.",
+            file=sys.stderr,
+        )
         return 1
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0

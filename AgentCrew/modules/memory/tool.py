@@ -227,7 +227,9 @@ async def _rerank_structured_hits(
             set(data) != {"ranked_ids", "abstain"}
             or type(abstain) is not bool
             or not isinstance(ranked, list)
-            or any(not isinstance(value, str) or value not in allowed for value in ranked)
+            or any(
+                not isinstance(value, str) or value not in allowed for value in ranked
+            )
             or len(set(ranked)) != len(ranked)
             or abstain != (not ranked)
         ):
@@ -235,7 +237,9 @@ async def _rerank_structured_hits(
         if abstain:
             return MemorySearchResult((), result.warnings)
         by_id = {hit.memory_id: hit for hit in result.hits}
-        return MemorySearchResult(tuple(by_id[value] for value in ranked), result.warnings)
+        return MemorySearchResult(
+            tuple(by_id[value] for value in ranked), result.warnings
+        )
     except Exception:
         return result
 
@@ -420,8 +424,12 @@ def get_memory_retrieve_tool_handler(
             if not isinstance(kinds, list):
                 raise ValueError("kinds must be an array of memory kinds. Try again.")
             if not isinstance(memory_ids, list):
-                raise ValueError("memory_ids must be an array of memory IDs. Try again.")
-            kinds = sorted({str(kind).strip().lower() for kind in kinds if str(kind).strip()})
+                raise ValueError(
+                    "memory_ids must be an array of memory IDs. Try again."
+                )
+            kinds = sorted(
+                {str(kind).strip().lower() for kind in kinds if str(kind).strip()}
+            )
             unknown_kinds = [kind for kind in kinds if kind not in MEMORY_KINDS]
             if unknown_kinds:
                 raise ValueError(

@@ -11,9 +11,9 @@ import argparse
 import ctypes
 import hashlib
 import os
-from pathlib import Path
 import stat
 import sys
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import BinaryIO
 
@@ -22,7 +22,12 @@ sys.path.insert(0, str(ROOT))
 
 from AgentCrew.modules.memory.benchmark import BenchmarkError, check, file_hash
 from scripts.migrate_chroma_memory_to_sqlite import (
-    MigrationError, _ignored, _overlap, _path, _private_directory, _write_json,
+    MigrationError,
+    _ignored,
+    _overlap,
+    _path,
+    _private_directory,
+    _write_json,
 )
 
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
@@ -60,7 +65,7 @@ def row_split(data: bytes) -> str:
         nonlocal offset
         check(offset + 4 <= len(data), "extract_invalid_unicode")
         value = 0
-        for byte in data[offset:offset + 4]:
+        for byte in data[offset : offset + 4]:
             check(byte in b"0123456789abcdefABCDEF", "extract_invalid_unicode")
             value = value * 16 + (byte - 48 if byte <= 57 else (byte | 32) - 87)
         offset += 4
@@ -90,7 +95,16 @@ def row_split(data: bytes) -> str:
                     else:
                         check(not 0xDC00 <= scalar <= 0xDFFF, "extract_invalid_unicode")
                 else:
-                    escapes = {34: 34, 92: 92, 47: 47, 98: 8, 102: 12, 110: 10, 114: 13, 116: 9}
+                    escapes = {
+                        34: 34,
+                        92: 92,
+                        47: 47,
+                        98: 8,
+                        102: 12,
+                        110: 10,
+                        114: 13,
+                        116: 9,
+                    }
                     check(escape in escapes, "extract_invalid_escape")
                     scalar = escapes[escape]
             elif byte < 128:
@@ -109,11 +123,17 @@ def row_split(data: bytes) -> str:
                     check(0x80 <= continuation <= 0xBF, "extract_invalid_utf8")
                     scalar = (scalar << 6) | (continuation & 63)
                     offset += 1
-                check(minimum <= scalar <= 0x10FFFF and not 0xD800 <= scalar <= 0xDFFF,
-                      "extract_invalid_utf8")
+                check(
+                    minimum <= scalar <= 0x10FFFF and not 0xD800 <= scalar <= 0xDFFF,
+                    "extract_invalid_utf8",
+                )
             if evidence is not None:
                 evidence.update(chr(scalar).encode("utf-8"))
-            matches = tuple(word for word in matches if length < len(word) and ord(word[length]) == scalar)
+            matches = tuple(
+                word
+                for word in matches
+                if length < len(word) and ord(word[length]) == scalar
+            )
             length += 1
         take(34)
         matched = next((word for word in matches if len(word) == length), None)
@@ -188,8 +208,10 @@ def row_split(data: bytes) -> str:
             number()
         else:
             literal = {116: b"true", 102: b"false", 110: b"null"}.get(token)
-            check(literal is not None and data[offset:offset + len(literal)] == literal,
-                  "extract_invalid_json")
+            check(
+                literal is not None and data[offset : offset + len(literal)] == literal,
+                "extract_invalid_json",
+            )
             offset += len(literal)
 
     whitespace()
@@ -206,10 +228,14 @@ def _open_source(path: Path) -> BinaryIO:
     directory = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in path.parts[1:-1]:
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            child = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+            )
             os.close(directory)
             directory = child
-        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        descriptor = os.open(
+            path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        )
     finally:
         os.close(directory)
     stream = os.fdopen(descriptor, "rb")
@@ -239,7 +265,10 @@ def _verified_source(stream: BinaryIO, expected: str) -> tuple:
         total += len(block)
         check(total <= MAX_SOURCE_BYTES, "extract_source_size")
         evidence.update(block)
-    check(total == identity[2] and evidence.hexdigest() == expected, "extract_source_identity_mismatch")
+    check(
+        total == identity[2] and evidence.hexdigest() == expected,
+        "extract_source_identity_mismatch",
+    )
     check(_identity(stream) == identity, "extract_source_changed")
     stream.seek(0)
     return identity
@@ -250,20 +279,34 @@ def _publish(stage: Path, output: Path) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
     rename = getattr(libc, "renameat2", None)
     check(rename is not None, "extract_atomic_publish_unavailable")
-    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
     rename.restype = ctypes.c_int
-    check(rename(-100, os.fsencode(stage), -100, os.fsencode(output), 1) == 0,
-          "extract_atomic_publish_failed")
+    check(
+        rename(-100, os.fsencode(stage), -100, os.fsencode(output), 1) == 0,
+        "extract_atomic_publish_failed",
+    )
 
 
-def extract_calibration(source: Path, output: Path, expected_source_sha256: str) -> dict:
+def extract_calibration(
+    source: Path, output: Path, expected_source_sha256: str
+) -> dict:
     """Publish only a mechanically selected export plus evidence, never review.
 
     Requires a separately authorized immutable source and an operator-owned
     output parent. Reads combined/heldout bytes twice; does NOT claim zero access.
     """
-    check(isinstance(expected_source_sha256, str) and len(expected_source_sha256) == 64
-          and all(c in "0123456789abcdef" for c in expected_source_sha256), "extract_expected_digest_required")
+    check(
+        isinstance(expected_source_sha256, str)
+        and len(expected_source_sha256) == 64
+        and all(c in "0123456789abcdef" for c in expected_source_sha256),
+        "extract_expected_digest_required",
+    )
     source, output = _path(source), _path(output)
     _ignored(output)
     check(not _overlap(output, source) and not output.exists(), "extract_unsafe_output")
@@ -271,13 +314,21 @@ def extract_calibration(source: Path, output: Path, expected_source_sha256: str)
         identity = _verified_source(stream, expected_source_sha256)
         _unchanged(stream, source, identity)
         _private_directory(output.parent)
-        with TemporaryDirectory(prefix=".calibration-extract-", dir=output.parent) as temporary:
+        with TemporaryDirectory(
+            prefix=".calibration-extract-", dir=output.parent
+        ) as temporary:
             stage = Path(temporary) / "ready"
             stage.mkdir(mode=0o700)
             export = stage / "calibration-cases.jsonl"
-            evidence, selected, counts = hashlib.sha256(), hashlib.sha256(), {"calibration": 0, "holdout": 0}
+            evidence, selected, counts = (
+                hashlib.sha256(),
+                hashlib.sha256(),
+                {"calibration": 0, "holdout": 0},
+            )
             total = 0
-            descriptor = os.open(export, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            descriptor = os.open(
+                export, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+            )
             with os.fdopen(descriptor, "wb") as destination:
                 while row := stream.readline(MAX_ROW_BYTES + 1):
                     total += len(row)
@@ -291,24 +342,47 @@ def extract_calibration(source: Path, output: Path, expected_source_sha256: str)
                         selected.update(row)
                 destination.flush()
                 os.fsync(destination.fileno())
-            check(counts["calibration"] > 0 and counts["holdout"] > 0, "extract_both_splits_required")
-            check(total == identity[2] and evidence.hexdigest() == expected_source_sha256,
-                  "extract_source_changed")
+            check(
+                counts["calibration"] > 0 and counts["holdout"] > 0,
+                "extract_both_splits_required",
+            )
+            check(
+                total == identity[2] and evidence.hexdigest() == expected_source_sha256,
+                "extract_source_changed",
+            )
             _unchanged(stream, source, identity)
-            receipt = {"schema_version": 1, "artifact_type": "mechanical-calibration-extraction-evidence",
-                       "source_sha256": expected_source_sha256, "export_sha256": selected.hexdigest(),
-                       "expected_digest_origin": "caller-supplied; authenticity not established by this operator",
-                       "rows": counts, "source_bytes": total, "source_full_read_passes": 2,
-                       "structural_scanning_includes_heldout_bytes": True,
-                       "heldout_payload_objects_constructed": False, "non_discriminator_payload_values_interpreted": False,
-                       "reviewed_locally": False, "review_method": None, "valid_split_review": False,
-                       "method_sha256": file_hash(Path(__file__)),
-                       "shared_validation_sha256": {name: file_hash(ROOT / name) for name in (
-                           "AgentCrew/modules/memory/benchmark.py", "scripts/migrate_chroma_memory_to_sqlite.py")},
-                       "limits": {"source_bytes": MAX_SOURCE_BYTES, "row_bytes": MAX_ROW_BYTES,
-                                  "rows": MAX_ROWS, "json_depth": MAX_DEPTH},
-                       "calibration_validation_and_genuine_human_review_required": True,
-                       "calibration_benchmark_freeze_or_holdout_execution": False}
+            receipt = {
+                "schema_version": 1,
+                "artifact_type": "mechanical-calibration-extraction-evidence",
+                "source_sha256": expected_source_sha256,
+                "export_sha256": selected.hexdigest(),
+                "expected_digest_origin": "caller-supplied; authenticity not established by this operator",
+                "rows": counts,
+                "source_bytes": total,
+                "source_full_read_passes": 2,
+                "structural_scanning_includes_heldout_bytes": True,
+                "heldout_payload_objects_constructed": False,
+                "non_discriminator_payload_values_interpreted": False,
+                "reviewed_locally": False,
+                "review_method": None,
+                "valid_split_review": False,
+                "method_sha256": file_hash(Path(__file__)),
+                "shared_validation_sha256": {
+                    name: file_hash(ROOT / name)
+                    for name in (
+                        "AgentCrew/modules/memory/benchmark.py",
+                        "scripts/migrate_chroma_memory_to_sqlite.py",
+                    )
+                },
+                "limits": {
+                    "source_bytes": MAX_SOURCE_BYTES,
+                    "row_bytes": MAX_ROW_BYTES,
+                    "rows": MAX_ROWS,
+                    "json_depth": MAX_DEPTH,
+                },
+                "calibration_validation_and_genuine_human_review_required": True,
+                "calibration_benchmark_freeze_or_holdout_execution": False,
+            }
             _write_json(stage / "extraction-evidence.json", receipt)
             _unchanged(stream, source, identity)
             _publish(stage, output)
@@ -324,10 +398,16 @@ def main() -> int:
     try:
         extract_calibration(args.source, args.output, args.expected_source_sha256)
     except (BenchmarkError, MigrationError, OSError) as error:
-        reason = str(error) if isinstance(error, (BenchmarkError, MigrationError)) else type(error).__name__
+        reason = (
+            str(error)
+            if isinstance(error, (BenchmarkError, MigrationError))
+            else type(error).__name__
+        )
         print("Extraction blocked: " + reason)
         return 1
-    print("Mechanical export prepared; calibration validation and genuine human review still required.")
+    print(
+        "Mechanical export prepared; calibration validation and genuine human review still required."
+    )
     return 0
 
 

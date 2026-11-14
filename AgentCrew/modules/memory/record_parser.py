@@ -10,7 +10,6 @@ from xml.etree import ElementTree
 
 from .types import MemoryRecord, ParsedMemory, RetrievalUnit
 
-
 MAX_DOCUMENT_CHARACTERS = 1_000_000
 MAX_INDEX_CHARACTERS = 100_000
 MAX_UNITS = 512
@@ -29,7 +28,9 @@ def checksum(value: str) -> str:
 
 
 def _identifiers(text: str) -> tuple[str, ...]:
-    values = (match.group().rstrip(".,;:!?)") for match in TECHNICAL_IDENTIFIER.finditer(text))
+    values = (
+        match.group().rstrip(".,;:!?)") for match in TECHNICAL_IDENTIFIER.finditer(text)
+    )
     return tuple(dict.fromkeys(value for value in values if value))
 
 
@@ -98,13 +99,23 @@ def derive_memory_units(record: MemoryRecord) -> ParsedMemory:
             continue
         seen.add(identity)
         unit_id = checksum(json.dumps([record.id, source_field, digest]))
-        units.append(RetrievalUnit(
-            id=unit_id, memory_id=record.id, kind=kind,
-            source_field=source_field, text=text, ordinal=len(units), checksum=digest,
-            entities=tuple(dict.fromkeys((*entities, *_identifiers(text)))), tags=tags,
-        ))
+        units.append(
+            RetrievalUnit(
+                id=unit_id,
+                memory_id=record.id,
+                kind=kind,
+                source_field=source_field,
+                text=text,
+                ordinal=len(units),
+                checksum=digest,
+                entities=tuple(dict.fromkeys((*entities, *_identifiers(text)))),
+                tags=tags,
+            )
+        )
     return ParsedMemory(
         units=tuple(units),
-        structured_json=json.dumps(structured, ensure_ascii=False, sort_keys=True) if structured else None,
+        structured_json=json.dumps(structured, ensure_ascii=False, sort_keys=True)
+        if structured
+        else None,
         warnings=tuple(dict.fromkeys(warnings)),
     )

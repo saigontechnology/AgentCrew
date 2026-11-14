@@ -61,7 +61,9 @@ class ChromaMemoryPersistence:
             return "Cannot find embedding_function"
         return None
 
-    def _metadata(self, operation_data: dict[str, Any], built: BuiltMemoryRecord) -> dict[str, Any]:
+    def _metadata(
+        self, operation_data: dict[str, Any], built: BuiltMemoryRecord
+    ) -> dict[str, Any]:
         metadata = {
             "date": built.timestamp,
             "session_id": operation_data["session_id"],
@@ -88,7 +90,9 @@ class ChromaMemoryPersistence:
         )
 
     def consolidation_candidates(
-        self, operation_data: dict[str, Any], built: BuiltMemoryRecord,
+        self,
+        operation_data: dict[str, Any],
+        built: BuiltMemoryRecord,
     ) -> list[dict[str, Any]]:
         current_session_id = operation_data["session_id"]
         agent_name = operation_data["agent_name"]
