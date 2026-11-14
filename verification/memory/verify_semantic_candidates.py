@@ -58,7 +58,7 @@ def require(condition, message):
 def rejects(callback, expected=None):
     try:
         callback()
-    except ValueError as error:
+    except (TypeError, ValueError) as error:
         require(
             expected is None or str(error) == expected, "Wrong validation rejection"
         )

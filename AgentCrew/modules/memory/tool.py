@@ -424,9 +424,7 @@ def get_memory_retrieve_tool_handler(
             if not isinstance(kinds, list):
                 raise TypeError("kinds must be an array of memory kinds. Try again.")
             if not isinstance(memory_ids, list):
-                raise TypeError(
-                    "memory_ids must be an array of memory IDs. Try again."
-                )
+                raise TypeError("memory_ids must be an array of memory IDs. Try again.")
             kinds = sorted(
                 {str(kind).strip().lower() for kind in kinds if str(kind).strip()}
             )

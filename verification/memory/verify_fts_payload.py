@@ -515,11 +515,19 @@ def check_entity_reference(path, current, variants, coordinator_reference):
                 )
             with current._transaction() as connection:
                 actual = [
-                    {key: value for key, value in dict(row).items() if key != "parent_rank"}
+                    {
+                        key: value
+                        for key, value in dict(row).items()
+                        if key != "parent_rank"
+                    }
                     for row in connection.execute(new_sql, new_args)
                 ]
                 expected_rows = [
-                    {key: value for key, value in dict(row).items() if key != "parent_rank"}
+                    {
+                        key: value
+                        for key, value in dict(row).items()
+                        if key != "parent_rank"
+                    }
                     for row in connection.execute(old_sql, old_args)
                 ]
                 require(
@@ -726,7 +734,11 @@ def main():
                         dict(row) for row in connection.execute(new_sql, new_args)
                     ]
                     expected_rows = [
-                        {key: value for key, value in dict(row).items() if key != "parent_rank"}
+                        {
+                            key: value
+                            for key, value in dict(row).items()
+                            if key != "parent_rank"
+                        }
                         for row in connection.execute(old_sql, old_args)
                     ]
                     if not expression:

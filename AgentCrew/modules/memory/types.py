@@ -103,7 +103,8 @@ class MemoryQuery:
             or len(self.query_vector) != DOCUMENT_VECTOR_DIMENSIONS
             or any(
                 type(value) not in (int, float)
-                or isinstance(value, float) and math.isnan(value)
+                or isinstance(value, float)
+                and math.isnan(value)
                 or value in (float("inf"), float("-inf"))
                 for value in self.query_vector
             )

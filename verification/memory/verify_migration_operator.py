@@ -43,7 +43,9 @@ def rejected(callback, code, stage):
 
 def invoke(folder, arguments, expected=0):
     command = python_command() + ["scripts/migrate_memory.py", *map(str, arguments)]
-    result = subprocess.run(command, check=False, cwd=ROOT, capture_output=True, text=True)
+    result = subprocess.run(
+        command, check=False, cwd=ROOT, capture_output=True, text=True
+    )
     log = folder / ("operator-cli-" + uuid.uuid4().hex + ".log")
     log.write_text(result.stdout + result.stderr, encoding="utf-8")
     log.chmod(0o600)
