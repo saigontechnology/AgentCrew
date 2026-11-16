@@ -494,7 +494,7 @@ export AGENTCREW_MODEL_ID="YOUR_MODEL_ID"
 | `AGENTCREW_CONFIG_PATH` | Path to `config.json`. |
 | `SW_AGENTS_CONFIG` | Path to `agents.toml`. |
 | `MCP_CONFIG_PATH` | Path to `mcp_servers.json`. |
-| `MEMORYDB_PATH` | Path to the Chroma memory database. |
+| `MEMORYDB_PATH` | Shared memory directory root (also set by `--memory-path`): Chroma data lives here, SQLite uses `agent_memory.sqlite3`, and migration work uses `migration-work/`. Supports `~`; use an absolute or home-relative path for launch-directory independence. Defaults to `~/.AgentCrew/memorydb` in production and `./memory_db` in development. |
 | `AGENTCREW_PERSISTENCE_DIR` | Base directory for conversations, tokens, and persisted state. |
 | `AGENTCREW_ADAPTIVE_PATH` | Explicit path to `adaptive.json`. |
 | `AGENTCREW_ACP_SESSION_DIR` | Directory for persisted ACP session JSON. Defaults to `.agentcrew/acp_sessions` when no constructor base directory is supplied. |

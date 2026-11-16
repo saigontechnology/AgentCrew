@@ -39,14 +39,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--destination",
         type=Path,
         default=engine_selection.sqlite_store_path(),
-        help="SQLite store to create (default: ./memory_db/agent_memory.sqlite3).",
+        help="SQLite store to create (default: agent_memory.sqlite3 under "
+        "$MEMORYDB_PATH or ./memory_db).",
     )
     parser.add_argument(
         "--work-dir",
         type=Path,
         default=engine_selection.sqlite_migration_work_path(),
         help="Migration work directory for the offline copy and report "
-        "(default: ./memory_db/migration-work).",
+        "(default: migration-work under $MEMORYDB_PATH or ./memory_db).",
     )
     parser.add_argument(
         "--collection",

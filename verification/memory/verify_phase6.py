@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -136,6 +137,93 @@ def checks_engine_config() -> None:
             "Engine error must name the valid values",
         )
     print("PASS checks_engine_config")
+
+
+def checks_memory_paths_configured() -> None:
+    with patch.dict(os.environ, {"MEMORYDB_PATH": "/tmp/example"}):
+        require(
+            engine_selection.sqlite_store_path()
+            == Path("/tmp/example/agent_memory.sqlite3"),
+            "SQLite store must follow MEMORYDB_PATH",
+        )
+        require(
+            engine_selection.sqlite_migration_work_path()
+            == Path("/tmp/example/migration-work"),
+            "Migration work must follow MEMORYDB_PATH",
+        )
+        require(
+            engine_selection.chroma_source_path() == Path("/tmp/example"),
+            "Chroma source must share the configured memory root",
+        )
+    print("PASS checks_memory_paths_configured")
+
+
+def checks_memory_paths_expanduser() -> None:
+    with (
+        tempfile.TemporaryDirectory(prefix="phase6-home-") as tmp,
+        patch.dict(os.environ, {"HOME": tmp, "MEMORYDB_PATH": "~/memory data"}),
+    ):
+        root = Path(tmp) / "memory data"
+        require(
+            engine_selection.sqlite_store_path() == root / "agent_memory.sqlite3",
+            "SQLite store must expand the home directory",
+        )
+        require(
+            engine_selection.sqlite_migration_work_path() == root / "migration-work",
+            "Migration work must expand the home directory",
+        )
+        require(
+            engine_selection.chroma_source_path() == root,
+            "Chroma source must expand the home directory",
+        )
+    print("PASS checks_memory_paths_expanduser")
+
+
+def checks_memory_paths_cwd_invariant() -> None:
+    with tempfile.TemporaryDirectory(prefix="phase6-cwd-") as tmp:
+        base = Path(tmp)
+        for configured in (str(base / "memory"), "~/memory"):
+            with patch.dict(os.environ, {"HOME": tmp, "MEMORYDB_PATH": configured}):
+                for name in ("first", "second"):
+                    cwd = base / name
+                    cwd.mkdir(exist_ok=True)
+                    with contextlib.chdir(cwd):
+                        root = base / "memory"
+                        require(
+                            engine_selection.sqlite_store_path()
+                            == root / "agent_memory.sqlite3",
+                            "Configured SQLite store must be CWD-invariant",
+                        )
+                        require(
+                            engine_selection.sqlite_migration_work_path()
+                            == root / "migration-work",
+                            "Configured migration work must be CWD-invariant",
+                        )
+                        require(
+                            engine_selection.chroma_source_path() == root,
+                            "Configured Chroma source must be CWD-invariant",
+                        )
+    print("PASS checks_memory_paths_cwd_invariant")
+
+
+def checks_memory_paths_fallback() -> None:
+    with patch.dict(os.environ):
+        os.environ.pop("MEMORYDB_PATH", None)
+        require(
+            engine_selection.sqlite_store_path()
+            == Path("./memory_db/agent_memory.sqlite3"),
+            "Unset SQLite root must preserve the relative development fallback",
+        )
+        require(
+            engine_selection.sqlite_migration_work_path()
+            == Path("./memory_db/migration-work"),
+            "Unset migration root must preserve the relative development fallback",
+        )
+        require(
+            engine_selection.chroma_source_path() == Path("./memory_db"),
+            "Unset Chroma root must preserve the relative development fallback",
+        )
+    print("PASS checks_memory_paths_fallback")
 
 
 def checks_selection_wiring() -> None:
@@ -536,6 +624,10 @@ def checks_mem604_surfaces() -> None:
 
 def main() -> int:
     checks_engine_config()
+    checks_memory_paths_configured()
+    checks_memory_paths_expanduser()
+    checks_memory_paths_cwd_invariant()
+    checks_memory_paths_fallback()
     checks_selection_wiring()
     checks_sqlite_chain_chromadb_free()
     checks_auto_migration()

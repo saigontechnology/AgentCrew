@@ -26,8 +26,6 @@ from loguru import logger
 
 MEMORY_ENGINES = ("sqlite", "chromadb")
 DEFAULT_MEMORY_ENGINE = "sqlite"
-SQLITE_STORE_PATH = "./memory_db/agent_memory.sqlite3"
-SQLITE_MIGRATION_WORK_PATH = "./memory_db/migration-work"
 CHROMA_SOURCE_ENV = "MEMORYDB_PATH"
 CHROMA_DEFAULT_SOURCE_PATH = "./memory_db"
 MIGRATION_BATCH_SIZE = 100
@@ -52,19 +50,24 @@ def resolve_memory_engine(global_settings: dict[str, Any]) -> str:
     return engine
 
 
+def _memory_root_path() -> Path:
+    """Shared memory directory from MEMORYDB_PATH or the development fallback."""
+    return Path(os.getenv(CHROMA_SOURCE_ENV, CHROMA_DEFAULT_SOURCE_PATH)).expanduser()
+
+
 def sqlite_store_path() -> Path:
-    """Configured SQLite store location under the memory_db directory."""
-    return Path(SQLITE_STORE_PATH)
+    """SQLite store under the configured memory directory."""
+    return _memory_root_path() / "agent_memory.sqlite3"
 
 
 def chroma_source_path() -> Path:
-    """Chroma data location, matching the ChromaMemoryService default."""
-    return Path(os.getenv(CHROMA_SOURCE_ENV, CHROMA_DEFAULT_SOURCE_PATH))
+    """Chroma source under the shared configured memory directory."""
+    return _memory_root_path()
 
 
 def sqlite_migration_work_path() -> Path:
     """Migration work directory for the offline copy, report and lock files."""
-    return Path(SQLITE_MIGRATION_WORK_PATH)
+    return _memory_root_path() / "migration-work"
 
 
 def chromadb_install_hint() -> str:
