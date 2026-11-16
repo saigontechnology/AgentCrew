@@ -303,6 +303,134 @@ def checks_pending_capture_and_worker_lifecycle():
     require(llm.closed and service._worker_done.is_set(), "Worker lifecycle leaked")
 
 
+def checks_ready_cache_miss_has_no_persistence_io():
+    persistence = SimpleNamespace(get_tool_result_summaries=Mock())
+    service = ToolResultSummaryService(None, persistence)
+    stored = record(service)
+    persistence.get_tool_result_summaries.return_value = {"persisted": stored}
+    try:
+        for scope in (
+            "chat:fictional",
+            "job:fictional",
+            "a2a:fictional",
+            "acp:fictional",
+        ):
+            require(
+                service.get_ready_summary(scope, "persisted", "run_command") is None,
+                "Ready cache miss performed a persistence lookup",
+            )
+        require(
+            persistence.get_tool_result_summaries.call_count == 0,
+            "Cache-only ready reads accessed persistence",
+        )
+        service.preload_chat_scope("fictional")
+        require(
+            persistence.get_tool_result_summaries.call_count == 1,
+            "Explicit chat preload did not load persisted summaries",
+        )
+        persistence.get_tool_result_summaries.reset_mock()
+        require(
+            service.get_ready_summary("chat:fictional", "persisted", "run_command")
+            == stored["summary"],
+            "Preloaded summary was not ready",
+        )
+        require(
+            persistence.get_tool_result_summaries.call_count == 0,
+            "Ready cache hit accessed persistence",
+        )
+    finally:
+        service.close()
+
+
+def checks_blocked_persistence_does_not_block_state():
+    for invalidate in (False, True):
+        started = threading.Event()
+        release = threading.Event()
+        persisted = {}
+
+        def write(
+            conversation_id,
+            tool_call_id,
+            summary,
+            *,
+            started=started,
+            release=release,
+            persisted=persisted,
+        ):
+            started.set()
+            require(release.wait(3), "Fictional persistence write was not released")
+            persisted[tool_call_id] = dict(summary)
+            return True
+
+        persistence = SimpleNamespace(
+            upsert_tool_result_summary=Mock(side_effect=write),
+            get_tool_result_summaries=Mock(return_value=persisted),
+        )
+        service = ToolResultSummaryService(None, persistence)
+        llm = FictionalLLM()
+        service._llm_service = llm
+        scope = "chat:blocked"
+        service._cache_record(scope, "stable", record(service))
+        require(
+            service.submit(scope, "writing", "run_command", {}, "original", False),
+            "Initial summary was not queued",
+        )
+        executor = ThreadPoolExecutor(max_workers=3)
+        try:
+            writer = executor.submit(process_queued, service)
+            require(started.wait(1), "Fictional persistence write did not start")
+            submitted = executor.submit(
+                service.submit,
+                scope,
+                "writing",
+                "run_command",
+                {},
+                "replacement",
+                False,
+            ).result(timeout=0.5)
+            require(submitted, "Later submit blocked or failed during persistence")
+            ready = executor.submit(
+                service.get_ready_summary, scope, "stable", "run_command"
+            ).result(timeout=0.5)
+            require(
+                ready == llm.reply, "Blocked write interfered with ready cache read"
+            )
+            require(
+                executor.submit(service._scope_is_writable, scope).result(timeout=0.5),
+                "Blocked write interfered with a state read",
+            )
+            require(
+                service.get_ready_summary(scope, "writing", "run_command") is None,
+                "Pending replacement exposed the older summary",
+            )
+            if invalidate:
+                executor.submit(service.invalidate_scope, scope).result(timeout=0.5)
+            require(
+                not release.is_set(), "Persistence was released before state checks"
+            )
+            release.set()
+            writer.result(timeout=1)
+            require("writing" in persisted, "Fictional write did not finish")
+            require(
+                service.get_ready_summary(scope, "writing", "run_command") is None,
+                "Late persistence completion resurrected stale evidence",
+            )
+            llm.fail = True
+            process_queued(service)
+            require(
+                service.get_ready_summary(scope, "writing", "run_command") is None,
+                "Failed or invalidated replacement exposed stale persistence",
+            )
+            require(
+                persistence.get_tool_result_summaries.call_count == 0,
+                "Ready read consulted persistence during or after a blocked write",
+            )
+        finally:
+            release.set()
+            executor.shutdown(wait=True)
+            service.close()
+
+
 def checks_redaction_prompt_cache_and_persistence():
     keys = (
         "PaSsWoRd",
@@ -425,6 +553,11 @@ def checks_redaction_prompt_cache_and_persistence():
             "legacy",
             record(service, 'api-key="FIXTURE_LEGACY"; checked /safe/file.py.'),
         )
+        require(
+            loaded.get_ready_summary("chat:fictional", "legacy", "run_command") is None,
+            "New persisted record was read without explicit preload",
+        )
+        loaded.preload_chat_scope("fictional")
         legacy = loaded.get_ready_summary("chat:fictional", "legacy", "run_command")
         require(
             legacy and "FIXTURE_LEGACY" not in legacy, "Loaded summary not sanitized"
@@ -663,6 +796,8 @@ def main():
         checks_scope_readiness_and_source_validation,
         checks_pending_failed_and_superseded_sources,
         checks_pending_capture_and_worker_lifecycle,
+        checks_ready_cache_miss_has_no_persistence_io,
+        checks_blocked_persistence_does_not_block_state,
         checks_redaction_prompt_cache_and_persistence,
         checks_memory_capture_order_exclusions_and_raw_safety,
         checks_bounds_latest_policy_and_duplicates,

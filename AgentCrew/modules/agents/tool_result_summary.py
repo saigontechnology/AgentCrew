@@ -176,7 +176,8 @@ class ToolResultSummaryService:
         Pending replacements and known superseded sources are never evidence.
         Known source hashes are retained until scope invalidation to reject stale
         persisted replacements. No raw payloads are retained for this lookup.
-        Persisted chat records may be loaded, but no summary work is awaited.
+        Persisted chat records must be explicitly preloaded. Cache misses and
+        lock contention return None without persistence access or summary work.
         """
         if any(
             not isinstance(value, str) or not value
@@ -190,7 +191,7 @@ class ToolResultSummaryService:
                 item[:2] == (scope_id, tool_call_id) for item in self._pending
             ):
                 return None
-            record = self._get_record(scope_id, tool_call_id)
+            record = self._cache.get((scope_id, tool_call_id))
             if (
                 record is None
                 or not isinstance(record.get("version"), int)
@@ -203,6 +204,7 @@ class ToolResultSummaryService:
                 != record.get("source_hash")
             ):
                 return None
+            self._cache.move_to_end((scope_id, tool_call_id))
             return self._normalize_summary(record.get("summary"))
         finally:
             self._lock.release()
@@ -347,17 +349,17 @@ class ToolResultSummaryService:
             "created_at": datetime.now(UTC).isoformat(),
         }
         tool_call_id = str(payload["tool_call_id"])
-        with self._lock:
-            if self._cache_record(scope_id, tool_call_id, record) is None:
-                return
-            conversation_id = self._conversation_id(scope_id)
-            if conversation_id and self._context_persistence is not None:
-                try:
-                    self._context_persistence.upsert_tool_result_summary(
-                        conversation_id, tool_call_id, record
-                    )
-                except Exception:
-                    logger.warning("Could not persist tool-result summary")
+        cached_record = self._cache_record(scope_id, tool_call_id, record)
+        if cached_record is None:
+            return
+        conversation_id = self._conversation_id(scope_id)
+        if conversation_id and self._context_persistence is not None:
+            try:
+                self._context_persistence.upsert_tool_result_summary(
+                    conversation_id, tool_call_id, cached_record
+                )
+            except Exception:
+                logger.warning("Could not persist tool-result summary")
 
     async def _close_llm_on_worker_loop(self) -> None:
         llm_service = self._llm_service
