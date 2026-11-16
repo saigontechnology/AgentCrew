@@ -393,6 +393,73 @@ def checks_mid_apply_crash_resume() -> None:
     print("PASS checks_mid_apply_crash_resume")
 
 
+def checks_skip_warned_records() -> None:
+    from AgentCrew.modules.memory.migrate_chroma_memory_to_sqlite import checksum
+    from verification.memory.capture_baseline import fingerprint
+
+    with tempfile.TemporaryDirectory(prefix="phase6-skip-") as tmp:
+        base = Path(tmp)
+        src = base / "memory_db"
+        client = chromadb.PersistentClient(path=str(src))
+        collection = client.create_collection("conversation")
+        collection.upsert(
+            ids=["sess-1_FictionalAgent"],
+            documents=[MEMORY_XML],
+            embeddings=[[0.1, 0.2, 0.3]],
+            metadatas=[
+                {
+                    "agent": "FictionalAgent",
+                    "date": time.time(),
+                    "session_id": "sess-1",
+                    "type": "conversation",
+                    "header": "Fictional alpha headline",
+                }
+            ],
+        )
+        collection.upsert(
+            ids=["sess-2_FictionalAgent"],
+            documents=["<MEMORY><bad>"],
+            embeddings=[[0.4, 0.5, 0.6]],
+            metadatas=[
+                {
+                    "agent": "FictionalAgent",
+                    "date": time.time(),
+                    "session_id": "sess-2",
+                    "type": "conversation",
+                    "header": "Fictional malformed headline",
+                }
+            ],
+        )
+        with contextlib.suppress(Exception):
+            client._system.stop()
+        before = fingerprint(src)
+        db = base / "g" / "agent_memory.sqlite3"
+        work = base / "g" / "migration-work"
+        engine_selection.ensure_sqlite_store(db, src, work)
+        report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+        require(report["status"] == "verified", "Skip migration must verify")
+        require(
+            report["warning_skipped_count"] == 1,
+            "Exactly the warned record must be skipped",
+        )
+        require(
+            report["warning_skipped_ids"] == [checksum("sess-2_FictionalAgent")],
+            "Skipped IDs must be the hashed record identifier",
+        )
+        repository = SQLiteMemoryRepository(db)
+        require(
+            repository.get_record("sess-1_FictionalAgent", "FictionalAgent")
+            is not None,
+            "Clean record must be migrated",
+        )
+        require(
+            repository.get_record("sess-2_FictionalAgent", "FictionalAgent") is None,
+            "Warned record must stay out of the destination",
+        )
+        require(fingerprint(src) == before, "Chroma source must stay untouched")
+    print("PASS checks_skip_warned_records")
+
+
 def checks_packaging() -> None:
     import tomllib
 
@@ -475,6 +542,7 @@ def main() -> int:
     checks_fail_fast_without_chromadb()
     checks_migration_failure_abort()
     checks_mid_apply_crash_resume()
+    checks_skip_warned_records()
     checks_packaging()
     checks_frozen_policy()
     checks_mem604_surfaces()

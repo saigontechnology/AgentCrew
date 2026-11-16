@@ -71,6 +71,7 @@ class MigrationOptions:
     verify: bool = False
     fail_on_parse_error: bool = False
     private_roots: tuple[Path, ...] | None = None
+    skip_warned_records: bool = False
 
 
 def json_text(value) -> str:
@@ -207,6 +208,7 @@ def validate_options(options: MigrationOptions) -> MigrationOptions:
         options.verify,
         options.fail_on_parse_error,
         options.private_roots,
+        options.skip_warned_records,
     )
 
 
@@ -454,20 +456,26 @@ def map_record(identifier, document, metadata) -> tuple[MemoryRecord, str]:
     return record, source_hash
 
 
-def _inspect(collection, batch_size: int, report: dict) -> dict:
+def _inspect(
+    collection, batch_size: int, report: dict, skip_warned: bool = False
+) -> dict:
     index = {}
     warnings = Counter()
     failures = Counter()
+    skipped = []
     parser_failures = warning_records = 0
     for rows in _source_rows(collection, batch_size):
         for raw in rows:
             try:
                 record, source_hash = map_record(*raw)
                 parsed = SQLiteMemoryRepository.validate_record(record)
-                index[record.id] = (
-                    source_hash,
-                    SQLiteMemoryRepository.canonical_checksum(record),
-                )
+                if skip_warned and parsed.warnings:
+                    skipped.append(record.id)
+                else:
+                    index[record.id] = (
+                        source_hash,
+                        SQLiteMemoryRepository.canonical_checksum(record),
+                    )
                 warning_records += bool(parsed.warnings)
                 parser_failures += any(
                     unit.source_field == "BODY" for unit in parsed.units
@@ -482,8 +490,8 @@ def _inspect(collection, batch_size: int, report: dict) -> dict:
                 failures[reason] += 1
     report.update(
         {
-            "source_count": len(index) + sum(failures.values()),
-            "readable_count": len(index),
+            "source_count": len(index) + len(skipped) + sum(failures.values()),
+            "readable_count": len(index) + len(skipped),
             "unmappable_count": sum(failures.values()),
             "parse_failure_count": parser_failures,
             "warning_record_count": warning_records,
@@ -507,18 +515,25 @@ def _inspect(collection, batch_size: int, report: dict) -> dict:
             ),
         }
     )
+    if skip_warned:
+        report["warning_skipped_count"] = len(skipped)
+        report["warning_skipped_ids"] = sorted(checksum(item) for item in skipped)
     if failures:
         raise MigrationError("unmappable_source_records_no_silent_skip")
     return index
 
 
-def _records(collection, batch_size: int, expected: dict):
+def _records(collection, batch_size: int, expected: dict, skip_warned: bool = False):
     seen = set()
     for rows in _source_rows(collection, batch_size):
         records = []
         for raw in rows:
             record, source_hash = map_record(*raw)
-            if expected.get(record.id) != (
+            if record.id not in expected:
+                if skip_warned:
+                    continue
+                raise MigrationError("source_record_changed_after_inspection")
+            if expected[record.id] != (
                 source_hash,
                 SQLiteMemoryRepository.canonical_checksum(record),
             ):
@@ -622,7 +637,9 @@ def migrate(options: MigrationOptions) -> dict:
                 report["destination_opened"] = True
                 _assert_counts(repository.migration_counts(source_hash))
             with _sdk_collection(options.work_dir, options.collection) as collection:
-                expected = _inspect(collection, options.batch_size, report)
+                expected = _inspect(
+                    collection, options.batch_size, report, options.skip_warned_records
+                )
                 state_path = options.work_dir / "snapshot.json"
                 state = json.loads(state_path.read_text(encoding="utf-8"))
                 inspection = {
@@ -642,7 +659,11 @@ def migrate(options: MigrationOptions) -> dict:
                         )
                     state["inspection"] = inspection
                     _write_json(state_path, state)
-                if options.fail_on_parse_error and report["warning_record_count"]:
+                if (
+                    options.fail_on_parse_error
+                    and not options.skip_warned_records
+                    and report["warning_record_count"]
+                ):
                     raise MigrationError(
                         "strict_parse_warning_before_destination_writes"
                     )
@@ -665,7 +686,10 @@ def migrate(options: MigrationOptions) -> dict:
                         _assert_counts(repository.migration_counts(source_hash))
                         repository.check_integrity()
                         for records in _records(
-                            collection, options.batch_size, expected
+                            collection,
+                            options.batch_size,
+                            expected,
+                            options.skip_warned_records,
                         ):
                             inserted, skipped = repository.apply_migration_batch(
                                 records,
@@ -677,7 +701,10 @@ def migrate(options: MigrationOptions) -> dict:
                             report["skipped"] += skipped
                         if options.verify:
                             for records in _records(
-                                collection, options.batch_size, expected
+                                collection,
+                                options.batch_size,
+                                expected,
+                                options.skip_warned_records,
                             ):
                                 report["verified"] += repository.verify_migration_batch(
                                     records, source_hash

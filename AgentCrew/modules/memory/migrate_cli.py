@@ -105,6 +105,13 @@ def _migrate(
     )
     status = str(report.get("status"))
     print(f"Memory migration status: {status}")
+    if report.get("warning_skipped_count"):
+        print(
+            f"Skipped {report['warning_skipped_count']} of "
+            f"{report['source_count']} record(s) with parse warnings "
+            f"({report['warning_counts']}); the skipped records' hashed IDs are "
+            f"listed in {work_dir / 'report.json'}."
+        )
     print(
         f"Inserted {report.get('inserted', 0)} record(s); "
         f"verified {report.get('verified', 0)} record(s)."
@@ -180,9 +187,9 @@ def _discard_old_memory(
 
 def main() -> int:
     args = _build_parser().parse_args()
-    source = Path(args.source)
-    destination = Path(args.destination)
-    work_dir = Path(args.work_dir)
+    source = Path(args.source).expanduser().resolve()
+    destination = Path(args.destination).expanduser().resolve()
+    work_dir = Path(args.work_dir).expanduser().resolve()
     try:
         if args.discard_old_memory:
             return _discard_old_memory(source, work_dir, destination, args.yes)

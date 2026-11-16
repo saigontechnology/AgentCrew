@@ -267,6 +267,8 @@ def _migrate_chroma_to_sqlite(
     )
 
     source = validate_source_tree(source)
+    work_dir = work_dir.expanduser().resolve()
+    destination = destination.expanduser().resolve()
     report_path = work_dir / "report.json"
     options = MigrationOptions(
         source=source,
@@ -279,6 +281,7 @@ def _migrate_chroma_to_sqlite(
         resume=resume,
         verify=True,
         fail_on_parse_error=True,
+        skip_warned_records=True,
     )
     work_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(work_dir, 0o700)
@@ -300,7 +303,9 @@ def _migrate_chroma_to_sqlite(
                 report["destination_opened"] = True
                 _assert_counts(repository.migration_counts(source_hash))
             with _sdk_collection(work_dir, collection) as collection_obj:
-                expected = _inspect(collection_obj, batch_size, report)
+                expected = _inspect(
+                    collection_obj, batch_size, report, options.skip_warned_records
+                )
                 state = json.loads(
                     (work_dir / "snapshot.json").read_text(encoding="utf-8")
                 )
@@ -322,8 +327,10 @@ def _migrate_chroma_to_sqlite(
                     state["inspection"] = inspection
                     _write_json(work_dir / "snapshot.json", state)
                 if report["warning_record_count"]:
-                    raise MigrationError(
-                        "strict_parse_warning_before_destination_writes"
+                    logger.warning(
+                        f"Skipping {report['warning_skipped_count']} of "
+                        f"{report['source_count']} memory record(s) with parse "
+                        f"warnings ({report['warning_counts']}); details: {report_path}"
                     )
                 with _lock(destination.with_name(destination.name + ".migration.lock")):
                     if destination.exists() and not resume:
@@ -334,10 +341,13 @@ def _migrate_chroma_to_sqlite(
                     _assert_counts(repository.migration_counts(source_hash))
                     repository.check_integrity()
                     logger.info(
-                        f"Applying {report['source_count']} memory records to the SQLite store"
+                        f"Applying {len(expected)} memory records to the SQLite store"
                     )
                     for records in _records(
-                        collection_obj, batch_size, expected
+                        collection_obj,
+                        batch_size,
+                        expected,
+                        options.skip_warned_records,
                     ):
                         inserted, skipped = repository.apply_migration_batch(
                             records,
@@ -348,7 +358,10 @@ def _migrate_chroma_to_sqlite(
                         report["inserted"] += inserted
                         report["skipped"] += skipped
                     for records in _records(
-                        collection_obj, batch_size, expected
+                        collection_obj,
+                        batch_size,
+                        expected,
+                        options.skip_warned_records,
                     ):
                         report["verified"] += repository.verify_migration_batch(
                             records, source_hash
