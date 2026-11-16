@@ -303,10 +303,18 @@ def checks_tool_definition():
             and "detail='evidence' or 'full'" in guidance,
             "Two-stage retrieval guidance missing",
         )
-    require(
-        "memory:<record-id>#<unit-id>" in properties["memory_ids"]["description"],
-        "Citation input support not documented",
-    )
+    for guidance in (
+        description,
+        properties["memory_ids"]["description"],
+        tool.memory_instruction_prompt(),
+    ):
+        require(
+            "canonical Memory ID values" in guidance
+            and "unchanged" in guidance
+            and "Citation values are display/provenance only, not alternate selectors"
+            in guidance,
+            "Canonical-only selector contract not documented",
+        )
 
 
 def checks_handler_contract():
@@ -406,11 +414,27 @@ def checks_handler_contract():
         "Non-array ids accepted",
     )
 
-    for reference in ("mem-1", "memory:mem-1", "memory:mem-1#conversation"):
-        run_handler(service, query="fictional alpha details", memory_ids=[reference])
+    for memory_id in (
+        "mem-1",
+        "memory:alpha",
+        "memory:alpha#note",
+        "session:agent",
+        "session#agent",
+        " memory:alpha#note ",
+        "memory:",
+        "memory:#note",
+        "memory:mem-1#",
+        "memory:mem-1#note#extra",
+        "memory:mem-1##note",
+        "memory:memory:mem-1",
+        "memory: mem-1#note",
+        "memory:mem-1# note",
+        "memory:mem-1 #note",
+    ):
+        run_handler(service, query="fictional alpha details", memory_ids=[memory_id])
         require(
-            service.queries[-1].memory_ids == ("mem-1",),
-            f"Reference not normalized: {reference!r}",
+            service.queries[-1].memory_ids == (memory_id,),
+            f"Opaque canonical ID rewritten: {memory_id!r}",
         )
     run_handler(
         service,
@@ -420,15 +444,26 @@ def checks_handler_contract():
             "mem-1",
             "memory:mem-2",
             "memory:mem-1#conversation",
+            "memory:mem-2#note",
             " mem-3 ",
             "mem-3",
+            "mem-1",
+            " mem-3 ",
             "session_Agent Name",
         ],
     )
     require(
         service.queries[-1].memory_ids
-        == ("mem-2", "mem-1", "mem-3", "session_Agent Name"),
-        "Normalized IDs must be deduplicated in first-seen order",
+        == (
+            "memory:mem-2#note",
+            "mem-1",
+            "memory:mem-2",
+            "memory:mem-1#conversation",
+            " mem-3 ",
+            "mem-3",
+            "session_Agent Name",
+        ),
+        "Only exact duplicate IDs must be removed in first-seen order",
     )
 
     out = run_handler(service, query="fictional missing topic")
@@ -463,47 +498,41 @@ def checks_handler_contract():
 
 
 def checks_invalid_memory_references():
+    from unittest.mock import patch
+
     service = RecordingService({"fictional alpha": (make_hit("mem-1"),)})
     service.llm_service = FictionalLLM([])
-    for reference in (
-        "",
-        " ",
-        "memory:",
-        "memory:#note",
-        "memory:mem-1#",
-        "memory:mem-1#note#extra",
-        "memory:mem-1##note",
-        "mem-1#note",
-        "other:mem-1",
-        "memory:memory:mem-1",
-        "memory: mem-1#note",
-        "memory:mem-1# note",
-        "memory:mem-1 #note",
-        "memory:mem-1#other:note",
-        "memory:mem-1\n#note",
-        "mem-\x001",
-        "mem-\x7f1",
-        None,
-        123,
-        False,
-        {},
-        [],
-    ):
-        for references in ([reference], ["mem-1", reference]):
-            out = run_handler(service, query="fictional alpha", memory_ids=references)
-            require(
-                out.startswith("Memory search failed: memory_ids"),
-                f"Malformed restriction accepted: {references!r}",
+    controls = [chr(code) for code in (*range(32), 127)]
+    invalid_ids = ["", " ", "\u2003", None, 123, False, {}, []]
+    invalid_ids.extend(
+        value
+        for control in controls
+        for value in (f"mem{control}1", f"{control}mem-1", f"mem-1{control}")
+    )
+    with patch.dict(os.environ, {"MEMORY_RERANK_ENABLED": "1"}):
+        for memory_id in invalid_ids:
+            for memory_ids in ([memory_id], ["mem-1", memory_id]):
+                out = run_handler(
+                    service,
+                    query="fictional alpha",
+                    memory_ids=memory_ids,
+                    detail="full",
+                )
+                require(
+                    out.startswith("Memory search failed: memory_ids"),
+                    f"Malformed restriction accepted: {memory_ids!r}",
+                )
+        for memory_ids in (None, "", False, 0, {}, (), "mem-1"):
+            out = run_handler(
+                service, query="fictional alpha", memory_ids=memory_ids, detail="full"
             )
-    for references in ("", False, 0, {}):
-        out = run_handler(service, query="fictional alpha", memory_ids=references)
-        require(
-            out.startswith("Memory search failed: memory_ids must be an array"),
-            f"Malformed ID array accepted: {references!r}",
-        )
-    require(not service.queries, "Malformed references must not broaden lookup")
-    require(not service.documents_calls, "Malformed references must not hydrate")
-    require(not service.llm_service.calls, "Malformed references must not trigger LLM")
+            require(
+                out.startswith("Memory search failed: memory_ids must be an array"),
+                f"Malformed ID array accepted: {memory_ids!r}",
+            )
+    require(not service.queries, "Malformed IDs must not broaden lookup")
+    require(not service.documents_calls, "Malformed IDs must not hydrate")
+    require(not service.llm_service.calls, "Malformed IDs must not trigger LLM")
 
 
 def checks_summary_to_full_hydration():
@@ -524,8 +553,28 @@ def checks_summary_to_full_hydration():
             created_at=timestamp,
             updated_at=timestamp,
         )
+        records = [
+            replace(
+                record,
+                id=memory_id,
+                document=document.replace(
+                    "Fictional drilldown", f"Fictional OpaqueProbe{index}"
+                ),
+            )
+            for index, memory_id in enumerate(
+                (
+                    "mem-1",
+                    "memory:alpha",
+                    "memory:alpha#note",
+                    "session:agent",
+                    "session#agent",
+                    " padded:id#part ",
+                )
+            )
+        ]
         try:
-            service._repository.upsert_record(record)
+            for item in records:
+                service._repository.upsert_record(item)
             for blocked in (
                 replace(record, id="other-agent", agent_name="OtherAgent"),
                 replace(record, id="current-session", session_id=service.session_id),
@@ -534,37 +583,73 @@ def checks_summary_to_full_hydration():
                 replace(record, id="linked", superseded_by=record.id),
             ):
                 service._repository.upsert_record(blocked)
-            summary = run_handler(service, query="fictional alpha", detail="summary")
-            memory_id = next(
-                line.strip().removeprefix("Memory ID: ")
-                for line in summary.splitlines()
-                if line.strip().startswith("Memory ID: ")
-            )
-            citation = next(
-                line.strip().removeprefix("Citation: ")
-                for line in summary.splitlines()
-                if line.strip().startswith("Citation: ")
-            )
-            require(memory_id == record.id, "Summary lost canonical record identity")
-            require("FULL RECORD TAIL" not in summary, "Summary must remain bounded")
-            for reference in (memory_id, f"memory:{memory_id}", citation):
+            for index, item in enumerate(records):
+                summary = run_handler(
+                    service, query=f"OpaqueProbe{index}", detail="summary"
+                )
+                memory_ids = [
+                    line.removeprefix("   Memory ID: ")
+                    for line in summary.splitlines()
+                    if line.startswith("   Memory ID: ")
+                ]
+                citation = next(
+                    line.removeprefix("   Citation: ")
+                    for line in summary.splitlines()
+                    if line.startswith("   Citation: ")
+                )
+                require(memory_ids == [item.id], "Summary rewrote canonical identity")
+                require(
+                    "FULL RECORD TAIL" not in summary, "Summary must remain bounded"
+                )
                 for detail in ("evidence", "full"):
                     out = run_handler(
                         service,
                         query="unrelated followup",
-                        memory_ids=[reference],
+                        memory_ids=memory_ids,
                         detail=detail,
                         from_date="2026-11-01",
                         to_date="2026-11-13",
                     )
                     require(
-                        f"Memory ID: {record.id}\n" in out
-                        and f"Citation: memory:{record.id}#" in out
+                        f"Memory ID: {item.id}\n" in out
+                        and f"Citation: memory:{item.id}#" in out
                         and "untrusted recalled data" in out,
-                        f"Drilldown changed identity or trust warning: {reference!r}",
+                        f"Drilldown changed identity or trust warning: {item.id!r}",
                     )
                     if detail == "full":
-                        require(document in out, "Full record was not hydrated exactly")
+                        require(
+                            item.document in out, "Full record was not hydrated exactly"
+                        )
+                out = run_handler(
+                    service,
+                    query="fictional alpha",
+                    memory_ids=[citation],
+                    detail="full",
+                )
+                require(
+                    out.startswith("No memories found"),
+                    "Display citation must not select its source record",
+                )
+                collision = replace(
+                    item,
+                    id=citation,
+                    document=item.document.replace(
+                        "FULL RECORD TAIL", "LITERAL ID TAIL"
+                    ),
+                )
+                service._repository.upsert_record(collision)
+                out = run_handler(
+                    service,
+                    query="unrelated followup",
+                    memory_ids=[citation],
+                    detail="full",
+                )
+                require(
+                    f"Memory ID: {collision.id}\n" in out
+                    and collision.document in out
+                    and item.document not in out,
+                    "Citation-shaped ID must select only that exact canonical record",
+                )
             for blocked_id in (
                 "other-agent",
                 "current-session",
@@ -576,7 +661,7 @@ def checks_summary_to_full_hydration():
                 out = run_handler(
                     service,
                     query="fictional alpha",
-                    memory_ids=[f"memory:{blocked_id}#note"],
+                    memory_ids=[blocked_id],
                     detail="full",
                 )
                 require(out.startswith("No memories found"), "Eligibility bypassed")
@@ -588,7 +673,7 @@ def checks_summary_to_full_hydration():
                 out = run_handler(
                     service,
                     query="fictional alpha",
-                    memory_ids=[citation],
+                    memory_ids=[records[2].id],
                     detail="full",
                     **dates,
                 )

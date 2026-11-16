@@ -245,33 +245,19 @@ async def _rerank_structured_hits(
 
 
 def _normalize_memory_ids(memory_ids: Any) -> list[str]:
-    """Parse record IDs or citations without dropping invalid restrictions."""
-    if memory_ids is None:
-        return []
+    """Validate opaque canonical IDs and deduplicate without rewriting values."""
     if not isinstance(memory_ids, list):
         raise TypeError("memory_ids must be an array of memory IDs. Try again.")
-    normalized = []
-    for reference in memory_ids:
-        if not isinstance(reference, str):
-            raise TypeError("memory_ids must contain valid memory IDs or citations.")
-        reference = reference.strip()
-        if reference.startswith("memory:"):
-            memory_id, separator, unit_id = reference[len("memory:") :].partition("#")
-            components = [memory_id, unit_id] if separator else [memory_id]
-        else:
-            memory_id = reference
-            components = [memory_id]
-        if any(
-            not component
-            or component != component.strip()
-            or ":" in component
-            or "#" in component
-            or any(ord(char) < 32 or ord(char) == 127 for char in component)
-            for component in components
+    for memory_id in memory_ids:
+        if not isinstance(memory_id, str):
+            raise TypeError("memory_ids must contain valid canonical Memory ID values.")
+        if not memory_id.strip() or any(
+            ord(char) < 32 or ord(char) == 127 for char in memory_id
         ):
-            raise ValueError("memory_ids must contain valid memory IDs or citations.")
-        normalized.append(memory_id)
-    return list(dict.fromkeys(normalized))
+            raise ValueError(
+                "memory_ids must contain valid canonical Memory ID values."
+            )
+    return list(dict.fromkeys(memory_ids))
 
 
 def _format_memory_hits(
@@ -315,7 +301,7 @@ def get_memory_retrieve_tool_definition() -> dict[str, Any]:
 
     tool_description = """Search prior conversation memory using exact identifiers, entities, structured fields, full-text search, and optional bounded query expansion. Describe the information needed and include relevant names, code identifiers, or technical terms. Results are scoped to the current agent across prior sessions.
 Use from_date and to_date to filter memories by time whenever posible, Eg: yesterday: from_date = current_date - 1
-Search with detail='summary' first, then reuse a returned canonical Memory ID in memory_ids with detail='evidence' or 'full' to expand selected records. memory_ids also accepts memory:<record-id> and memory:<record-id>#<unit-id> citations."""
+Search with detail='summary' first, then supply only returned canonical Memory ID values unchanged in memory_ids with detail='evidence' or 'full' to expand selected records. Citation values are display/provenance only, not alternate selectors."""
 
     tool_arguments = {
         "query": {
@@ -340,7 +326,7 @@ Search with detail='summary' first, then reuse a returned canonical Memory ID in
         "memory_ids": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Optional. Restrict results to canonical Memory ID values from earlier results; memory:<record-id> and memory:<record-id>#<unit-id> citations are also accepted.",
+            "description": "Optional. Restrict results to returned canonical Memory ID values, supplied unchanged. IDs are opaque strings; Citation values are display/provenance only, not alternate selectors.",
         },
         "detail": {
             "type": "string",
@@ -387,7 +373,8 @@ def memory_instruction_prompt():
       - Combine related concepts with spaces
       - Use kinds to hint which memory kinds matter most; hinted kinds rank higher and admit more borderline matches
       - Include from_date/to_date filters (YYYY-MM-DD) when the timeframe is known
-      - Search with detail='summary' first; reuse the returned canonical Memory ID in memory_ids with detail='evidence' or 'full' to expand selected records
+      - Search with detail='summary' first; supply only returned canonical Memory ID values unchanged in memory_ids with detail='evidence' or 'full' to expand selected records
+      - Citation values are display/provenance only, not alternate selectors
       - If search returns nothing, rephrase with different vocabulary or split the question; an automatic paraphrase retry already ran once
       - Raise limit (up to 20) only when browsing broadly across sessions, not for a single known fact
       - "No relevant memories found." means nothing met the relevance bar; prefer concluding the memory does not exist over guessing
@@ -414,7 +401,7 @@ def get_memory_retrieve_tool_handler(
         from_date = params.get("from_date", None)
         to_date = params.get("to_date", None)
         kinds = params.get("kinds") or []
-        memory_ids = params.get("memory_ids")
+        memory_ids = params.get("memory_ids", [])
         detail = str(params.get("detail") or "summary").strip().lower()
         limit = params.get("limit")
 
