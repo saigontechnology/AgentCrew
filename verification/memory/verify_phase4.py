@@ -684,6 +684,154 @@ def checks_summary_to_full_hydration():
             service.shutdown()
 
 
+def checks_sqlite_direct_hydration():
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    with TemporaryDirectory(prefix="agentcrew-direct-hydration-") as directory:
+        service = SQLiteMemoryService(Path(directory) / "memory.sqlite3")
+        service.session_id = "fictional-session"
+        timestamp = datetime(2026, 11, 12, 12, tzinfo=UTC).timestamp()
+        target = MemoryRecord(
+            id=" memory:old#target ",
+            agent_name="FictionalAgent",
+            session_id="past-session",
+            document=(
+                "<MEMORY><HEAD>Fictional ArchivedHydrationProbe</HEAD>"
+                "<CONVERSATION_NOTES><NOTE>"
+                + "fictional archived evidence " * 40
+                + "BEYOND CORPUS TAIL</NOTE></CONVERSATION_NOTES></MEMORY>"
+            ),
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        companion = replace(target, id="opaque:'companion#part", document="COMPANION")
+        foreign = replace(
+            target, id="foreign:id#part", agent_name="OtherAgent", document="FOREIGN"
+        )
+        try:
+            for record in (target, companion, foreign):
+                service._repository.upsert_record(record)
+            for index in range(501):
+                service._repository.upsert_record(
+                    replace(
+                        target,
+                        id=f"newer-{index:03}",
+                        document="<MEMORY><HEAD>Fictional newer entry</HEAD></MEMORY>",
+                        created_at=timestamp + index + 1,
+                        updated_at=timestamp + index + 1,
+                    )
+                )
+            corpus = service.get_agent_memory_corpus("FictionalAgent", max_items=500)
+            require(
+                len(corpus) == 500 and target.id not in {row["id"] for row in corpus},
+                "Archived target must be outside the 500-record corpus window",
+            )
+            summary = run_handler(service, query="ArchivedHydrationProbe")
+            require(
+                f"Memory ID: {target.id}\n" in summary,
+                "Archived target must remain eligible for search",
+            )
+            memory_ids = [
+                line.removeprefix("   Memory ID: ")
+                for line in summary.splitlines()
+                if line.startswith("   Memory ID: ")
+            ]
+            out = run_handler(
+                service,
+                query="unrelated followup",
+                memory_ids=memory_ids,
+                detail="full",
+            )
+            require(
+                f"   Record: {target.document}\n" in out,
+                "Full hydration must not depend on the newest 500 corpus records",
+            )
+            requested = [
+                companion.id,
+                "missing",
+                target.id,
+                companion.id,
+                foreign.id,
+                target.id,
+                "' OR 1=1 --",
+            ]
+            statements = []
+            transaction = service._repository._transaction
+
+            @contextmanager
+            def observed_transaction():
+                with transaction() as connection:
+                    require(
+                        connection.in_transaction
+                        and connection.execute("PRAGMA query_only").fetchone()[0] == 1,
+                        "Document expansion must use an active read-only transaction",
+                    )
+                    connection.set_trace_callback(statements.append)
+                    yield connection
+
+            with (
+                patch.object(
+                    service,
+                    "get_agent_memory_corpus",
+                    side_effect=AssertionError("Hydration must not scan the corpus"),
+                ),
+                patch.object(
+                    service._repository,
+                    "_transaction",
+                    side_effect=observed_transaction,
+                ) as transactions,
+            ):
+                documents = service.get_memory_documents(requested, "FictionalAgent")
+                require(
+                    transactions.call_count == 1, "Hydration needs one read transaction"
+                )
+                require(
+                    list(documents.items())
+                    == [
+                        (companion.id, companion.document),
+                        (target.id, target.document),
+                    ],
+                    "Direct hydration lost requested order, exact IDs, documents or agent scope",
+                )
+                require(
+                    len([sql for sql in statements if sql.startswith("SELECT")])
+                    == len(dict.fromkeys(requested)),
+                    "Duplicate IDs must not cause duplicate document queries",
+                )
+                require(
+                    statements[-1] == "COMMIT",
+                    "Document expansion must stay inside one read transaction",
+                )
+                transactions.reset_mock()
+                for ids, agent in (
+                    ([], "FictionalAgent"),
+                    ([target.id], ""),
+                    ([target.id], " \t"),
+                    ([target.id], None),
+                    ([target.id], 123),
+                ):
+                    require(
+                        service.get_memory_documents(ids, agent) == {},
+                        "Empty IDs or unusable agent scope must return no documents",
+                    )
+                require(
+                    transactions.call_count == 0,
+                    "Empty IDs or unusable scope must not open a transaction",
+                )
+                out = run_handler(
+                    service,
+                    query="unrelated followup",
+                    memory_ids=memory_ids,
+                    detail="full",
+                )
+                require(
+                    target.document in out, "Tool hydration fell back to a corpus scan"
+                )
+        finally:
+            service.shutdown()
+
+
 def checks_legacy_adapter():
     legacy = LegacyService("recalled fictional legacy text")
     result = legacy.search_structured(
@@ -1115,6 +1263,7 @@ def main():
     checks_handler_contract()
     checks_invalid_memory_references()
     checks_summary_to_full_hydration()
+    checks_sqlite_direct_hydration()
     checks_legacy_adapter()
     checks_expansion()
     checks_rerank()

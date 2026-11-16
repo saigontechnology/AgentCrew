@@ -950,6 +950,28 @@ class SQLiteMemoryRepository:
             ).fetchone()
             return self._record(row) if row else None
 
+    def get_memory_documents(
+        self, memory_ids: list[str], agent_name: str
+    ) -> dict[str, str]:
+        """Expand already-eligible IDs in requested order within one read snapshot.
+
+        Agent scope is retained; search owns lifecycle, session and date eligibility.
+        This performs no search or ranking and never rewrites canonical IDs.
+        """
+        if not memory_ids or not isinstance(agent_name, str) or not agent_name.strip():
+            return {}
+        requested = dict.fromkeys(memory_ids)
+        documents: dict[str, str] = {}
+        with self._transaction() as connection:
+            for memory_id in requested:
+                row = connection.execute(
+                    "SELECT document FROM memory_record WHERE id=? AND agent_name=?",
+                    (memory_id, agent_name),
+                ).fetchone()
+                if row is not None:
+                    documents[memory_id] = row["document"]
+        return documents
+
     def check_integrity(self) -> None:
         """Check SQLite, foreign keys and the real FTS index, not just FTS row counts."""
         with self._transaction(write=True) as connection:

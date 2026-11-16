@@ -209,6 +209,14 @@ class SQLiteMemoryService(BaseMemoryService):
     def search_structured(self, query: MemoryQuery) -> MemorySearchResult:
         return self._coordinator.search(query)
 
+    def get_memory_documents(
+        self,
+        memory_ids: list[str],
+        agent_name: str = "None",
+    ) -> dict[str, str]:
+        """Expand already-selected hits directly; search remains the eligibility gate."""
+        return self._repository.get_memory_documents(memory_ids, agent_name)
+
     def list_memory_headers(
         self,
         from_date: int | None = None,
