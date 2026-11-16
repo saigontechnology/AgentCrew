@@ -55,6 +55,8 @@ SQLITE_CHAIN = (
     "AgentCrew/modules/memory/record_parser.py",
     "AgentCrew/modules/memory/types.py",
     "AgentCrew/modules/memory/base_service.py",
+    "AgentCrew/modules/memory/migrate_chroma_memory_to_sqlite.py",
+    "AgentCrew/modules/memory/migrate_cli.py",
 )
 MEMORY_XML = (
     "<MEMORY><HEAD>Fictional alpha headline</HEAD><FLOW>"
@@ -150,6 +152,16 @@ def checks_selection_wiring() -> None:
     )
     require(
         "ensure_sqlite_store(" in source, "setup must run the store decision matrix"
+    )
+    import tomllib
+
+    scripts = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["scripts"]
+    require(
+        scripts.get("agentcrew-migrate-memory")
+        == "AgentCrew.modules.memory.migrate_cli:main",
+        "pyproject must declare the agentcrew-migrate-memory entry point",
     )
     for relative in (
         "AgentCrew/modules/memory/chroma_service.py",
@@ -271,8 +283,16 @@ def checks_fail_fast_without_chromadb() -> None:
                     "Fail-fast must explain the migration need",
                 )
                 require(
-                    "migrate_chroma_memory_to_sqlite" in text,
-                    "Fail-fast must mention the manual migration fallback",
+                    "agentcrew-migrate-memory" in text,
+                    "Fail-fast must mention the standalone migration command",
+                )
+                require(
+                    "uvx" in text,
+                    "Fail-fast must mention the uvx invocation",
+                )
+                require(
+                    "--discard-old-memory" in text,
+                    "Fail-fast must mention the discard skip path",
                 )
                 require(
                     "memory_engine is 'chromadb'" not in text,

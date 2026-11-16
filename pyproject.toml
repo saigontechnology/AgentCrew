@@ -126,6 +126,7 @@ build-backend = "setuptools.build_meta"
 
 [project.scripts]
 agentcrew = "AgentCrew.main:cli_prod"
+agentcrew-migrate-memory = "AgentCrew.modules.memory.migrate_cli:main"
 
 [tool.setuptools]
 include-package-data = true

@@ -3,15 +3,16 @@
 The engine is chosen from ``global_settings.memory_engine`` in config.json
 (``sqlite`` default, ``chromadb`` optional). When the SQLite engine starts
 without an existing store but with Chroma data on disk, the verified migrator
-semantics from ``scripts/migrate_chroma_memory_to_sqlite.py`` run once:
-offline source copy, idempotent batching with resume, canonical-checksum
-verification, report and lock files. No network and no embedding calls
-happen; the Chroma source directory stays untouched.
+semantics from ``AgentCrew.modules.memory.migrate_chroma_memory_to_sqlite``
+run once: offline source copy, idempotent batching with resume,
+canonical-checksum verification, report and lock files. No network and no
+embedding calls happen; the Chroma source directory stays untouched.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import os
 import shutil
@@ -71,6 +72,29 @@ def chromadb_install_hint() -> str:
         "Install the Chroma extra with 'uv sync --extra chromadb' or "
         "'pip install \"agentcrew-ai[chromadb]\"', or set global_settings.memory_engine "
         "to 'sqlite' in config.json."
+    )
+
+
+def migration_command_hint(chroma_source: Path, db_path: Path, work_dir: Path) -> str:
+    """Copy-paste uvx commands for the standalone migration CLI.
+
+    The first line migrates the old Chroma memory into the SQLite store; the
+    second line is the skip path that deletes the old Chroma memory. Paths are
+    absolute so the commands work from any directory, and the package version
+    is pinned when the installed distribution reports it.
+    """
+    try:
+        version = importlib.metadata.version("agentcrew-ai")
+    except importlib.metadata.PackageNotFoundError:
+        version = None
+    spec = f"agentcrew-ai[chromadb]=={version}" if version else "agentcrew-ai[chromadb]"
+    source = chroma_source.resolve()
+    return (
+        f"uvx --from '{spec}' agentcrew-migrate-memory "
+        f"--source {source} --destination {db_path.resolve()} "
+        f"--work-dir {work_dir.resolve()}\n"
+        f"uvx --from '{spec}' agentcrew-migrate-memory --discard-old-memory "
+        f"--source {source} --work-dir {work_dir.resolve()}"
     )
 
 
@@ -149,8 +173,11 @@ def _production_snapshot(
     source: Path, work_dir: Path, collection: str, resume: bool
 ) -> tuple[str, dict[str, str]]:
     """Offline copy of the Chroma source with frozen-backup verification."""
-    from scripts.migrate_chroma_memory_to_sqlite import MigrationError, _write_json
-    from verification.memory.capture_baseline import fingerprint
+    from .migrate_chroma_memory_to_sqlite import (
+        MigrationError,
+        _write_json,
+        fingerprint,
+    )
 
     backup = work_dir / "source-backup"
     working = work_dir / "chroma-copy"
@@ -196,7 +223,7 @@ def _production_snapshot(
     ) as connection:
         if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise MigrationError("chroma_copy_integrity_failed")
-    from scripts.migrate_chroma_memory_to_sqlite import checksum, json_text
+    from .migrate_chroma_memory_to_sqlite import checksum, json_text
 
     source_hash = checksum(
         json_text(
@@ -218,10 +245,12 @@ def _migrate_chroma_to_sqlite(
     work_dir: Path,
     collection: str,
     resume: bool,
+    batch_size: int = MIGRATION_BATCH_SIZE,
 ) -> dict[str, Any]:
     """Run the verified migrator semantics against production paths."""
     from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
-    from scripts.migrate_chroma_memory_to_sqlite import (
+
+    from .migrate_chroma_memory_to_sqlite import (
         MigrationError,
         MigrationOptions,
         _assert_counts,
@@ -244,7 +273,7 @@ def _migrate_chroma_to_sqlite(
         destination=destination,
         work_dir=work_dir,
         collection=collection,
-        batch_size=MIGRATION_BATCH_SIZE,
+        batch_size=batch_size,
         report=report_path,
         apply=True,
         resume=resume,
@@ -271,7 +300,7 @@ def _migrate_chroma_to_sqlite(
                 report["destination_opened"] = True
                 _assert_counts(repository.migration_counts(source_hash))
             with _sdk_collection(work_dir, collection) as collection_obj:
-                expected = _inspect(collection_obj, MIGRATION_BATCH_SIZE, report)
+                expected = _inspect(collection_obj, batch_size, report)
                 state = json.loads(
                     (work_dir / "snapshot.json").read_text(encoding="utf-8")
                 )
@@ -308,7 +337,7 @@ def _migrate_chroma_to_sqlite(
                         f"Applying {report['source_count']} memory records to the SQLite store"
                     )
                     for records in _records(
-                        collection_obj, MIGRATION_BATCH_SIZE, expected
+                        collection_obj, batch_size, expected
                     ):
                         inserted, skipped = repository.apply_migration_batch(
                             records,
@@ -319,7 +348,7 @@ def _migrate_chroma_to_sqlite(
                         report["inserted"] += inserted
                         report["skipped"] += skipped
                     for records in _records(
-                        collection_obj, MIGRATION_BATCH_SIZE, expected
+                        collection_obj, batch_size, expected
                     ):
                         report["verified"] += repository.verify_migration_batch(
                             records, source_hash
@@ -336,7 +365,7 @@ def _migrate_chroma_to_sqlite(
                     ]
             if _production_fingerprint(source) != source_files:
                 raise MigrationError("source_changed_during_migration")
-            from verification.memory.capture_baseline import fingerprint
+            from .migrate_chroma_memory_to_sqlite import fingerprint
 
             if fingerprint(work_dir / "source-backup") != source_files:
                 raise MigrationError("frozen_backup_changed")
@@ -388,11 +417,19 @@ def ensure_sqlite_store(
             )
         logger.info("No SQLite memory store found; starting with an empty store")
         return db_path
+    commands = migration_command_hint(chroma_source, db_path, work_dir).splitlines()
     require_chromadb(
-        f"Chroma memory data found at '{chroma_source}'; the automatic migration to SQLite "
-        "needs the chromadb package to read it. Install with 'uv sync --extra chromadb' or "
-        "'pip install \"agentcrew-ai[chromadb]\"', or migrate manually with "
-        "scripts/migrate_chroma_memory_to_sqlite.py, then start again."
+        f"Chroma memory data found at '{chroma_source}'; the automatic migration to "
+        "SQLite needs the chromadb package to read it. Choose one:\n"
+        "1) Migrate now (recommended):\n"
+        f"   {commands[0]}\n"
+        "2) Skip and start fresh (deletes the old Chroma memory):\n"
+        f"   {commands[1]}\n"
+        "   or manually delete the Chroma files (chroma.sqlite3 and the collection "
+        "folders) in the source directory.\n"
+        "3) Alternatively, install the chromadb extra with 'uv sync --extra chromadb' "
+        "or 'pip install \"agentcrew-ai[chromadb]\"' for the automatic in-app "
+        "migration, then start again."
     )
     logger.info(
         f"Chroma memory data found at '{chroma_source}'; running the automatic migration to SQLite"
