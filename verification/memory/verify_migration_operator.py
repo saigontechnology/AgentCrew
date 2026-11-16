@@ -17,6 +17,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from AgentCrew.modules.memory import migrate_chroma_memory_to_sqlite as core_migration
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
 from scripts import migrate_chroma_memory_to_sqlite as migration
 from scripts import migrate_memory as operator
@@ -94,7 +95,7 @@ def interrupt_helper(specification):
     try:
         with (
             patch.object(SQLiteMemoryRepository, "apply_migration_batch", interrupt),
-            patch.object(migration, "_sdk_collection", copy_only_sdk),
+            patch.object(core_migration, "_sdk_collection", copy_only_sdk),
         ):
             operator.operate(
                 operator.OperatorOptions(
