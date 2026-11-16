@@ -229,6 +229,9 @@ def checks_m500_cwd_capture():
         def __init__(self):
             self.upserts = []
 
+        def get(self, **kwargs):
+            return {"ids": [], "metadatas": []}
+
         def upsert(self, ids, documents, embeddings, metadatas):
             self.upserts.append({"ids": ids, "metadatas": metadatas})
 
@@ -630,7 +633,9 @@ def checks_m507_consolidation_candidates():
             header="Fictional alpha headline",
             document=MEMORY_XML,
         )
-        candidates = persistence.consolidation_candidates(operation_data, built)
+        candidates = persistence.consolidation_candidates(
+            operation_data, built, "sess-cur_FictionalAgent"
+        )
         ids = [candidate["id"] for candidate in candidates]
         require("rel-1" in ids, "Related memory not found via entity/FTS candidates")
         require("unr-1" not in ids, "Unrelated memory admitted as candidate")
@@ -649,7 +654,9 @@ def checks_m507_consolidation_candidates():
                 "FictionalAgent",
                 RELATED_XML,
             )
-        bounded = persistence.consolidation_candidates(operation_data, built)
+        bounded = persistence.consolidation_candidates(
+            operation_data, built, "sess-cur_FictionalAgent"
+        )
         require(len(bounded) <= 5, "Bounded candidate limit exceeded")
 
         with repository._transaction() as connection:

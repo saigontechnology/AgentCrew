@@ -675,3 +675,46 @@ The implementation validation used the existing provisioned interpreter, offline
 ## Fresh lexical holdout
 
 `scripts/benchmark_memory_retrieval.py fresh-holdout` is the only entry point for a new lexical exam. It refuses the consumed `benchmark-holdout-ledger`, a combined calibration/holdout case file, an unset review, and any SQLite semantic cutoff. Query vectors must already be cached as reviewed voyage-4 rows. The runner does not generate embeddings. It opens the SQLite and Chroma backends before reserving the fresh ledger, and publishes that reservation with one directory rename. User acceptance to proceed is not a witnessed semantic-non-overlap audit. A blocked acceptance report is not production approval.
+
+### Reconstruction Slice 4: lossless consolidation lifecycle
+
+This reconstruction slice is separate from the historical migration phases above.
+It does not authorize migration cutover, ranking changes, calibration, holdouts,
+or Slice 5 grounded-answer/provenance synthesis.
+
+Consolidation preserves source documents and their derived evidence. `MERGE` and
+`DISCARD` supersede sources; `KEEP` does not change them. Active targets retain
+versioned direct-source provenance in scalar metadata (`provenance_version=1`,
+`consolidated_from_json` as sorted canonical JSON). Multi-level links are retained,
+not flattened. Normal search, ID selection, headers, evolution, and corpus paths
+hide superseded sources; internal family access is not a public retrieval tool.
+
+A resumed superseded session writes to an active continuation, never over its
+preserved source ID. The chosen opaque ID is passed explicitly through the worker.
+Ordinary target writes keep provenance; retention uses the active root's last
+update, not source creation dates. SQLite schema version stays 1 with no new table.
+
+**Deletion semantics:** forgetting any family member, including an old source,
+physically deletes the entire same-agent consolidation family. Topic and session
+removal follow the same rule; loaded worker contexts are cleared after deletion.
+Snapshots and family membership are bounded at 10,000 records. Invalid, cyclic,
+ambiguous, cross-agent or oversized families cause explicit deletion to fail
+without a partial mutation. Retention conservatively retains invalid families.
+Chroma collection-wide cleanup/session selection and its single delete set are
+also capped at 10,000; oversized selection is retained/refused, not partially erased.
+
+SQLite consolidation and family deletion are transactional. Chroma publishes the
+target before marking sources; partial failures may leave sources visible, but
+published provenance still connects them for complete family deletion. Chroma
+has no transaction and cannot provide SQLite's concurrent-writer atomicity.
+
+Fictional offline checks (no private corpus, network, embeddings or holdouts):
+
+```bash
+uv run --no-sync python verification/memory/verify_lossless_consolidation.py
+uv run --no-sync python -m pytest verification/memory/verify_lossless_consolidation.py -o 'python_functions=checks_*' -q
+```
+
+The verifier compares freeze state with the pre-slice commit, rather than
+refreshing any historical pins. The existing full Phase 4 freeze gate remains
+blocked; a no-additional-drift result is not a green full Phase 4 gate.

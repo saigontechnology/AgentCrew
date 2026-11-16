@@ -21,5 +21,6 @@
 !verify_fresh_holdout.py
 !verify_phase4.py
 !verify_phase5.py
+!verify_lossless_consolidation.py
 !verify_phase6.py
 !verify_tool_evidence.py

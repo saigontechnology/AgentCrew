@@ -9,10 +9,11 @@ import sqlite3
 import struct
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, time
 from pathlib import Path
 
+from . import provenance
 from .record_parser import checksum, derive_memory_units, normalize_text
 from .types import (
     DOCUMENT_VECTOR_DIMENSIONS,
@@ -1249,3 +1250,248 @@ class SQLiteMemoryRepository:
                 (session_id,),
             ).fetchone()
             return self._record(row) if row else None
+
+    @staticmethod
+    def _family_entry(row) -> provenance.FamilyRecord:
+        try:
+            metadata = json.loads(row["metadata_json"])
+            if not isinstance(metadata, dict):
+                raise TypeError
+        except (ValueError, TypeError) as error:
+            raise provenance.MemoryFamilyError(
+                "Invalid canonical family metadata"
+            ) from error
+        metadata = {
+            **metadata,
+            "status": row["status"],
+            "superseded_by": row["superseded_by"],
+        }
+        return provenance.FamilyRecord(
+            row["id"], row["agent_name"], row["session_id"], metadata, row["updated_at"]
+        )
+
+    def _family_snapshot(self, connection, agent_name: str) -> provenance.FamilyIndex:
+        rows = connection.execute(
+            "SELECT id,agent_name,session_id,status,superseded_by,metadata_json,updated_at "
+            "FROM memory_record WHERE agent_name=? ORDER BY id LIMIT ?",
+            (agent_name, provenance.MAX_MEMORY_FAMILY_SCAN_RECORDS + 1),
+        ).fetchall()
+        return provenance.FamilyIndex(
+            [self._family_entry(row) for row in rows], agent_name
+        )
+
+    def persist_turn(self, record: MemoryRecord, operation_id: str) -> str:
+        """Resolve and publish one exact-session identity atomically, preserving sources."""
+        with self._transaction(write=True) as connection:
+            rows = connection.execute(
+                "SELECT * FROM memory_record WHERE agent_name=? AND session_id=? LIMIT ?",
+                (
+                    record.agent_name,
+                    record.session_id,
+                    provenance.MAX_MEMORY_FAMILY_SCAN_RECORDS + 1,
+                ),
+            ).fetchall()
+            if len(rows) > provenance.MAX_MEMORY_FAMILY_SCAN_RECORDS:
+                raise provenance.MemoryFamilyError(
+                    "Persistence identity scan limit exceeded"
+                )
+            memory_id = provenance.choose_identity(
+                record.id,
+                operation_id,
+                record.agent_name,
+                record.session_id,
+                [self._family_entry(row) for row in rows],
+            )
+            existing_row = connection.execute(
+                "SELECT * FROM memory_record WHERE id=?", (memory_id,)
+            ).fetchone()
+            if existing_row is not None:
+                existing = self._record(existing_row)
+                if (
+                    existing.agent_name != record.agent_name
+                    or existing.session_id != record.session_id
+                    or existing.status != "active"
+                    or existing.superseded_by is not None
+                ):
+                    raise provenance.MemoryFamilyError("Persistence identity collision")
+                provenance.source_ids(existing.metadata)
+                record = replace(
+                    record,
+                    created_at=existing.created_at,
+                    metadata=provenance.merge_metadata(
+                        existing.metadata, record.metadata
+                    ),
+                )
+            record = replace(record, id=memory_id)
+            parsed, values = self._prepare_record(record)
+            self._write_record(connection, record, parsed, values)
+            return memory_id
+
+    def apply_consolidation(
+        self,
+        memory_id: str,
+        agent_name: str,
+        merged_document: str | None,
+        ids_to_supersede: list[str],
+    ) -> None:
+        """Atomically publish the active target and supersede, never rewrite, sources."""
+        if not ids_to_supersede:
+            return
+        with self._transaction(write=True) as connection:
+            index = self._family_snapshot(connection, agent_name)
+            metadata = provenance.consolidation_metadata(
+                index, memory_id, ids_to_supersede
+            )
+            row = connection.execute(
+                "SELECT * FROM memory_record WHERE id=? AND agent_name=?",
+                (memory_id, agent_name),
+            ).fetchone()
+            target = self._record(row)
+            target = replace(
+                target,
+                document=merged_document
+                if merged_document is not None
+                else target.document,
+                metadata={
+                    key: value
+                    for key, value in metadata.items()
+                    if key not in {"status", "superseded_by"}
+                },
+                updated_at=datetime.now(UTC).timestamp(),
+            )
+            parsed, values = self._prepare_record(target)
+            self._write_record(connection, target, parsed, values)
+            connection.executemany(
+                "UPDATE memory_record SET status='superseded',superseded_by=? WHERE id=? AND agent_name=?",
+                ((memory_id, key, agent_name) for key in ids_to_supersede),
+            )
+
+    def resolve_memory_families(
+        self, memory_ids: list[str], agent_name: str
+    ) -> tuple[str, ...]:
+        """Internal bounded family access, never a search eligibility bypass."""
+        with self._transaction() as connection:
+            return self._family_snapshot(connection, agent_name).resolve(memory_ids)
+
+    def delete_memory_families(
+        self,
+        *,
+        agent_name: str | None = None,
+        memory_ids: list[str] | None = None,
+        session_id: str | None = None,
+        fts_expression: str | None = None,
+        from_ts: float | None = None,
+        to_ts: float | None = None,
+        cutoff_ts: float | None = None,
+    ) -> int:
+        """Resolve every selected family before one transactional physical deletion."""
+        from loguru import logger
+
+        with self._transaction(write=True) as connection:
+            if agent_name is not None:
+                agents = [agent_name]
+            elif session_id is not None:
+                agents = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT DISTINCT agent_name FROM memory_record WHERE session_id=?",
+                        (session_id,),
+                    )
+                ]
+            else:
+                agents = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT DISTINCT agent_name FROM memory_record"
+                    )
+                ]
+
+            resolved: list[tuple[str, str]] = []
+            for agent in agents:
+                if memory_ids is not None and not any(
+                    connection.execute(
+                        "SELECT 1 FROM memory_record WHERE id=? AND agent_name=?",
+                        (key, agent),
+                    ).fetchone()
+                    for key in dict.fromkeys(memory_ids)
+                ):
+                    continue
+                try:
+                    index = self._family_snapshot(connection, agent)
+                except provenance.MemoryFamilyError:
+                    if cutoff_ts is None:
+                        raise
+                    logger.warning(
+                        "Retention skipped invalid or oversized agent snapshot"
+                    )
+                    continue
+                if cutoff_ts is not None:
+                    ids = index.expired(cutoff_ts)
+                else:
+                    if memory_ids is not None:
+                        seeds = memory_ids
+                    elif session_id is not None:
+                        seeds = [
+                            key
+                            for key, row in index.records.items()
+                            if row.session == session_id
+                        ]
+                    elif fts_expression and fts_expression.strip():
+                        clauses = ["m.agent_name=?"]
+                        values: list = [fts_expression, agent]
+                        if from_ts is not None:
+                            clauses.append("m.created_at>=?")
+                            values.append(from_ts)
+                        if to_ts is not None:
+                            clauses.append("m.created_at<=?")
+                            values.append(to_ts)
+                        seeds = [
+                            row[0]
+                            for row in connection.execute(
+                                "SELECT DISTINCT m.id FROM memory_record m JOIN retrieval_unit u ON u.memory_id=m.id "
+                                "JOIN memory_fts ON memory_fts.rowid=u.rowid WHERE memory_fts MATCH ? AND "
+                                + " AND ".join(clauses),
+                                values,
+                            )
+                        ]
+                    else:
+                        seeds = []
+                    ids = index.resolve(seeds)
+                resolved.extend((agent, key) for key in ids)
+            connection.executemany(
+                "DELETE FROM memory_record WHERE agent_name=? AND id=?", resolved
+            )
+            return len(resolved)
+
+    def mark_active_roots_evolved(
+        self, memory_ids: list[str], agent_name: str, evolved_at: str
+    ) -> int:
+        """Production evolution never stamps a preserved source."""
+        with self._transaction(write=True) as connection:
+            index = self._family_snapshot(connection, agent_name)
+            count = 0
+            for key in dict.fromkeys(memory_ids):
+                if key not in index.records:
+                    continue
+                try:
+                    index.require_roots([key])
+                except provenance.MemoryFamilyError:
+                    continue
+                count += connection.execute(
+                    "UPDATE memory_record SET evolved_at=? WHERE id=? AND agent_name=? AND status='active' AND superseded_by IS NULL",
+                    (evolved_at, key, agent_name),
+                ).rowcount
+            return count
+
+    def active_session_record(
+        self, session_id: str, agent_name: str
+    ) -> MemoryRecord | None:
+        """Production context loading never crosses agents or selects a source."""
+        with self._transaction() as connection:
+            rows = connection.execute(
+                "SELECT * FROM memory_record WHERE session_id=? AND agent_name=? AND status='active' AND superseded_by IS NULL LIMIT 2",
+                (session_id, agent_name),
+            ).fetchall()
+            if len(rows) > 1:
+                raise provenance.MemoryFamilyError("Multiple active session contexts")
+            return self._record(rows[0]) if rows else None

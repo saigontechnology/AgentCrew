@@ -17,6 +17,7 @@ from loguru import logger
 
 from AgentCrew.modules.prompts.constants import CONSOLIDATION_PROMPT
 
+from . import provenance
 from .memory_record_builder import (
     BuiltMemoryRecord,
     MemoryRecordBuilder,
@@ -77,22 +78,121 @@ class ChromaMemoryPersistence:
             metadata["cwd"] = cwd
         return metadata
 
-    def persist(self, operation_data: dict[str, Any], built: BuiltMemoryRecord):
+    def family_snapshot(self, agent_name: str) -> provenance.FamilyIndex:
+        fetched = self._collection.get(
+            where={"agent": agent_name},
+            include=["metadatas"],
+            limit=provenance.MAX_MEMORY_FAMILY_SCAN_RECORDS + 1,
+        )
+        if len(fetched["ids"]) != len(fetched["metadatas"]):
+            raise provenance.MemoryFamilyError("Incomplete family snapshot")
+        rows = []
+        for key, metadata in zip(fetched["ids"], fetched["metadatas"]):
+            metadata = metadata or {}
+            rows.append(
+                provenance.FamilyRecord(
+                    key,
+                    metadata.get("agent"),
+                    metadata.get("session_id"),
+                    metadata,
+                    provenance.timestamp(
+                        metadata.get(
+                            "updated_at",
+                            metadata.get("date", metadata.get("timestamp")),
+                        )
+                    ),
+                )
+            )
+        return provenance.FamilyIndex(rows, agent_name)
+
+    def persist(self, operation_data: dict[str, Any], built: BuiltMemoryRecord) -> str:
+        agent, session = operation_data["agent_name"], operation_data["session_id"]
+        fetched = self._collection.get(
+            where={"$and": [{"agent": agent}, {"session_id": session}]},
+            include=["metadatas"],
+            limit=provenance.MAX_MEMORY_FAMILY_SCAN_RECORDS + 1,
+        )
+        if len(fetched["ids"]) > provenance.MAX_MEMORY_FAMILY_SCAN_RECORDS or len(
+            fetched["ids"]
+        ) != len(fetched["metadatas"]):
+            raise provenance.MemoryFamilyError(
+                "Persistence identity scan limit or shape invalid"
+            )
+        records = [
+            provenance.FamilyRecord(
+                key,
+                (meta or {}).get("agent"),
+                (meta or {}).get("session_id"),
+                meta or {},
+            )
+            for key, meta in zip(fetched["ids"], fetched["metadatas"])
+        ]
+        native = f"{session}_{agent}"
+        memory_id = provenance.choose_identity(
+            native, operation_data["operation_id"], agent, session, records
+        )
+        collision = self._collection.get(ids=[memory_id], include=["metadatas"])
+        if collision["ids"]:
+            meta = collision["metadatas"][0] or {}
+            if (
+                meta.get("agent") != agent
+                or meta.get("session_id") != session
+                or not provenance.is_active(meta)
+            ):
+                raise provenance.MemoryFamilyError("Persistence identity collision")
+        existing = next((row for row in records if row.id == memory_id), None)
+        metadata = provenance.merge_metadata(
+            existing.metadata if existing else {}, self._metadata(operation_data, built)
+        )
+        metadata.update(status="active", updated_at=built.timestamp)
         conversation_embedding = self._embedding_function([built.document])
+        self._collection.upsert(
+            ids=[memory_id],
+            documents=[built.document],
+            embeddings=conversation_embedding,
+            metadatas=[metadata],
+        )
         self.context_embedding.append(conversation_embedding)
         if len(self.context_embedding) > 5:
             self.context_embedding.pop(0)
-        self._collection.upsert(
-            ids=[f"{operation_data['session_id']}_{operation_data['agent_name']}"],
-            documents=[built.document],
-            embeddings=conversation_embedding,
-            metadatas=[self._metadata(operation_data, built)],
-        )
+        return memory_id
+
+    def delete_families(
+        self, seeds: dict[str, list[str]], cutoff: float | None = None
+    ) -> int:
+        resolved = set()
+        for agent, ids in seeds.items():
+            if cutoff is None and (
+                not ids
+                or not self._collection.get(
+                    ids=list(dict.fromkeys(ids)),
+                    where={"agent": agent},
+                    include=["metadatas"],
+                )["ids"]
+            ):
+                continue
+            try:
+                index = self.family_snapshot(agent)
+                found = (
+                    index.expired(cutoff) if cutoff is not None else index.resolve(ids)
+                )
+            except provenance.MemoryFamilyError:
+                if cutoff is None:
+                    raise
+                logger.warning("Retention skipped invalid or oversized agent snapshot")
+                continue
+            resolved.update(found)
+            if len(resolved) > provenance.MAX_MEMORY_FAMILY_MEMBERS:
+                raise provenance.MemoryFamilyError("Memory deletion set limit exceeded")
+        if resolved:
+            self._collection.delete(ids=sorted(resolved))
+        return len(resolved)
 
     def consolidation_candidates(
         self,
         operation_data: dict[str, Any],
         built: BuiltMemoryRecord,
+        memory_id: str,
     ) -> list[dict[str, Any]]:
         current_session_id = operation_data["session_id"]
         agent_name = operation_data["agent_name"]
@@ -111,10 +211,20 @@ class ChromaMemoryPersistence:
         if not results["ids"] or not results["ids"][0]:
             return []
         candidates = []
+        index = self.family_snapshot(agent_name)
         for i in range(len(results["ids"][0])):
             dist = results["distances"][0][i] if results["distances"] else 99
             if dist <= self._relevant_threashold:
                 metadata = results["metadatas"][0][i] or {}
+                if (
+                    not provenance.is_active(metadata)
+                    or results["ids"][0][i] == memory_id
+                ):
+                    continue
+                try:
+                    index.require_roots([results["ids"][0][i]])
+                except provenance.MemoryFamilyError:
+                    continue
                 candidates.append(
                     {
                         "id": results["ids"][0][i],
@@ -128,22 +238,36 @@ class ChromaMemoryPersistence:
         self,
         operation_data: dict[str, Any],
         built: BuiltMemoryRecord,
+        memory_id: str,
         merged_document: str | None,
-        ids_to_delete: list[str],
+        ids_to_supersede: list[str],
     ):
-        if merged_document is not None:
-            if self._embedding_function is None:
-                logger.error("Cannot find embedding_function")
-                return
-            merged_embedding = self._embedding_function([merged_document])
+        if not ids_to_supersede:
+            return
+        index = self.family_snapshot(operation_data["agent_name"])
+        metadata = provenance.consolidation_metadata(index, memory_id, ids_to_supersede)
+        metadata.update(status="active", updated_at=datetime.now(UTC).timestamp())
+        if merged_document is None:
+            self._collection.update(ids=[memory_id], metadatas=[metadata])
+        else:
+            embedding = self._embedding_function([merged_document])
             self._collection.upsert(
-                ids=[f"{operation_data['session_id']}_{operation_data['agent_name']}"],
+                ids=[memory_id],
                 documents=[merged_document],
-                embeddings=merged_embedding,
-                metadatas=[self._metadata(operation_data, built)],
+                embeddings=embedding,
+                metadatas=[metadata],
             )
-        if ids_to_delete:
-            self._collection.delete(ids=ids_to_delete)
+        for source in ids_to_supersede:
+            self._collection.update(
+                ids=[source],
+                metadatas=[
+                    {
+                        **index.records[source].metadata,
+                        "status": "superseded",
+                        "superseded_by": memory_id,
+                    }
+                ],
+            )
 
 
 class MemoryWorker:
@@ -264,15 +388,20 @@ class MemoryWorker:
             )
             if built is None:
                 return
+            memory_id = self._persistence.persist(operation_data, built)
+            if not isinstance(memory_id, str) or not memory_id.strip():
+                raise provenance.MemoryFamilyError(
+                    "Persistence returned no canonical identity"
+                )
             self.current_conversation_context[session_id] = built.document
-
-            self._persistence.persist(operation_data, built)
 
             logger.debug(f"Stored conversation: {operation_data['operation_id']}")
 
             count = self._store_count_by_session.get(session_id, 0)
             if count % CONSOLIDATION_EVERY_N == 0:
-                await self._consolidate_related_memories(operation_data, built)
+                await self._consolidate_related_memories(
+                    operation_data, built, memory_id
+                )
             self._store_count_by_session[session_id] = count + 1
 
         except Exception as e:
@@ -284,45 +413,37 @@ class MemoryWorker:
         self,
         operation_data: dict[str, Any],
         built: BuiltMemoryRecord,
+        memory_id: str,
     ):
         try:
             candidates = self._persistence.consolidation_candidates(
-                operation_data, built
+                operation_data, built, memory_id
             )
             if not candidates:
                 return
 
-            current_headline = built.header or "<no headline>"
-            agent_name = operation_data["agent_name"]
-            candidate_labels = []
-            for candidate in candidates:
-                label = candidate.get("header") or "<no headline>"
-                candidate_labels.append(f'"{label}" ({candidate["id"]})')
-            logger.info(
-                f"Consolidation candidates for {agent_name}: "
-                f'current="{current_headline}" -> comparing against '
-                f"{len(candidates)} memories: [{', '.join(candidate_labels)}]"
-            )
+            logger.info("Consolidation comparing {} candidates", len(candidates))
 
-            merged_document, ids_to_delete = await self._merge_with_candidates(
-                operation_data, built, candidates
+            merged_document, ids_to_supersede = await self._merge_with_candidates(
+                operation_data, built, candidates, memory_id
             )
-            if merged_document is not None or ids_to_delete:
+            if merged_document is not None or ids_to_supersede:
                 self._persistence.apply_consolidation(
-                    operation_data, built, merged_document, ids_to_delete
+                    operation_data, built, memory_id, merged_document, ids_to_supersede
                 )
             if merged_document is not None:
                 session_id = operation_data.get("session_id", "")
                 if session_id:
                     self.current_conversation_context[session_id] = merged_document
-        except Exception as e:
-            logger.warning(f"Consolidation failed (non-fatal): {e}")
+        except Exception:
+            logger.warning("Consolidation failed (non-fatal)")
 
     async def _merge_with_candidates(
         self,
         operation_data: dict[str, Any],
         built: BuiltMemoryRecord,
         candidates: list[dict[str, Any]],
+        memory_id: str,
     ) -> tuple[str | None, list[str]]:
         if not self.llm_service:
             return None, []
@@ -348,15 +469,15 @@ class MemoryWorker:
                 if "<CONSOLIDATION_RESULT>" not in result_text:
                     raise ValueError("Missing <CONSOLIDATION_RESULT> block")
                 break
-            except Exception as e:
-                logger.warning(f"Consolidation LLM attempt {attempt + 1}/3 failed: {e}")
+            except Exception:
+                logger.warning("Consolidation LLM attempt {}/3 failed", attempt + 1)
                 continue
 
         if not result_text or "<CONSOLIDATION_RESULT>" not in result_text:
             return None, []
 
         return self._parse_consolidation_result(
-            result_text, candidates, operation_data["agent_name"]
+            result_text, candidates, operation_data["agent_name"], memory_id
         )
 
     def _parse_consolidation_result(
@@ -364,73 +485,73 @@ class MemoryWorker:
         result_text: str,
         candidates: list[dict[str, Any]],
         agent_name: str,
+        memory_id: str,
     ) -> tuple[str | None, list[str]]:
         try:
             parsed = parse_xml_block(result_text, "CONSOLIDATION_RESULT")
-            if parsed is None:
-                logger.warning("Failed to parse <CONSOLIDATION_RESULT> XML block")
-                return None, []
-
-            actions = parsed["CONSOLIDATION_RESULT"].get("ACTION", [])
-            if isinstance(actions, dict):
-                actions = [actions]
-
-            merged_memories = parsed["CONSOLIDATION_RESULT"].get("MERGED_MEMORY", [])
-            if isinstance(merged_memories, dict):
-                merged_memories = [merged_memories]
-
-            ids_to_delete = []
-            merge_count = 0
-            discard_count = 0
-            keep_count = 0
-            final_merged_doc = None
-            candidate_headers = {
-                candidate["id"]: candidate.get("header") or "<no headline>"
-                for candidate in candidates
-            }
-            decision_labels = []
-
+            if not parsed or not isinstance(parsed.get("CONSOLIDATION_RESULT"), dict):
+                raise ValueError("Malformed consolidation result")
+            result = parsed["CONSOLIDATION_RESULT"]
+            if set(result) - {"ACTION", "MERGED_MEMORY"}:
+                raise ValueError("Unexpected consolidation result fields")
+            actions = result.get("ACTION") or []
+            actions = [actions] if isinstance(actions, dict) else actions
+            merged = result.get("MERGED_MEMORY") or []
+            merged = [merged] if isinstance(merged, dict) else merged
+            valid = {candidate["id"] for candidate in candidates}
+            if (
+                len(valid) != len(candidates)
+                or memory_id in valid
+                or not isinstance(actions, list)
+                or not isinstance(merged, list)
+            ):
+                raise ValueError("Invalid consolidation candidates or actions")
+            seen = set()
+            supersede = []
+            final_document = None
+            merge_ids = set()
+            documents = {}
+            for item in merged:
+                if (
+                    not isinstance(item, dict)
+                    or set(item) != {"@for", "MEMORY"}
+                    or item.get("@for") not in valid
+                    or item.get("@for") in documents
+                ):
+                    raise ValueError("Invalid merged memory identity")
+                memory = item.get("MEMORY")
+                if (
+                    not isinstance(memory, dict)
+                    or not isinstance(memory.get("HEAD"), str)
+                    or not memory["HEAD"].strip()
+                ):
+                    raise ValueError("Invalid merged memory document")
+                documents[item["@for"]] = xmltodict.unparse(
+                    {"MEMORY": memory}, pretty=True, full_document=False
+                )
             for action in actions:
-                action_id = action.get("@id", "")
-                action_type = action.get("@type", "KEEP").upper()
-
-                if action_type == "DISCARD":
-                    ids_to_delete.append(action_id)
-                    discard_count += 1
-                    decision_labels.append(
-                        f'DISCARD "{candidate_headers.get(action_id, action_id)}"'
-                    )
-                elif action_type == "MERGE":
-                    ids_to_delete.append(action_id)
-                    merge_count += 1
-                    decision_labels.append(
-                        f'MERGE "{candidate_headers.get(action_id, action_id)}"'
-                    )
-                    for merged in merged_memories:
-                        if merged.get("@for") == action_id:
-                            final_merged_doc = xmltodict.unparse(
-                                {"MEMORY": merged["MEMORY"]},
-                                pretty=True,
-                                full_document=False,
-                            )
-                            break
-                else:
-                    keep_count += 1
-                    decision_labels.append(
-                        f'KEEP "{candidate_headers.get(action_id, action_id)}"'
-                    )
-
-            if decision_labels:
-                logger.info(f"Consolidation decisions: {', '.join(decision_labels)}")
-
-            if final_merged_doc is not None:
-                logger.info(f"Consolidated memory preview: {final_merged_doc[:300]}...")
-
-            logger.info(
-                f"Consolidation for {agent_name}: "
-                f"merged {merge_count}, discarded {discard_count}, kept {keep_count}"
-            )
-            return final_merged_doc, ids_to_delete
-        except Exception as e:
-            logger.warning(f"Failed to apply consolidation (non-fatal): {e}")
+                if not isinstance(action, dict):
+                    raise TypeError("Malformed consolidation action")
+                if set(action) != {"@id", "@type"}:
+                    raise ValueError("Unexpected consolidation action fields")
+                key, kind = action.get("@id"), action.get("@type")
+                if (
+                    key not in valid
+                    or key in seen
+                    or kind not in {"KEEP", "MERGE", "DISCARD"}
+                ):
+                    raise ValueError("Invalid or conflicting consolidation action")
+                seen.add(key)
+                if kind == "MERGE":
+                    if key not in documents:
+                        raise ValueError("Merge action has no valid document")
+                    merge_ids.add(key)
+                    final_document = documents[key]
+                if kind != "KEEP":
+                    supersede.append(key)
+            if set(documents) != merge_ids:
+                raise ValueError("Unmatched merged memory document")
+            return final_document, supersede
+        except Exception:
+            logger.warning("Invalid consolidation result skipped without mutation")
             return None, []

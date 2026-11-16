@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import os
 import uuid
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from . import provenance
 from .base_service import BaseMemoryService
 from .memory_record_builder import BuiltMemoryRecord, build_consolidation_query
 from .memory_worker import MemoryWorker
@@ -54,7 +54,7 @@ class SQLiteMemoryPersistence:
     def _record_id(self, operation_data: dict[str, Any]) -> str:
         return f"{operation_data['session_id']}_{operation_data['agent_name']}"
 
-    def persist(self, operation_data: dict[str, Any], built: BuiltMemoryRecord):
+    def persist(self, operation_data: dict[str, Any], built: BuiltMemoryRecord) -> str:
         memory_record = MemoryRecord(
             id=self._record_id(operation_data),
             agent_name=operation_data["agent_name"],
@@ -69,17 +69,20 @@ class SQLiteMemoryPersistence:
             cwd=operation_data.get("cwd"),
             header=built.header,
         )
-        self._repository.upsert_record(memory_record)
+        return self._repository.persist_turn(
+            memory_record, operation_data["operation_id"]
+        )
 
     def consolidation_candidates(
         self,
         operation_data: dict[str, Any],
         built: BuiltMemoryRecord,
+        memory_id: str,
     ) -> list[dict[str, Any]]:
         query_text = build_consolidation_query(built.memory_data)
         expression = fts_or_expression(query_text)
         candidates = self._repository.consolidation_candidates(
-            self._record_id(operation_data),
+            memory_id,
             operation_data["agent_name"],
             expression,
             CONSOLIDATION_CANDIDATE_LIMIT,
@@ -104,23 +107,13 @@ class SQLiteMemoryPersistence:
         self,
         operation_data: dict[str, Any],
         built: BuiltMemoryRecord,
+        memory_id: str,
         merged_document: str | None,
-        ids_to_delete: list[str],
+        ids_to_supersede: list[str],
     ):
-        agent_name = operation_data["agent_name"]
-        if merged_document is not None:
-            memory_id = self._record_id(operation_data)
-            existing = self._repository.get_record(memory_id, agent_name)
-            if existing is not None:
-                self._repository.upsert_record(
-                    replace(
-                        existing,
-                        document=merged_document,
-                        updated_at=datetime.now(UTC).timestamp(),
-                    )
-                )
-        if ids_to_delete:
-            self._repository.delete_records(ids_to_delete, agent_name)
+        self._repository.apply_consolidation(
+            memory_id, operation_data["agent_name"], merged_document, ids_to_supersede
+        )
 
 
 class SQLiteMemoryService(BaseMemoryService):
@@ -169,7 +162,7 @@ class SQLiteMemoryService(BaseMemoryService):
         self._worker.current_conversation_context = {}
 
     def load_conversation_context(self, session_id: str, agent_name: str = "None"):
-        record = self._repository.latest_session_record(session_id)
+        record = self._repository.active_session_record(session_id, agent_name)
         if record is not None:
             self._worker.current_conversation_context[session_id] = record.document
 
@@ -230,7 +223,9 @@ class SQLiteMemoryService(BaseMemoryService):
 
     def cleanup_old_memories(self, months: int = 1) -> int:
         cutoff = datetime.now(UTC) - timedelta(days=30 * months)
-        removed = self._repository.delete_records_older_than(cutoff.timestamp())
+        removed = self._repository.delete_memory_families(cutoff_ts=cutoff.timestamp())
+        if removed:
+            self.clear_conversation_context()
         logger.info(
             f"SQLite retention removed {removed} memories older than {months} month(s)"
         )
@@ -271,7 +266,7 @@ class SQLiteMemoryService(BaseMemoryService):
         memory_ids: list[str],
         agent_name: str,
     ) -> int:
-        marked = self._repository.mark_records_evolved(
+        marked = self._repository.mark_active_roots_evolved(
             memory_ids, agent_name, datetime.now(UTC).isoformat()
         )
         logger.info(
@@ -287,12 +282,11 @@ class SQLiteMemoryService(BaseMemoryService):
         agent_name: str = "None",
     ) -> dict[str, Any]:
         try:
-            removed = self._repository.delete_records_matching(
-                fts_or_expression(topic),
-                agent_name,
+            removed = self._repository.delete_memory_families(
+                fts_expression=fts_or_expression(topic),
+                agent_name=agent_name,
                 from_ts=from_date,
                 to_ts=to_date,
-                limit=FORGET_TOPIC_MATCH_LIMIT,
             )
             if removed == 0:
                 return {
@@ -300,6 +294,7 @@ class SQLiteMemoryService(BaseMemoryService):
                     "message": f"No memories found related to '{topic}'",
                     "count": 0,
                 }
+            self.clear_conversation_context()
             return {
                 "success": True,
                 "message": f"Successfully removed {removed} memory chunks related to '{topic}'",
@@ -313,7 +308,18 @@ class SQLiteMemoryService(BaseMemoryService):
             }
 
     def forget_ids(self, ids: list[str], agent_name: str = "None") -> dict[str, Any]:
-        removed = self._repository.delete_records(list(ids), agent_name)
+        try:
+            removed = self._repository.delete_memory_families(
+                memory_ids=list(ids), agent_name=agent_name
+            )
+        except provenance.MemoryFamilyError:
+            return {
+                "success": False,
+                "message": "Unsafe memory family deletion refused",
+                "count": 0,
+            }
+        if removed:
+            self.clear_conversation_context()
         return {
             "success": True,
             "message": f"Successfully removed {removed} memory chunks from {agent_name}",
@@ -322,9 +328,11 @@ class SQLiteMemoryService(BaseMemoryService):
 
     def delete_by_conversation_id(self, conversation_id: str) -> dict[str, Any]:
         try:
-            removed = self._repository.delete_records_by_session(conversation_id)
-            if conversation_id in self._worker.current_conversation_context:
-                del self._worker.current_conversation_context[conversation_id]
+            removed = self._repository.delete_memory_families(
+                session_id=conversation_id
+            )
+            if removed:
+                self.clear_conversation_context()
             if removed == 0:
                 return {
                     "success": True,

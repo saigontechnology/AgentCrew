@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from . import provenance
 from .base_service import BaseMemoryService
 from .memory_worker import ChromaMemoryPersistence, MemoryWorker
 from .types import (
@@ -161,14 +162,19 @@ class ChromaMemoryService(BaseMemoryService):
     def load_conversation_context(self, session_id: str, agent_name: str = "None"):
         collection = self._initialize_collection()
         latest_memory = collection.get(
-            where={
-                "session_id": session_id,
-            },
+            where={"$and": [{"session_id": session_id}, {"agent": agent_name}]}
         )
-        if latest_memory["documents"]:
-            self._worker.current_conversation_context[session_id] = latest_memory[
-                "documents"
-            ][-1]
+        active = [
+            document
+            for document, metadata in zip(
+                latest_memory["documents"], latest_memory["metadatas"]
+            )
+            if provenance.is_active(metadata or {})
+        ]
+        if len(active) > 1:
+            raise provenance.MemoryFamilyError("Multiple active session contexts")
+        if active:
+            self._worker.current_conversation_context[session_id] = active[0]
 
     def list_memory_headers(
         self,
@@ -200,7 +206,7 @@ class ChromaMemoryService(BaseMemoryService):
         headers = []
         if list_memory and list_memory["metadatas"]:
             for metadata in list_memory["metadatas"]:
-                if metadata.get("header", None):
+                if provenance.is_active(metadata) and metadata.get("header", None):
                     timestamp = float(metadata.get("date", 0))  # type: ignore
                     headers.append(
                         f"{metadata.get('header')} ({datetime.fromtimestamp(timestamp, tz=UTC).strftime('%Y-%m-%d %H:%M')})"
@@ -246,6 +252,8 @@ class ChromaMemoryService(BaseMemoryService):
         for i, (id, doc, metadata) in enumerate(
             zip(results["ids"][0], results["documents"][0], results["metadatas"][0])  # type:ignore
         ):
+            if not provenance.is_active(metadata or {}):
+                continue
             conversation_chunks.append(
                 {
                     "id": id,
@@ -340,6 +348,7 @@ class ChromaMemoryService(BaseMemoryService):
                 )
                 for memory_id in requested
                 if memory_id in documents
+                and provenance.is_active(metadatas.get(memory_id) or {})
             ]
             return MemorySearchResult(tuple(hits[: query.limit]))
 
@@ -355,7 +364,11 @@ class ChromaMemoryService(BaseMemoryService):
             results["metadatas"][0],
             results["distances"][0],
         ):
-            if distance is None or distance > self.relevant_threshold:
+            if (
+                not provenance.is_active(metadata or {})
+                or distance is None
+                or distance > self.relevant_threshold
+            ):
                 continue
             hits.append(
                 self._structured_hit(memory_id, document, metadata or {}, distance)
@@ -443,29 +456,41 @@ class ChromaMemoryService(BaseMemoryService):
             for memory_id, document in zip(fetched["ids"], fetched["documents"])
         }
 
+    def _selection_agents(
+        self, conversation_id: str | None = None
+    ) -> dict[str, list[str]]:
+        records = self._initialize_collection().get(
+            where={"session_id": conversation_id}
+            if conversation_id is not None
+            else None,
+            include=["metadatas"],
+            limit=provenance.MAX_MEMORY_FAMILY_SCAN_RECORDS + 1,
+        )
+        if len(records["ids"]) > provenance.MAX_MEMORY_FAMILY_SCAN_RECORDS or len(
+            records["ids"]
+        ) != len(records["metadatas"]):
+            raise provenance.MemoryFamilyError(
+                "Memory lifecycle selection limit or shape invalid"
+            )
+        selected = {}
+        for key, metadata in zip(records["ids"], records["metadatas"]):
+            agent = (metadata or {}).get("agent")
+            if not isinstance(agent, str) or not agent.strip():
+                raise provenance.MemoryFamilyError("Missing lifecycle agent scope")
+            selected.setdefault(agent, []).append(key)
+        return selected
+
     def cleanup_old_memories(self, months: int = 1) -> int:
-        collection = self._initialize_collection()
-        cutoff_date = datetime.now(UTC) - timedelta(days=30 * months)
-
-        all_memories = collection.get()
-
-        ids_to_remove = []
-        if all_memories["metadatas"]:
-            for i, metadata in enumerate(all_memories["metadatas"]):
-                timestamp_str = str(
-                    metadata.get("timestamp", datetime.now(UTC).isoformat())
-                )
-                try:
-                    timestamp_dt = datetime.fromisoformat(timestamp_str)
-                    if timestamp_dt < cutoff_date:
-                        ids_to_remove.append(all_memories["ids"][i])
-                except ValueError:
-                    ids_to_remove.append(all_memories["ids"][i])
-
-        if ids_to_remove:
-            collection.delete(ids=ids_to_remove)
-
-        return len(ids_to_remove)
+        try:
+            selected = self._selection_agents()
+            cutoff = (datetime.now(UTC) - timedelta(days=30 * months)).timestamp()
+            removed = self._worker._persistence.delete_families(selected, cutoff=cutoff)
+            if removed:
+                self.clear_conversation_context()
+            return removed
+        except provenance.MemoryFamilyError:
+            logger.warning("Retention skipped unsafe memory lifecycle selection")
+            return 0
 
     def get_agent_memory_corpus(
         self,
@@ -497,7 +522,7 @@ class ChromaMemoryService(BaseMemoryService):
         corpus: list[dict[str, Any]] = []
         for item_id, document, metadata in zip(ids, documents, metadatas):
             metadata = metadata or {}
-            if metadata.get("evolved_at"):
+            if not provenance.is_active(metadata) or metadata.get("evolved_at"):
                 continue
             sort_key = metadata.get("date") or metadata.get("timestamp") or ""
             corpus.append(
@@ -536,10 +561,15 @@ class ChromaMemoryService(BaseMemoryService):
             include=["documents", "metadatas", "embeddings"],
         )
 
+        index = self._worker._persistence.family_snapshot(agent_name)
         for i, mid in enumerate(existing["ids"]):
             if existing["metadatas"]:
                 meta = dict(existing["metadatas"][i] or {})
-                if meta.get("agent") != agent_name:
+                if meta.get("agent") != agent_name or not provenance.is_active(meta):
+                    continue
+                try:
+                    index.require_roots([mid])
+                except provenance.MemoryFamilyError:
                     continue
                 meta["evolved_at"] = timestamp
                 collection.update(
@@ -590,13 +620,16 @@ class ChromaMemoryService(BaseMemoryService):
 
             ids_to_remove = results["ids"][0]
 
-            if ids_to_remove:
-                collection.delete(ids=ids_to_remove)
+            removed = self._worker._persistence.delete_families(
+                {agent_name: ids_to_remove}
+            )
+            if removed:
+                self.clear_conversation_context()
 
             return {
                 "success": True,
-                "message": f"Successfully removed {len(ids_to_remove)} memory chunks related to '{topic}'",
-                "count": len(ids_to_remove),
+                "message": f"Successfully removed {removed} memory chunks related to '{topic}'",
+                "count": removed,
             }
 
         except Exception as e:
@@ -607,53 +640,40 @@ class ChromaMemoryService(BaseMemoryService):
             }
 
     def forget_ids(self, ids: list[str], agent_name: str = "None") -> dict[str, Any]:
-        collection = self._initialize_collection()
-        collection.delete(ids=ids, where={"agent": agent_name})
-
-        return {
-            "success": True,
-            "message": f"Successfully removed {len(ids)} memory chunks from {agent_name}",
-            "count": len(ids),
-        }
+        self._initialize_collection()
+        try:
+            removed = self._worker._persistence.delete_families({agent_name: ids})
+            if removed:
+                self.clear_conversation_context()
+            return {
+                "success": True,
+                "message": f"Successfully removed {removed} memory chunks",
+                "count": removed,
+            }
+        except provenance.MemoryFamilyError:
+            return {
+                "success": False,
+                "message": "Unsafe memory family deletion refused",
+                "count": 0,
+            }
 
     def delete_by_conversation_id(self, conversation_id: str) -> dict[str, Any]:
         try:
-            collection = self._initialize_collection()
-
-            results = collection.get(
-                where={"session_id": conversation_id},
-                include=["metadatas"],
+            removed = self._worker._persistence.delete_families(
+                self._selection_agents(conversation_id)
             )
-
-            if not results["ids"]:
-                return {
-                    "success": True,
-                    "message": f"No memories found for conversation {conversation_id}",
-                    "count": 0,
-                }
-
-            ids_to_remove = results["ids"]
-            collection.delete(ids=ids_to_remove)
-
-            if conversation_id in self._worker.current_conversation_context:
-                del self._worker.current_conversation_context[conversation_id]
-
-            logger.info(
-                f"Deleted {len(ids_to_remove)} memories for conversation {conversation_id}"
-            )
-
+            if removed:
+                self.clear_conversation_context()
             return {
                 "success": True,
-                "message": f"Successfully removed {len(ids_to_remove)} memories for conversation {conversation_id}",
-                "count": len(ids_to_remove),
+                "message": f"Successfully removed {removed} memories for conversation",
+                "count": removed,
             }
-        except Exception as e:
-            logger.error(
-                f"Error deleting memories for conversation {conversation_id}: {e}"
-            )
+        except Exception:
+            logger.warning("Memory conversation family deletion failed")
             return {
                 "success": False,
-                "message": f"Error deleting memories: {e!s}",
+                "message": "Memory family deletion failed",
                 "count": 0,
             }
 
