@@ -10,8 +10,10 @@ import hashlib
 import inspect
 import os
 import sys
-from datetime import date
+from dataclasses import replace
+from datetime import UTC, date, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -28,11 +30,13 @@ from AgentCrew.modules.memory.base_service import BaseMemoryService
 from AgentCrew.modules.memory.benchmark import POLICY
 from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
+from AgentCrew.modules.memory.sqlite_service import SQLiteMemoryService
 from AgentCrew.modules.memory.types import (
     CandidateSource,
     ConfidenceBand,
     MatchReason,
     MemoryQuery,
+    MemoryRecord,
     MemorySearchHit,
     MemorySearchResult,
     SQLiteSemanticPolicy,
@@ -292,13 +296,27 @@ def checks_tool_definition():
     require(
         "scoped to the current agent" in description, "Agent scoping wording missing"
     )
+    for guidance in (description, tool.memory_instruction_prompt()):
+        require(
+            "detail='summary'" in guidance
+            and "canonical Memory ID" in guidance
+            and "detail='evidence' or 'full'" in guidance,
+            "Two-stage retrieval guidance missing",
+        )
+    require(
+        "memory:<record-id>#<unit-id>" in properties["memory_ids"]["description"],
+        "Citation input support not documented",
+    )
 
 
 def checks_handler_contract():
     service = RecordingService({"fictional alpha details": (make_hit("mem-1"),)})
     out = run_handler(service, query="fictional alpha details")
     require(
-        "untrusted recalled data" in out and "memory:mem-1#conversation" in out,
+        "untrusted recalled data" in out
+        and "1. [memory:mem-1#conversation]" in out
+        and "Memory ID: mem-1\n" in out
+        and "Citation: memory:mem-1#conversation\n" in out,
         "Summary format broke",
     )
     require("Matched because" not in out, "Summary must stay compact")
@@ -388,12 +406,29 @@ def checks_handler_contract():
         "Non-array ids accepted",
     )
 
-    out = run_handler(
-        service, query="fictional alpha details", memory_ids=["mem-1", "mem-1"]
+    for reference in ("mem-1", "memory:mem-1", "memory:mem-1#conversation"):
+        run_handler(service, query="fictional alpha details", memory_ids=[reference])
+        require(
+            service.queries[-1].memory_ids == ("mem-1",),
+            f"Reference not normalized: {reference!r}",
+        )
+    run_handler(
+        service,
+        query="fictional alpha details",
+        memory_ids=[
+            "memory:mem-2#note",
+            "mem-1",
+            "memory:mem-2",
+            "memory:mem-1#conversation",
+            " mem-3 ",
+            "mem-3",
+            "session_Agent Name",
+        ],
     )
     require(
-        service.queries[-1].memory_ids == ("mem-1", "mem-1"),
-        "ID restriction not passed through",
+        service.queries[-1].memory_ids
+        == ("mem-2", "mem-1", "mem-3", "session_Agent Name"),
+        "Normalized IDs must be deduplicated in first-seen order",
     )
 
     out = run_handler(service, query="fictional missing topic")
@@ -425,6 +460,143 @@ def checks_handler_contract():
         pass
     else:
         raise AssertionError("Short query did not raise")
+
+
+def checks_invalid_memory_references():
+    service = RecordingService({"fictional alpha": (make_hit("mem-1"),)})
+    service.llm_service = FictionalLLM([])
+    for reference in (
+        "",
+        " ",
+        "memory:",
+        "memory:#note",
+        "memory:mem-1#",
+        "memory:mem-1#note#extra",
+        "memory:mem-1##note",
+        "mem-1#note",
+        "other:mem-1",
+        "memory:memory:mem-1",
+        "memory: mem-1#note",
+        "memory:mem-1# note",
+        "memory:mem-1 #note",
+        "memory:mem-1#other:note",
+        "memory:mem-1\n#note",
+        "mem-\x001",
+        "mem-\x7f1",
+        None,
+        123,
+        False,
+        {},
+        [],
+    ):
+        for references in ([reference], ["mem-1", reference]):
+            out = run_handler(service, query="fictional alpha", memory_ids=references)
+            require(
+                out.startswith("Memory search failed: memory_ids"),
+                f"Malformed restriction accepted: {references!r}",
+            )
+    for references in ("", False, 0, {}):
+        out = run_handler(service, query="fictional alpha", memory_ids=references)
+        require(
+            out.startswith("Memory search failed: memory_ids must be an array"),
+            f"Malformed ID array accepted: {references!r}",
+        )
+    require(not service.queries, "Malformed references must not broaden lookup")
+    require(not service.documents_calls, "Malformed references must not hydrate")
+    require(not service.llm_service.calls, "Malformed references must not trigger LLM")
+
+
+def checks_summary_to_full_hydration():
+    with TemporaryDirectory(prefix="agentcrew-drilldown-") as directory:
+        service = SQLiteMemoryService(Path(directory) / "memory.sqlite3")
+        service.session_id = "fictional-session"
+        timestamp = datetime(2026, 11, 12, 12, tzinfo=UTC).timestamp()
+        document = (
+            "<MEMORY><HEAD>Fictional drilldown</HEAD><CONVERSATION_NOTES><NOTE>"
+            + "fictional alpha detail " * 40
+            + "FULL RECORD TAIL</NOTE></CONVERSATION_NOTES></MEMORY>"
+        )
+        record = MemoryRecord(
+            id="mem-1",
+            agent_name="FictionalAgent",
+            session_id="past-session",
+            document=document,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        try:
+            service._repository.upsert_record(record)
+            for blocked in (
+                replace(record, id="other-agent", agent_name="OtherAgent"),
+                replace(record, id="current-session", session_id=service.session_id),
+                replace(record, id="deleted", status="deleted"),
+                replace(record, id="superseded", status="superseded"),
+                replace(record, id="linked", superseded_by=record.id),
+            ):
+                service._repository.upsert_record(blocked)
+            summary = run_handler(service, query="fictional alpha", detail="summary")
+            memory_id = next(
+                line.strip().removeprefix("Memory ID: ")
+                for line in summary.splitlines()
+                if line.strip().startswith("Memory ID: ")
+            )
+            citation = next(
+                line.strip().removeprefix("Citation: ")
+                for line in summary.splitlines()
+                if line.strip().startswith("Citation: ")
+            )
+            require(memory_id == record.id, "Summary lost canonical record identity")
+            require("FULL RECORD TAIL" not in summary, "Summary must remain bounded")
+            for reference in (memory_id, f"memory:{memory_id}", citation):
+                for detail in ("evidence", "full"):
+                    out = run_handler(
+                        service,
+                        query="unrelated followup",
+                        memory_ids=[reference],
+                        detail=detail,
+                        from_date="2026-11-01",
+                        to_date="2026-11-13",
+                    )
+                    require(
+                        f"Memory ID: {record.id}\n" in out
+                        and f"Citation: memory:{record.id}#" in out
+                        and "untrusted recalled data" in out,
+                        f"Drilldown changed identity or trust warning: {reference!r}",
+                    )
+                    if detail == "full":
+                        require(document in out, "Full record was not hydrated exactly")
+            for blocked_id in (
+                "other-agent",
+                "current-session",
+                "deleted",
+                "superseded",
+                "linked",
+                "unknown",
+            ):
+                out = run_handler(
+                    service,
+                    query="fictional alpha",
+                    memory_ids=[f"memory:{blocked_id}#note"],
+                    detail="full",
+                )
+                require(out.startswith("No memories found"), "Eligibility bypassed")
+                require(document not in out, "Ineligible document hydrated")
+            for dates in (
+                {"from_date": "2026-11-13"},
+                {"to_date": "2026-11-11"},
+            ):
+                out = run_handler(
+                    service,
+                    query="fictional alpha",
+                    memory_ids=[citation],
+                    detail="full",
+                    **dates,
+                )
+                require(
+                    out.startswith("No memories found"), "Date eligibility bypassed"
+                )
+        finally:
+            service.shutdown()
 
 
 def checks_legacy_adapter():
@@ -479,7 +651,7 @@ def checks_expansion():
         == ["fictional alpha", "fictional beta phrase", "fictional gamma phrase"],
         "Expanded phrases not searched in order",
     )
-    require(out.count("memory:mem-b#") == 1, "Expansion dedupe broke")
+    require(out.count("Citation: memory:mem-b#") == 1, "Expansion dedupe broke")
 
     llm = FictionalLLM(['{"queries": ["safe"], "scope": "override"}'])
     service = RecordingService({"fictional alpha": ()})
@@ -856,13 +1028,15 @@ def main():
     checks_policy_freeze()
     checks_tool_definition()
     checks_handler_contract()
+    checks_invalid_memory_references()
+    checks_summary_to_full_hydration()
     checks_legacy_adapter()
     checks_expansion()
     checks_rerank()
     checks_chroma_adapter()
     checks_registration_surfaces()
     print(
-        "PASS Phase 4 frozen-policy, expanded-tool, fail-open, expansion, rerank, detail, adapter and registration checks"
+        "PASS Phase 4 frozen-policy, expanded-tool, fail-open, expansion, rerank, drilldown, detail, adapter and registration checks"
     )
     print(
         "Fictional data only; no network, embeddings, private memory or sealed Phase 3 artifacts were used."
