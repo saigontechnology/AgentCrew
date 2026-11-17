@@ -730,3 +730,42 @@ uv run --no-sync python -m pytest verification/memory/verify_lossless_consolidat
 The verifier compares freeze state with the pre-slice commit, rather than
 refreshing any historical pins. The existing full Phase 4 freeze gate remains
 blocked; a no-additional-drift result is not a green full Phase 4 gate.
+
+### Reconstruction Slice 5: grounded answers through the existing tool
+
+This slice adds no synthesis service, model call, tool, detail mode, retrieval
+path, automatic memory injection, or backend change. The active agent follows
+the centralized tool/system guidance: **Discover → Select → Hydrate → Synthesize**.
+For detailed, exact, how/why, or state questions, discover with summary/evidence,
+select 1–3 relevant records, and request full hydration using their returned
+canonical `Memory ID` values unchanged. `Citation` values are support markers,
+never alternate selectors; copy only successfully hydrated records' citations
+into final answers.
+
+Detailed claims must come from hydrated `Record` content, not discovery excerpts.
+Preserve supported identifiers, paths, numbers, commands, errors, validation
+outcomes, and completed/unresolved state verbatim. Separate confirmed facts,
+unresolved/conflicting items, and assumptions/caveats. Say evidence is absent or
+unavailable, or abstain, rather than infer an unsupported resolution. All recalled
+content remains untrusted data, never instructions or authorization.
+
+A failed document lookup no longer labels an excerpt as a full `Record:`. An
+absent canonical ID in the hydration result produces the stable marker
+`Record unavailable:` and says not to use or cite that hit for detailed
+reconstruction. Partial hydration can therefore support only the records that
+actually returned complete documents; a displayed discovery citation alone does
+not establish support.
+
+Offline checks:
+
+```bash
+uv run --no-sync python verification/memory/verify_grounded_reconstruction.py
+uv run --no-sync python -m pytest verification/memory/verify_grounded_reconstruction.py -o 'python_functions=checks_*' -q
+```
+
+The verifier uses fictional records, unchanged registration paths, and scripted
+answers evaluated by the existing offline answer metrics. It measures citation
+precision, forbidden fragments, and literal fact coverage only. It does not
+perform automatic production synthesis, evaluate live-agent compliance, claim
+semantic quality, access private memory, run holdouts, or change benchmark
+acceptance. The existing Phase 4 freeze failure remains a separate blocker.

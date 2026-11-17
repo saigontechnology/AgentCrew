@@ -355,9 +355,7 @@ def _snapshot(options: MigrationOptions) -> tuple[str, dict]:
     else:
         if options.resume or backup.exists() or working.exists():
             raise MigrationError("unsafe_snapshot_destination")
-        copied = copy_stable_source(
-            options.source, backup, options.private_roots
-        )
+        copied = copy_stable_source(options.source, backup, options.private_roots)
         if copied != source_files or fingerprint(options.source) != source_files:
             raise MigrationError("source_unstable_during_copy")
         shutil.copytree(backup, working)

@@ -95,7 +95,7 @@ def _migrate(
     except ImportError:
         print(
             "The chromadb package is needed to read the old Chroma memory. Install "
-            "it (for example: pip install \"agentcrew-ai[chromadb]\") or re-run "
+            'it (for example: pip install "agentcrew-ai[chromadb]") or re-run '
             "this command from an environment that includes the chromadb extra.",
             file=sys.stderr,
         )
@@ -194,9 +194,7 @@ def main() -> int:
     try:
         if args.discard_old_memory:
             return _discard_old_memory(source, work_dir, destination, args.yes)
-        return _migrate(
-            source, destination, work_dir, args.collection, args.batch_size
-        )
+        return _migrate(source, destination, work_dir, args.collection, args.batch_size)
     except KeyboardInterrupt:
         print(
             "Interrupted; re-run the same command to resume the migration.",
