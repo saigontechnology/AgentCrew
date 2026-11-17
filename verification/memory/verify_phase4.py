@@ -1087,10 +1087,11 @@ class FictionalCollection:
         self.observed.append(("get", kwargs))
         ids = [
             memory_id
-            for memory_id in kwargs.get("ids", [])
+            for memory_id in kwargs.get("ids", self.rows)
             if memory_id in self.rows
             and self._passes(self.rows[memory_id][1], kwargs.get("where"))
         ]
+        ids = ids[: kwargs.get("limit", len(ids))]
         include = kwargs.get("include", [])
         out = {"ids": ids}
         if "documents" in include:

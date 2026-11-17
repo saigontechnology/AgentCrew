@@ -235,14 +235,20 @@ class ChromaMemoryService(BaseMemoryService):
         if to_date:
             and_conditions.append({"date": {"$lte": to_date}})
 
-        results = collection.query(
-            query_texts=[keywords],
-            n_results=10,
-            where={"$and": and_conditions}
+        where = (
+            {"$and": and_conditions}
             if len(and_conditions) >= 2
             else and_conditions[0]
             if and_conditions
-            else None,
+            else None
+        )
+        budget = provenance.chroma_query_budget(collection, where, 10)
+        if not budget:
+            return "No relevant memories found."
+        results = collection.query(
+            query_texts=[keywords],
+            n_results=budget,
+            where=where,
         )
 
         if not results["documents"] or not results["documents"][0]:
@@ -352,9 +358,15 @@ class ChromaMemoryService(BaseMemoryService):
             ]
             return MemorySearchResult(tuple(hits[: query.limit]))
 
+        desired_active_results = max(10, min(query.limit, 20))
+        budget = provenance.chroma_query_budget(
+            collection, where, desired_active_results
+        )
+        if not budget:
+            return MemorySearchResult(())
         results = collection.query(
             query_texts=[query.query],
-            n_results=max(10, min(query.limit, 20)),
+            n_results=budget,
             where=where,
         )
         hits = []
@@ -373,6 +385,7 @@ class ChromaMemoryService(BaseMemoryService):
             hits.append(
                 self._structured_hit(memory_id, document, metadata or {}, distance)
             )
+        hits = hits[:desired_active_results]
         kind_hints = {kind.lower() for kind in query.kinds}
         if kind_hints:
             hits.sort(key=lambda hit: hit.kind.lower() not in kind_hints)

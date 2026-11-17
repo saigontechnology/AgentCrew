@@ -287,6 +287,7 @@ class SQLiteMemoryService(BaseMemoryService):
                 agent_name=agent_name,
                 from_ts=from_date,
                 to_ts=to_date,
+                topic_seed_limit=FORGET_TOPIC_MATCH_LIMIT,
             )
             if removed == 0:
                 return {

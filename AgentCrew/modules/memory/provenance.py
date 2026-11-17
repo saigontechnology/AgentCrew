@@ -27,6 +27,43 @@ def is_active(metadata: dict[str, Any]) -> bool:
     )
 
 
+def chroma_query_budget(
+    collection: Any, where: dict[str, Any] | None, desired_active_results: int
+) -> int:
+    """Compensate inactive vector candidates using one bounded exact-scope snapshot."""
+    if type(desired_active_results) is not int or desired_active_results < 1:
+        raise MemoryFamilyError("Invalid active query budget")
+    snapshot = collection.get(
+        where=where, include=["metadatas"], limit=MAX_MEMORY_FAMILY_SCAN_RECORDS + 1
+    )
+    if not isinstance(snapshot, dict):
+        raise MemoryFamilyError("Malformed Chroma query snapshot")
+    ids, metadatas = snapshot.get("ids"), snapshot.get("metadatas")
+    if (
+        not isinstance(ids, list)
+        or not isinstance(metadatas, list)
+        or len(ids) != len(metadatas)
+    ):
+        raise MemoryFamilyError("Malformed Chroma query snapshot rows")
+    if len(ids) > MAX_MEMORY_FAMILY_SCAN_RECORDS:
+        raise MemoryFamilyError("Chroma query snapshot scan limit exceeded")
+    if any(not isinstance(key, str) or not key.strip() for key in ids) or len(
+        set(ids)
+    ) != len(ids):
+        raise MemoryFamilyError("Invalid Chroma query snapshot identities")
+    for metadata in metadatas:
+        if not isinstance(metadata, dict) or any(
+            not isinstance(key, str)
+            or (value is not None and not isinstance(value, (str, int, float, bool)))
+            for key, value in metadata.items()
+        ):
+            raise MemoryFamilyError("Malformed Chroma query snapshot metadata")
+    return min(
+        len(ids),
+        desired_active_results + sum(not is_active(metadata) for metadata in metadatas),
+    )
+
+
 def source_ids(metadata: dict[str, Any]) -> tuple[str, ...]:
     """Validate scalar-compatible direct-source provenance without rewriting IDs."""
     version = metadata.get("provenance_version")

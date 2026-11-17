@@ -1383,8 +1383,9 @@ class SQLiteMemoryRepository:
         from_ts: float | None = None,
         to_ts: float | None = None,
         cutoff_ts: float | None = None,
+        topic_seed_limit: int = 100,
     ) -> int:
-        """Resolve every selected family before one transactional physical deletion."""
+        """Resolve selected families atomically; topic seeds are bounded before expansion."""
         from loguru import logger
 
         with self._transaction(write=True) as connection:
@@ -1437,6 +1438,13 @@ class SQLiteMemoryRepository:
                             if row.session == session_id
                         ]
                     elif fts_expression and fts_expression.strip():
+                        if (
+                            type(topic_seed_limit) is not int
+                            or not 1 <= topic_seed_limit <= 100
+                        ):
+                            raise provenance.MemoryFamilyError(
+                                "Invalid topic seed limit"
+                            )
                         clauses = ["m.agent_name=?"]
                         values: list = [fts_expression, agent]
                         if from_ts is not None:
@@ -1445,12 +1453,14 @@ class SQLiteMemoryRepository:
                         if to_ts is not None:
                             clauses.append("m.created_at<=?")
                             values.append(to_ts)
+                        values.append(topic_seed_limit)
                         seeds = [
                             row[0]
                             for row in connection.execute(
                                 "SELECT DISTINCT m.id FROM memory_record m JOIN retrieval_unit u ON u.memory_id=m.id "
                                 "JOIN memory_fts ON memory_fts.rowid=u.rowid WHERE memory_fts MATCH ? AND "
-                                + " AND ".join(clauses),
+                                + " AND ".join(clauses)
+                                + " ORDER BY m.created_at DESC,m.id ASC LIMIT ?",
                                 values,
                             )
                         ]

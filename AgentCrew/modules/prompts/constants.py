@@ -146,7 +146,7 @@ Rules:
 - Drop conversation notes that are generic summaries with no actionable value
 - Preserve architecture decisions, user corrections, active workarounds, unresolved issues
 - If merging, the merged result replaces BOTH the current memory and the merged candidate
-- If multiple memories need merging, each successive MERGED_MEMORY must include information from ALL previously merged candidates (build cumulatively, not independently)
+- Return at most one MERGE action and one matching MERGED_MEMORY. KEEP other candidates that need merging for a later attempt; never DISCARD unique information to meet this limit.
 - If nothing needs merging or discarding, mark all as KEEP
 
 Output format — output ONLY this XML, no other text:

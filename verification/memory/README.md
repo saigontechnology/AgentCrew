@@ -697,6 +697,11 @@ update, not source creation dates. SQLite schema version stays 1 with no new tab
 **Deletion semantics:** forgetting any family member, including an old source,
 physically deletes the entire same-agent consolidation family. Topic and session
 removal follow the same rule; loaded worker contexts are cleared after deletion.
+Topic forgetting selects at most 100 matching seed records before expanding
+complete families on either backend. SQLite selects newest `created_at` first,
+then canonical ID ascending for ties; Chroma retains its vector-result order.
+Preserved sources can be seeds, and expansion may delete more than 100 records.
+Explicit ID/session deletion and retention have no 100-seed cap.
 Snapshots and family membership are bounded at 10,000 records. Invalid, cyclic,
 ambiguous, cross-agent or oversized families cause explicit deletion to fail
 without a partial mutation. Retention conservatively retains invalid families.
@@ -707,6 +712,13 @@ SQLite consolidation and family deletion are transactional. Chroma publishes the
 target before marking sources; partial failures may leave sources visible, but
 published provenance still connects them for complete family deletion. Chroma
 has no transaction and cannot provide SQLite's concurrent-writer atomicity.
+
+Chroma semantic queries inspect at most 10,001 metadata records in the exact
+query scope. The vector budget is `min(scoped total, desired active budget +
+inactive count)`, followed by the existing active candidate pools, relevance
+thresholds, ordering, and result limits. Malformed or oversized snapshots fail
+observably before vector lookup; exact-ID lookup remains direct. This is inactive
+record compensation, not retrieval-policy tuning.
 
 Fictional offline checks (no private corpus, network, embeddings or holdouts):
 

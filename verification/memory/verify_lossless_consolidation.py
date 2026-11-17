@@ -26,6 +26,7 @@ from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
 from AgentCrew.modules.memory.memory_worker import ChromaMemoryPersistence, MemoryWorker
 from AgentCrew.modules.memory.sqlite_repository import SCHEMA_VERSION
 from AgentCrew.modules.memory.sqlite_service import SQLiteMemoryService
+from AgentCrew.modules.memory.types import MemoryQuery
 from verification.memory import verify_phase4 as phase4
 from verification.memory.verify_phase4 import require, run_handler
 from verification.memory.verify_phase5 import MEMORY_DATA, MEMORY_XML
@@ -60,8 +61,18 @@ class OfflineCollection:
         self.rows = {}
         self.events = []
         self.fail = None
+        self.get_calls = []
+        self.query_calls = []
 
     def get(self, ids=None, where=None, include=None, limit=None, **kwargs):
+        self.get_calls.append(
+            {
+                "ids": copy.deepcopy(ids),
+                "where": copy.deepcopy(where),
+                "include": copy.deepcopy(include),
+                "limit": limit,
+            }
+        )
         selected = [
             key
             for key in (ids if ids is not None else self.rows)
@@ -79,7 +90,17 @@ class OfflineCollection:
         }
 
     def query(self, query_texts, n_results, where=None, **kwargs):
+        self.query_calls.append(
+            {
+                "query_texts": query_texts,
+                "n_results": n_results,
+                "where": copy.deepcopy(where),
+            }
+        )
         found = self.get(where=where)
+        found["ids"].sort(
+            key=lambda key: self.rows[key]["metadata"].get("fixture_distance", 0.05)
+        )
         selected = [
             key
             for key in found["ids"]
@@ -89,7 +110,14 @@ class OfflineCollection:
         values = self.get(ids=selected)
         return {
             key: [value] for key, value in values.items() if key != "embeddings"
-        } | {"distances": [[0.05] * len(selected)]}
+        } | {
+            "distances": [
+                [
+                    self.rows[key]["metadata"].get("fixture_distance", 0.05)
+                    for key in selected
+                ]
+            ]
+        }
 
     def _check(self, kind, ids):
         self.events.append((kind, tuple(ids)))
@@ -941,6 +969,339 @@ def checks_backend_validation_and_legacy():
         )
 
 
+def checks_topic_seed_limit_before_family_expansion():
+    with backend("sqlite") as h:
+        document = MEMORY_XML.replace("AlphaService", "SeedNeedle")
+        matching = [
+            h.store(
+                f"seed-{index:03d}", document, stamp=NOW + 10 if index == 104 else NOW
+            )
+            for index in range(105)
+        ]
+        extra, root = h.store("extra-source"), h.store("family-root")
+        foreign = h.store("foreign-seed", document, agent="OtherAgent", stamp=NOW + 20)
+        excluded = h.store("old-seed", document, stamp=OLD)
+        h.merge(root, [matching[0], extra])
+        selected = []
+        resolve = p.FamilyIndex.resolve
+
+        def observed(index, seeds):
+            selected.append(tuple(seeds))
+            return resolve(index, seeds)
+
+        with patch.object(
+            p.FamilyIndex, "resolve", autospec=True, side_effect=observed
+        ):
+            result = h.service.forget_topic(
+                "seedneedle",
+                from_date=int(NOW) - 1,
+                to_date=int(NOW) + 11,
+                agent_name=AGENT,
+            )
+        expected = [matching[104], *matching[:99]]
+        require(
+            selected == [tuple(expected)],
+            "SQLite topic seed selection was not bounded/deterministic before expansion",
+        )
+        require(
+            result["success"] and result["count"] == 102,
+            "Topic seed limit truncated complete family deletion",
+        )
+        require(
+            all(h.row(key) is None for key in [*expected, extra, root]),
+            "Selected family member survived topic deletion",
+        )
+        require(
+            all(
+                h.row(key) is not None for key in [*matching[99:104], excluded, foreign]
+            ),
+            "Topic selection exceeded its seed/date/agent boundary",
+        )
+
+
+def checks_multiple_merges_are_atomic_noops():
+    for kind in ("sqlite", "chroma"):
+        with backend(kind) as h:
+            first, second, target = (
+                h.store("first"),
+                h.store("second"),
+                h.store("target"),
+            )
+            candidates = [
+                {"id": key, "document": MEMORY_XML} for key in (first, second)
+            ]
+            text = (
+                "<CONSOLIDATION_RESULT>"
+                + "".join(
+                    f'<ACTION id="{key}" type="MERGE"/><MERGED_MEMORY for="{key}"><MEMORY><HEAD>Merged {key}</HEAD></MEMORY></MERGED_MEMORY>'
+                    for key in (first, second)
+                )
+                + "</CONSOLIDATION_RESULT>"
+            )
+            before = {key: copy.deepcopy(h.row(key)) for key in (first, second, target)}
+            worker = MemoryWorker(
+                llm_service=SimpleNamespace(
+                    process_message=AsyncMock(return_value=text)
+                ),
+                persistence=h.adapter,
+            )
+            operation, built = h.operations[target]
+            with (
+                patch.object(
+                    h.adapter, "consolidation_candidates", return_value=candidates
+                ),
+                patch.object(
+                    h.adapter,
+                    "apply_consolidation",
+                    wraps=h.adapter.apply_consolidation,
+                ) as apply,
+            ):
+                asyncio.run(
+                    worker._consolidate_related_memories(operation, built, target)
+                )
+                apply.assert_not_called()
+            require(
+                all(h.row(key) == value for key, value in before.items()),
+                "Multiple merges mutated a consolidation family",
+            )
+            require(
+                worker._parse_consolidation_result(text, candidates, AGENT, target)
+                == (None, []),
+                "Multiple merges produced a mutation plan",
+            )
+            single = f'<CONSOLIDATION_RESULT><ACTION id="{first}" type="MERGE"/><ACTION id="{second}" type="DISCARD"/><MERGED_MEMORY for="{first}"><MEMORY><HEAD>One merged target</HEAD></MEMORY></MERGED_MEMORY></CONSOLIDATION_RESULT>'
+            document, superseded = worker._parse_consolidation_result(
+                single, candidates, AGENT, target
+            )
+            require(
+                document is not None and superseded == [first, second],
+                "One MERGE with other valid actions was rejected",
+            )
+
+
+def checks_chroma_inactive_crowding():
+    with backend("chroma") as h:
+        sources = [
+            h.store(f"inactive-{i}", MEMORY_XML.replace("AlphaService", "InactiveOnly"))
+            for i in range(30)
+        ]
+        root = h.store("active-root", MEMORY_XML.replace("AlphaService", "ActiveOnly"))
+        h.merge(root, sources)
+        active = [root, *[h.store(f"active-{i}") for i in range(21)]]
+        old_sources = [h.store(f"old-inactive-{i}", stamp=OLD) for i in range(10)]
+        old_root = h.store("old-root", stamp=OLD)
+        h.merge(old_root, old_sources)
+        current = h.store("current")
+        foreign = h.store("foreign", agent="OtherAgent")
+        for key, row in h.collection.rows.items():
+            row["metadata"]["fixture_distance"] = (
+                0.01 if key in sources + old_sources else 0.2
+            )
+        h.service.session_id = "current"
+        legacy = h.service.retrieve_memory(
+            "alpha",
+            from_date=int(NOW) - 86400,
+            to_date=int(NOW) + 86400,
+            agent_name=AGENT,
+        )
+        require(
+            "ActiveOnly" in legacy and "InactiveOnly" not in legacy,
+            "Closer inactive records crowded active legacy results",
+        )
+        require(
+            legacy.count("---Date:") == 3, "Legacy user-facing result limit changed"
+        )
+        require(
+            h.collection.query_calls[-1]["n_results"] == 40,
+            "Legacy query budget was not scoped to eligible metadata",
+        )
+        query = MemoryQuery(
+            query="alpha",
+            agent_name=AGENT,
+            current_session_id="current",
+            limit=20,
+            from_date=(datetime.now(UTC) - timedelta(days=1)).date(),
+            to_date=(datetime.now(UTC) + timedelta(days=1)).date(),
+        )
+        result = h.service.search_structured(query)
+        require(
+            len(result.hits) == 20
+            and all(hit.memory_id in active for hit in result.hits),
+            "Closer inactive records crowded structured active results",
+        )
+        require(
+            h.collection.query_calls[-1]["n_results"] == 50,
+            "Structured query budget lost date/session/agent scope",
+        )
+        operation, built = h.operations[current]
+        candidates = h.adapter.consolidation_candidates(operation, built, current)
+        require(
+            len(candidates) == 5
+            and all(row["id"] in [*active, old_root] for row in candidates),
+            "Closer inactive records crowded consolidation candidates",
+        )
+        require(
+            h.collection.query_calls[-1]["n_results"] == 45,
+            "Consolidation query budget lost agent/session scope",
+        )
+        for key in sources + old_sources:
+            h.collection.rows[key]["metadata"]["fixture_distance"] = 0.7
+        candidates = h.adapter.consolidation_candidates(operation, built, current)
+        require(
+            len(candidates) == 5,
+            "Compensation expanded the active consolidation result limit",
+        )
+        h.collection.rows[active[2]]["metadata"]["type"] = "behavior"
+        h.collection.rows[active[-1]]["metadata"].update(
+            type="behavior", fixture_distance=0.3
+        )
+        hinted = h.service.search_structured(
+            MemoryQuery(
+                query="alpha",
+                agent_name=AGENT,
+                current_session_id="current",
+                limit=5,
+                kinds=("behavior",),
+            )
+        )
+        require(
+            len(hinted.hits) == 5
+            and hinted.hits[0].memory_id == active[2]
+            and active[-1] not in [hit.memory_id for hit in hinted.hits],
+            "Compensation widened the pre-hint active ranking pool",
+        )
+        for call in h.collection.query_calls:
+            snapshots = [
+                item
+                for item in h.collection.get_calls
+                if item["include"] == ["metadatas"]
+                and item["where"] == call["where"]
+                and item["limit"] == p.MAX_MEMORY_FAMILY_SCAN_RECORDS + 1
+            ]
+            require(
+                bool(snapshots),
+                "Vector query had no bounded exact-scope metadata snapshot",
+            )
+        require(
+            all(
+                foreign != hit.memory_id and current != hit.memory_id
+                for hit in result.hits
+            ),
+            "Compensated query crossed agent/session scope",
+        )
+        h.collection.query_calls.clear()
+        h.collection.get_calls.clear()
+        exact = h.service.search_structured(
+            MemoryQuery(
+                query="alpha",
+                agent_name=AGENT,
+                current_session_id=h.service.session_id,
+                memory_ids=(root,),
+                limit=5,
+            )
+        )
+        require(
+            [hit.memory_id for hit in exact.hits] == [root]
+            and not h.collection.query_calls,
+            "Exact ID lookup stopped being direct",
+        )
+        require(
+            len(h.collection.get_calls) == 1
+            and h.collection.get_calls[0]["ids"] == [root],
+            "Exact ID lookup scanned the corpus",
+        )
+        h.collection.query_calls.clear()
+        h.service.search_structured(
+            MemoryQuery(
+                query="alpha",
+                agent_name="MissingAgent",
+                current_session_id=h.service.session_id,
+            )
+        )
+        require(
+            not h.collection.query_calls,
+            "Empty metadata scope issued a zero-budget query",
+        )
+
+
+def checks_chroma_query_snapshot_rejection():
+    malformed = [
+        [],
+        {"ids": ["x"], "metadatas": []},
+        {"ids": ["x"], "metadatas": [None]},
+        {"ids": ["x", "x"], "metadatas": [{}, {}]},
+        {"ids": [None], "metadatas": [{}]},
+        {"ids": ["x"], "metadatas": [{"bad": []}]},
+        {"ids": [], "metadatas": None},
+        {
+            "ids": [str(i) for i in range(p.MAX_MEMORY_FAMILY_SCAN_RECORDS + 1)],
+            "metadatas": [{}] * (p.MAX_MEMORY_FAMILY_SCAN_RECORDS + 1),
+        },
+    ]
+    with backend("chroma") as h:
+        root, current = h.store("root"), h.store("current")
+        operation, built = h.operations[current]
+        original = h.collection.get
+        for invalid in malformed:
+
+            def snapshot(*args, invalid=invalid, **kwargs):
+                if (
+                    kwargs.get("include") == ["metadatas"]
+                    and kwargs.get("limit") == p.MAX_MEMORY_FAMILY_SCAN_RECORDS + 1
+                ):
+                    return invalid
+                return original(*args, **kwargs)
+
+            with patch.object(h.collection, "get", side_effect=snapshot):
+                h.collection.query_calls.clear()
+                expect_family_error(
+                    lambda: h.service.retrieve_memory("alpha", agent_name=AGENT)
+                )
+                require(
+                    not h.collection.query_calls,
+                    "Unsafe legacy snapshot issued a vector query",
+                )
+                expect_family_error(
+                    lambda: h.service.search_structured(
+                        MemoryQuery(
+                            query="alpha",
+                            agent_name=AGENT,
+                            current_session_id=h.service.session_id,
+                        )
+                    )
+                )
+                require(
+                    not h.collection.query_calls,
+                    "Unsafe structured snapshot issued a vector query",
+                )
+                expect_family_error(
+                    lambda: h.adapter.consolidation_candidates(
+                        operation, built, current
+                    )
+                )
+                require(
+                    not h.collection.query_calls,
+                    "Unsafe candidate snapshot issued a vector query",
+                )
+                failure = run_handler(h.service, query="alpha")
+                require(
+                    failure.startswith("Memory search failed:"),
+                    "Unsafe snapshot failure was not observable",
+                )
+                exact = h.service.search_structured(
+                    MemoryQuery(
+                        query="alpha",
+                        agent_name=AGENT,
+                        current_session_id=h.service.session_id,
+                        memory_ids=(root,),
+                    )
+                )
+                require(
+                    [hit.memory_id for hit in exact.hits] == [root],
+                    "Malformed unrelated snapshot affected direct IDs",
+                )
+
+
 def checks_freeze_and_schema_contract():
     state = {
         "hashes": {
@@ -983,6 +1344,10 @@ def main():
         checks_atomicity_and_chroma_partial_failures,
         checks_worker_identity_and_invalid_actions,
         checks_backend_validation_and_legacy,
+        checks_multiple_merges_are_atomic_noops,
+        checks_topic_seed_limit_before_family_expansion,
+        checks_chroma_inactive_crowding,
+        checks_chroma_query_snapshot_rejection,
         checks_freeze_and_schema_contract,
     ):
         check()

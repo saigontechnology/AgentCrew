@@ -203,9 +203,14 @@ class ChromaMemoryPersistence:
             ]
         }
         search_query = build_consolidation_query(built.memory_data) or built.document
+        budget = provenance.chroma_query_budget(
+            self._collection, where_filter, CONSOLIDATION_CANDIDATE_LIMIT
+        )
+        if not budget:
+            return []
         results = self._collection.query(
             query_texts=[search_query],
-            n_results=CONSOLIDATION_CANDIDATE_LIMIT,
+            n_results=budget,
             where=where_filter,
         )
         if not results["ids"] or not results["ids"][0]:
@@ -232,7 +237,7 @@ class ChromaMemoryPersistence:
                         "header": metadata.get("header"),
                     }
                 )
-        return candidates
+        return candidates[:CONSOLIDATION_CANDIDATE_LIMIT]
 
     def apply_consolidation(
         self,
@@ -543,6 +548,8 @@ class MemoryWorker:
                     raise ValueError("Invalid or conflicting consolidation action")
                 seen.add(key)
                 if kind == "MERGE":
+                    if merge_ids:
+                        raise ValueError("Multiple merge actions are not supported")
                     if key not in documents:
                         raise ValueError("Merge action has no valid document")
                     merge_ids.add(key)
