@@ -1505,3 +1505,11 @@ class SQLiteMemoryRepository:
             if len(rows) > 1:
                 raise provenance.MemoryFamilyError("Multiple active session contexts")
             return self._record(rows[0]) if rows else None
+
+    def check_read_only_integrity(self) -> None:
+        """Check SQLite/FK integrity without writes; the migrator checks FTS postings."""
+        with self._transaction() as connection:
+            if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise SQLiteMemoryError("SQLite integrity check failed")
+            if connection.execute("PRAGMA foreign_key_check").fetchone():
+                raise SQLiteMemoryError("Memory foreign key check failed")

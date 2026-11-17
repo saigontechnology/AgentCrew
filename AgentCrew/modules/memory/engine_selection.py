@@ -403,53 +403,11 @@ def _migrate_chroma_to_sqlite(
 
 
 def ensure_sqlite_store(
-    db_path: Path,
-    chroma_source: Path,
-    work_dir: Path,
-    collection: str = "conversation",
+    destination: Path, source_path: Path, work_dir: Path, *, interactive: bool = False
 ) -> Path:
-    """Resolve the SQLite store for startup using the migration decision matrix.
+    """Select SQLite, delegating confirmed external startup migration policy."""
+    from .startup_migration import ensure_startup_sqlite_store
 
-    An existing store is used as-is; a completed migration is not repeated.
-    Chroma data without a store triggers the automatic migration, which
-    requires the chromadb package; a missing package fails fast instead of
-    silently starting an empty store. With no data at all the service starts
-    with a fresh empty store. Migration failures abort startup.
-    """
-    if db_path.exists() and _migration_completed(work_dir):
-        return db_path
-    resume = work_dir.exists()
-    if db_path.exists() and not resume:
-        return db_path
-    chroma_present = (
-        chroma_source is not None and (chroma_source / "chroma.sqlite3").is_file()
+    return ensure_startup_sqlite_store(
+        destination, source_path, work_dir, interactive=interactive
     )
-    if not chroma_present:
-        if resume:
-            raise MemoryEngineError(
-                f"An incomplete memory migration work directory exists at '{work_dir}' but the "
-                f"Chroma source at '{chroma_source}' is missing. Restore the Chroma source or "
-                "remove the work directory, then start again."
-            )
-        logger.info("No SQLite memory store found; starting with an empty store")
-        return db_path
-    commands = migration_command_hint(chroma_source, db_path, work_dir).splitlines()
-    require_chromadb(
-        f"Chroma memory data found at '{chroma_source}'; the automatic migration to "
-        "SQLite needs the chromadb package to read it. Choose one:\n"
-        "1) Migrate now (recommended):\n"
-        f"   {commands[0]}\n"
-        "2) Skip and start fresh (deletes the old Chroma memory):\n"
-        f"   {commands[1]}\n"
-        "   or manually delete the Chroma files (chroma.sqlite3 and the collection "
-        "folders) in the source directory.\n"
-        "3) Alternatively, install the chromadb extra with 'uv sync --extra chromadb' "
-        "or 'pip install \"agentcrew-ai[chromadb]\"' for the automatic in-app "
-        "migration, then start again."
-    )
-    logger.info(
-        f"Chroma memory data found at '{chroma_source}'; running the automatic migration to SQLite"
-    )
-    _migrate_chroma_to_sqlite(chroma_source, db_path, work_dir, collection, resume)
-    logger.info("Automatic memory migration complete")
-    return db_path

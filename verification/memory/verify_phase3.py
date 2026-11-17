@@ -19,27 +19,6 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from AgentCrew.modules.memory.benchmark import (
-    POLICY,
-    PROMPT,
-    BenchmarkError,
-    Calls,
-    FakeAdapter,
-    RemoteJSONAdapter,
-    aggregate,
-    digest,
-    encode,
-    evaluate_answer,
-    expand_queries,
-    file_hash,
-    invoke_model,
-    load_dataset,
-    measure,
-    query_from_case,
-    read_json,
-    read_jsonl,
-    rerank_hits,
-)
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
 from scripts.benchmark_memory_retrieval import (
     ASSETS,
@@ -60,6 +39,27 @@ from scripts.migrate_chroma_memory_to_sqlite import (
 )
 from scripts.migrate_chroma_memory_to_sqlite import (
     _write_json as write_json,
+)
+from verification.memory.benchmark import (
+    POLICY,
+    PROMPT,
+    BenchmarkError,
+    Calls,
+    FakeAdapter,
+    RemoteJSONAdapter,
+    aggregate,
+    digest,
+    encode,
+    evaluate_answer,
+    expand_queries,
+    file_hash,
+    invoke_model,
+    load_dataset,
+    measure,
+    query_from_case,
+    read_json,
+    read_jsonl,
+    rerank_hits,
 )
 from verification.memory.verify_phase1 import record_from_fixture
 from verification.memory.verify_phase2 import run_child, uv_command

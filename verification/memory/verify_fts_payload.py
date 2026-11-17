@@ -16,7 +16,6 @@ from tempfile import TemporaryDirectory
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from AgentCrew.modules.memory.benchmark import query_from_case
 from AgentCrew.modules.memory.retrieval import (
     MemorySearchCoordinator,
     _query_parts,
@@ -24,6 +23,7 @@ from AgentCrew.modules.memory.retrieval import (
 )
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
 from AgentCrew.modules.memory.types import CandidateSource, MemoryQuery, MemoryRecord
+from verification.memory.benchmark import query_from_case
 from verification.memory.verify_exact_lookup import PlanRepository, populate
 from verification.memory.verify_phase1 import require
 

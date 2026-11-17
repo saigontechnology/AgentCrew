@@ -28,9 +28,9 @@ for site in (executable.parent.parent / "lib").glob("python*/site-packages"):
 import chromadb
 
 from AgentCrew.modules.memory import engine_selection
-from AgentCrew.modules.memory.benchmark import POLICY
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
 from AgentCrew.modules.memory.sqlite_service import SQLiteMemoryService
+from verification.memory.benchmark import POLICY
 
 FROZEN_POLICY = {
     "name": "qualified-sqlite-signals-v1",
@@ -299,7 +299,7 @@ def checks_sqlite_chain_chromadb_free() -> None:
     print("PASS checks_sqlite_chain_chromadb_free")
 
 
-def checks_auto_migration() -> None:
+def checks_verified_migrator() -> None:
     from verification.memory.capture_baseline import fingerprint
 
     with tempfile.TemporaryDirectory(prefix="phase6-migrate-") as tmp:
@@ -309,7 +309,13 @@ def checks_auto_migration() -> None:
         before = fingerprint(src)
         db = base / "g" / "agent_memory.sqlite3"
         work = base / "g" / "migration-work"
-        engine_selection.ensure_sqlite_store(db, src, work)
+        engine_selection._migrate_chroma_to_sqlite(
+            source=src,
+            destination=db,
+            work_dir=work,
+            collection="conversation",
+            resume=work.exists(),
+        )
         require(db.is_file(), "Migration must produce the SQLite store")
         report = json.loads((work / "report.json").read_text(encoding="utf-8"))
         require(report["status"] == "verified", "Migration report must be verified")
@@ -330,8 +336,14 @@ def checks_auto_migration() -> None:
             record is not None and record.document == MEMORY_XML,
             "Migrated record must round-trip",
         )
-        second = engine_selection.ensure_sqlite_store(db, src, work)
-        require(second == db, "Completed migration must be reused without re-migration")
+        engine_selection._migrate_chroma_to_sqlite(
+            source=src,
+            destination=db,
+            work_dir=work,
+            collection="conversation",
+            resume=True,
+        )
+        require(db.exists(), "Completed migration must be reused without re-migration")
         service = SQLiteMemoryService(db_path=db, llm_service=None)
         try:
             require(
@@ -340,60 +352,48 @@ def checks_auto_migration() -> None:
             )
         finally:
             service.shutdown()
-    print("PASS checks_auto_migration")
+    print("PASS checks_verified_migrator")
 
 
 def checks_fail_fast_without_chromadb() -> None:
-    with tempfile.TemporaryDirectory(prefix="phase6-failfast-") as tmp:
-        base = Path(tmp)
-        src = base / "chroma-src"
-        fictional_chroma_store(src)
-        db = base / "g" / "agent_memory.sqlite3"
-        work = base / "g" / "migration-work"
-        sentinel = sys.modules.get("chromadb")
-        sys.modules["chromadb"] = None
-        try:
+    with tempfile.TemporaryDirectory(prefix="phase6-no-uvx-") as tmp:
+        root = Path(tmp)
+        source = root / "chroma"
+        source.mkdir()
+        (source / "chroma.sqlite3").write_bytes(b"fictional")
+        with (
+            patch(
+                "AgentCrew.modules.memory.startup_migration.shutil.which",
+                return_value=None,
+            ),
+            patch.object(
+                engine_selection,
+                "require_chromadb",
+                side_effect=AssertionError("startup must not import Chroma"),
+            ) as dependency,
+            patch(
+                "builtins.input",
+                side_effect=AssertionError("uvx check must precede prompt"),
+            ),
+        ):
             try:
-                engine_selection.ensure_sqlite_store(db, src, work)
-                raise AssertionError("Chroma data without chromadb must fail fast")
+                engine_selection.ensure_sqlite_store(
+                    root / "agent_memory.sqlite3",
+                    source,
+                    root / "work",
+                    interactive=True,
+                )
+                raise AssertionError("Missing uvx must abort startup")
             except engine_selection.MemoryEngineError as error:
-                text = str(error)
                 require(
-                    "uv sync --extra chromadb" in text,
-                    "Fail-fast must mention the uv extra",
+                    "uvx" in str(error) and "agentcrew-migrate-memory" in str(error),
+                    "Actionable external migration hint missing",
                 )
-                require(
-                    "agentcrew-ai[chromadb]" in text,
-                    "Fail-fast must mention the pip extra",
-                )
-                require(
-                    "automatic migration" in text,
-                    "Fail-fast must explain the migration need",
-                )
-                require(
-                    "agentcrew-migrate-memory" in text,
-                    "Fail-fast must mention the standalone migration command",
-                )
-                require(
-                    "uvx" in text,
-                    "Fail-fast must mention the uvx invocation",
-                )
-                require(
-                    "--discard-old-memory" in text,
-                    "Fail-fast must mention the discard skip path",
-                )
-                require(
-                    "memory_engine is 'chromadb'" not in text,
-                    "Migration fail-fast must not claim the engine is chromadb",
-                )
-            require(
-                not db.exists(), "Fail-fast must never silently start an empty store"
-            )
-        finally:
-            if sentinel is None:
-                sys.modules.pop("chromadb", None)
-            else:
-                sys.modules["chromadb"] = sentinel
+            dependency.assert_not_called()
+        require(
+            not (root / "agent_memory.sqlite3").exists(),
+            "Failed startup created SQLite",
+        )
     print("PASS checks_fail_fast_without_chromadb")
 
 
@@ -414,7 +414,13 @@ def checks_migration_failure_abort() -> None:
         db = base / "g" / "agent_memory.sqlite3"
         work = base / "g" / "migration-work"
         try:
-            engine_selection.ensure_sqlite_store(db, src, work)
+            engine_selection._migrate_chroma_to_sqlite(
+                source=src,
+                destination=db,
+                work_dir=work,
+                collection="conversation",
+                resume=work.exists(),
+            )
             raise AssertionError("Unmappable record must abort the migration")
         except Exception as error:
             require(
@@ -458,7 +464,13 @@ def checks_mid_apply_crash_resume() -> None:
         repo_mod.SQLiteMemoryRepository.apply_migration_batch = crashing
         try:
             try:
-                engine_selection.ensure_sqlite_store(db, src, work)
+                engine_selection._migrate_chroma_to_sqlite(
+                    source=src,
+                    destination=db,
+                    work_dir=work,
+                    collection="conversation",
+                    resume=work.exists(),
+                )
                 raise AssertionError("Simulated crash must propagate")
             except RuntimeError as error:
                 require(
@@ -468,7 +480,13 @@ def checks_mid_apply_crash_resume() -> None:
         finally:
             repo_mod.SQLiteMemoryRepository.apply_migration_batch = original
         require(db.is_file(), "Crashed migration may leave a partial store")
-        engine_selection.ensure_sqlite_store(db, src, work)
+        engine_selection._migrate_chroma_to_sqlite(
+            source=src,
+            destination=db,
+            work_dir=work,
+            collection="conversation",
+            resume=work.exists(),
+        )
         report = json.loads((work / "report.json").read_text(encoding="utf-8"))
         require(report["status"] == "verified", "Resume must complete the migration")
         require(
@@ -523,7 +541,13 @@ def checks_skip_warned_records() -> None:
         before = fingerprint(src)
         db = base / "g" / "agent_memory.sqlite3"
         work = base / "g" / "migration-work"
-        engine_selection.ensure_sqlite_store(db, src, work)
+        engine_selection._migrate_chroma_to_sqlite(
+            source=src,
+            destination=db,
+            work_dir=work,
+            collection="conversation",
+            resume=work.exists(),
+        )
         report = json.loads((work / "report.json").read_text(encoding="utf-8"))
         require(report["status"] == "verified", "Skip migration must verify")
         require(
@@ -630,7 +654,7 @@ def main() -> int:
     checks_memory_paths_fallback()
     checks_selection_wiring()
     checks_sqlite_chain_chromadb_free()
-    checks_auto_migration()
+    checks_verified_migrator()
     checks_fail_fast_without_chromadb()
     checks_migration_failure_abort()
     checks_mid_apply_crash_resume()

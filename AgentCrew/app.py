@@ -199,6 +199,7 @@ class AgentCrewApplication:
                 memory_llm=memory_llm,
                 with_voice=with_voice,
                 reason_effort=reason_effort,
+                interactive=True,
             )
 
             if mcp_config:

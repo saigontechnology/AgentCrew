@@ -509,6 +509,7 @@ class ApplicationSetup:
                     sqlite_store_path(),
                     chroma_source_path(),
                     sqlite_migration_work_path(),
+                    interactive=interactive,
                 )
                 from AgentCrew.modules.memory.sqlite_service import SQLiteMemoryService
 

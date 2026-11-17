@@ -634,3 +634,55 @@ The runtime sources are the authoritative schema references:
 - GitHub Issues: <https://github.com/saigontechnology/AgentCrew/issues>
 - Documentation: <https://github.com/saigontechnology/AgentCrew>
 - Examples: `examples/agents/` in the repository
+
+## SQLite startup and legacy Chroma migration
+
+SQLite startup does not import ChromaDB or migrate legacy data in-process. The
+console and GUI are interactive (the confirmation is on the launching terminal).
+Server, job, A2A and ACP startup never prompt or run the migration command.
+
+For the production default memory directory, interactive startup displays:
+
+```sh
+uvx --from 'agentcrew-ai[chromadb]@latest' agentcrew-migrate-memory --source ~/.AgentCrew/memorydb/ --destination ~/.AgentCrew/memorydb/agent_memory.sqlite3 --work-dir ~/.AgentCrew/memorydb/migration-work/
+```
+
+`MEMORYDB_PATH` / `--memory-path` overrides configure all three paths. Execution
+uses expanded absolute argv values without a shell; the displayed command is
+shell-quoted for copying. `uvx` must be available. This intentionally downloads
+and executes `@latest`, which can differ from the running AgentCrew version.
+Stop all AgentCrew/Chroma writers before confirming. Declining, EOF, or an
+interrupt at confirmation aborts startup without creating SQLite or changing
+migration work. A failed command aborts without archiving Chroma; its work remains
+available for the standalone command's existing resume behavior.
+
+After success, startup independently checks the destination's schema, read-only
+SQLite/foreign-key integrity, and `migration-work/report.json` status (`applied`
+or `verified`). The standalone migrator retains its full FTS verification. Only
+then are detected Chroma SQLite files and UUID/HNSW artifacts moved into a new
+mode-0700 `~/.AgentCrew/memorydb-chroma-backup-YYYYMMDDTHHMMSSZ` directory (with a
+collision suffix when needed). SQLite, its sidecars/locks, migration work and
+unrelated files stay in the memory root. A mode-0600 manifest records paths,
+argv/display command, report hash/status, artifact pre/post hashes and completion
+state. Move failures attempt rollback and abort with recovery information; do
+not treat a partial backup as success. A verified migration with an interrupted
+backup is verified again and requires confirmation to finish, without rerunning
+migration. Keep backup manifests for recovery.
+
+**Noninteractive startup is a permanent skip, not deferred migration.** If Chroma
+exists but SQLite does not, startup leaves Chroma untouched, writes a mode-0600
+`migration-skipped.json`, and uses a fresh canonical SQLite store. Later
+interactive runs do not auto-prompt or merge the old data. An existing active
+SQLite store also prevents automatic import. The marker/warning includes the
+exact manual recovery command; valid markers are never overwritten and invalid
+or conflicting markers fail startup.
+
+To recover old Chroma after a skip, stop all writers, safely back up the active
+SQLite store **including any WAL/sidecar state**, and move it aside before running
+the recovery command into an empty destination. This recovers old Chroma; it does
+not automatically merge records from the new SQLite backup. Preserve both data
+sets until manually reconciled. Markers are never cleared automatically: only
+after verifying recovery/backups should an operator deliberately remove a skip
+marker to re-enable confirmed backup completion. Do not point the recovery
+command at an active SQLite store. The standalone CLI and its explicit
+`--discard-old-memory` option remain separate from startup's artifact backup.

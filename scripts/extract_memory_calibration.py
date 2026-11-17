@@ -20,7 +20,6 @@ from typing import BinaryIO
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from AgentCrew.modules.memory.benchmark import BenchmarkError, check, file_hash
 from scripts.migrate_chroma_memory_to_sqlite import (
     MigrationError,
     _ignored,
@@ -29,6 +28,7 @@ from scripts.migrate_chroma_memory_to_sqlite import (
     _private_directory,
     _write_json,
 )
+from verification.memory.benchmark import BenchmarkError, check, file_hash
 
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_ROW_BYTES = 1024 * 1024
@@ -370,7 +370,7 @@ def extract_calibration(
                 "shared_validation_sha256": {
                     name: file_hash(ROOT / name)
                     for name in (
-                        "AgentCrew/modules/memory/benchmark.py",
+                        "verification/memory/benchmark.py",
                         "scripts/migrate_chroma_memory_to_sqlite.py",
                     )
                 },

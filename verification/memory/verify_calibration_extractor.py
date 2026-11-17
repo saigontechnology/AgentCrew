@@ -14,9 +14,9 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from AgentCrew.modules.memory.benchmark import BenchmarkError
 from scripts import extract_memory_calibration as operator
 from scripts.migrate_chroma_memory_to_sqlite import MigrationError, _private_directory
+from verification.memory.benchmark import BenchmarkError
 
 
 def require(condition, message):

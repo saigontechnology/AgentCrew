@@ -13,15 +13,15 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from AgentCrew.modules.memory import benchmark
-from AgentCrew.modules.memory.benchmark import (
+from scripts import benchmark_memory_retrieval as runner
+from verification.memory import benchmark
+from verification.memory.benchmark import (
     BenchmarkError,
     encode,
     file_hash,
     load_calibration_dataset,
     load_dataset,
 )
-from scripts import benchmark_memory_retrieval as runner
 from verification.memory.verify_phase3 import checks_loading
 
 ASSETS = ROOT / "verification/memory"

@@ -17,8 +17,8 @@ sys.path.insert(0, str(ROOT))
 from AgentCrew.modules.agents.cursor_agent import CursorAgent
 from AgentCrew.modules.agents.tool_registrar import AgentToolRegistrar
 from AgentCrew.modules.memory import tool
-from AgentCrew.modules.memory.benchmark import Calls, FakeAdapter, evaluate_answer
 from AgentCrew.modules.memory.types import MemorySearchResult
+from verification.memory.benchmark import Calls, FakeAdapter, evaluate_answer
 from verification.memory.verify_phase4 import (
     FictionalLLM,
     RecordingService,

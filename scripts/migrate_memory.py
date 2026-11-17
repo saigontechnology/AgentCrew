@@ -24,9 +24,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from AgentCrew.modules.memory.benchmark import BenchmarkError
 from scripts import benchmark_memory_retrieval as benchmark
 from scripts import migrate_chroma_memory_to_sqlite as migration
+from verification.memory.benchmark import BenchmarkError
 
 RUNS = ROOT / "verification/memory-migration"
 REVIEWS = ROOT / "verification/memory/local"

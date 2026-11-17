@@ -14,9 +14,13 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from .record_parser import normalize_text
-from .sqlite_repository import SQLiteMemoryRepository
-from .types import MemoryQuery, MemoryRecord, SQLiteSemanticPolicy
+from AgentCrew.modules.memory.record_parser import normalize_text
+from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
+from AgentCrew.modules.memory.types import (
+    MemoryQuery,
+    MemoryRecord,
+    SQLiteSemanticPolicy,
+)
 
 VERSION = 1
 UNKNOWN_CWD = "Unknown (legacy memory)"

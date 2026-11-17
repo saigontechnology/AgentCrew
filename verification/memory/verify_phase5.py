@@ -28,7 +28,6 @@ for site in (executable.parent.parent / "lib").glob("python*/site-packages"):
         sys.path.append(site_path)
 
 from AgentCrew.modules.events.hooks import HookPoints, HookRegistry
-from AgentCrew.modules.memory.benchmark import POLICY
 from AgentCrew.modules.memory.memory_record_builder import (
     MemoryRecordBuilder,
     build_consolidation_query,
@@ -41,6 +40,7 @@ from AgentCrew.modules.memory.sqlite_service import (
     SQLiteMemoryService,
 )
 from AgentCrew.modules.memory.types import MemoryRecord
+from verification.memory.benchmark import POLICY
 
 MEMORY_DATA = {
     "MEMORY": {

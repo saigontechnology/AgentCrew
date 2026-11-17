@@ -17,14 +17,6 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from AgentCrew.modules.memory.benchmark import (
-    cached_query_vector,
-    digest,
-    file_hash,
-    local_document_vectors,
-    query_from_case,
-    read_jsonl,
-)
 from AgentCrew.modules.memory.retrieval import MemorySearchCoordinator
 from AgentCrew.modules.memory.sqlite_repository import (
     SCHEMA_VERSION,
@@ -45,6 +37,14 @@ from scripts.benchmark_memory_retrieval import (
     frozen_protocol,
     input_evidence,
     run_benchmark,
+)
+from verification.memory.benchmark import (
+    cached_query_vector,
+    digest,
+    file_hash,
+    local_document_vectors,
+    query_from_case,
+    read_jsonl,
 )
 
 FIXTURE_POLICY = SQLiteSemanticPolicy(0.2)

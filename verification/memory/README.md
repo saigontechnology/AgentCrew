@@ -310,7 +310,7 @@ MEM-200 through MEM-204 are verified and PIC-approved for this offline tool. **M
 
 Files:
 
-- `AgentCrew/modules/memory/benchmark.py`: strict JSON/JSONL schemas, scope/reference/review validation, metrics, bounded adapters and answer-evaluation hooks. Not wired into production search.
+- `verification/memory/benchmark.py`: strict JSON/JSONL schemas, scope/reference/review validation, metrics, bounded adapters and answer-evaluation hooks. Not wired into production search.
 - `scripts/benchmark_memory_retrieval.py`: explicit CLI, isolated Chroma/readonly SQLite backends, reports, private draft preparation, calibration freeze and persistent holdout guard.
 - `verification/memory/verify_phase3.py`: fictional-data checks, fake HTTP (no network), source-policy cap/threshold checks without lifecycle repair, and single-use/freeze verification.
 - `phase3-synthetic-summary.json`: aggregate **synthetic-only** sample. Hash embeddings simulate a contract, not a configured Chroma effectiveness baseline.
@@ -769,3 +769,25 @@ precision, forbidden fragments, and literal fact coverage only. It does not
 perform automatic production synthesis, evaluate live-agent compliance, claim
 semantic quality, access private memory, run holdouts, or change benchmark
 acceptance. The existing Phase 4 freeze failure remains a separate blocker.
+
+## Checkout benchmark relocation and confirmed startup migration
+
+The benchmark implementation is `verification/memory/benchmark.py`, imported by
+checkout scripts/verifiers only. Production packages contain no compatibility
+shim. Historical reviewed anchors still name the old Git blobs at commit
+`2610c828`; they were not repointed. The Phase 4 current-file benchmark entry is
+the one explicitly relocated entry; the remaining pre-existing gate drift is
+not reconciled. Current extraction/benchmark code identities use the new path.
+
+```sh
+uv run --no-sync python verification/memory/verify_startup_migration.py
+uv run --no-sync python -m pytest verification/memory/verify_startup_migration.py -o 'python_functions=checks_*' -q
+```
+
+The focused verifier uses fictional SQLite/Chroma-layout files, injected command
+execution and no uvx/network/model calls. It covers confirmation/launch failure,
+read-only destination validation, artifact-only backup, permissions/hashes,
+rollback/recovery, unsafe paths, permanent skip markers, interactive propagation,
+and relocated imports. Phase 6 retains the standalone verified migrator checks;
+startup orchestration is tested separately. See `CONFIGURATION.md` for the
+permanent-skip and manual-recovery policy. The full Phase 4 gate is not green.

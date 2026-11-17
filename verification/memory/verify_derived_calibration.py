@@ -14,8 +14,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from AgentCrew.modules.memory import benchmark as memory
 from scripts import benchmark_memory_retrieval as runner
+from verification.memory import benchmark as memory
 from verification.memory.verify_calibration_loader import (
     checks_boundaries,
     rejects,
@@ -393,7 +393,7 @@ def checks_chain(folder):
                 "shared_validation_sha256",
                 {
                     **memory.REVIEWED_DERIVATION_SHARED_SOURCES,
-                    "AgentCrew/modules/memory/benchmark.py": memory.file_hash(
+                    "verification/memory/benchmark.py": memory.file_hash(
                         Path(memory.__file__)
                     ),
                 },

@@ -25,15 +25,15 @@ for site in (executable.parent.parent / "lib").glob("python*/site-packages"):
         sys.path.append(site_path)
 
 import scripts.benchmark_memory_retrieval as runner
-from AgentCrew.modules.memory.benchmark import (
+from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
+from AgentCrew.modules.memory.voyageai_ef import VoyageEmbeddingFunction
+from verification.memory.benchmark import (
     BenchmarkError,
     digest,
     file_hash,
     load_fresh_holdout_dataset,
     record_from_row,
 )
-from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
-from AgentCrew.modules.memory.voyageai_ef import VoyageEmbeddingFunction
 
 
 def vector(index: int) -> list[float]:

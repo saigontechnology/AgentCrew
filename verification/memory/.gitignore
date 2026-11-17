@@ -1,5 +1,6 @@
 *
 !.gitignore
+!benchmark.py
 !README.md
 !baseline.json
 !fixture-manifest.json
@@ -23,5 +24,6 @@
 !verify_phase5.py
 !verify_lossless_consolidation.py
 !verify_grounded_reconstruction.py
+!verify_startup_migration.py
 !verify_phase6.py
 !verify_tool_evidence.py

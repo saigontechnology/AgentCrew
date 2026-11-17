@@ -27,7 +27,6 @@ for site in (executable.parent.parent / "lib").glob("python*/site-packages"):
 
 from AgentCrew.modules.memory import tool
 from AgentCrew.modules.memory.base_service import BaseMemoryService
-from AgentCrew.modules.memory.benchmark import POLICY
 from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
 from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
 from AgentCrew.modules.memory.sqlite_service import SQLiteMemoryService
@@ -41,6 +40,7 @@ from AgentCrew.modules.memory.types import (
     MemorySearchResult,
     SQLiteSemanticPolicy,
 )
+from verification.memory.benchmark import POLICY
 
 FROZEN_POLICY = {
     "name": "qualified-sqlite-signals-v1",
@@ -59,7 +59,7 @@ FROZEN_POLICY = {
 FROZEN_FILE_HASHES = {
     "scripts/benchmark_memory_retrieval.py": "306f944191043e3ffc365e1991d09d3166a841cd399ee725ef95b36274227c90",
     "scripts/extract_memory_calibration.py": "73871314c8b32481085c178817ae2c084e1322d137a9422b7a9a6c0c71a7b186",
-    "AgentCrew/modules/memory/benchmark.py": "09613535d8638d7b7381f4905461919699334fa9db9d79cacf02f4db7b696bd8",
+    "verification/memory/benchmark.py": "efd65b0c19e23e9cc70c19d0efa57a7aff77a28d634cb8e356384a741a2aca67",
     "AgentCrew/modules/memory/retrieval.py": "a602e6965cd332a48aa10dee0de395866925a019d9e9085cc3901499dd85fa05",
     "AgentCrew/modules/memory/record_parser.py": "c27552f2d77d344a37b68a3df3c18b03c81041f54d98e735081c77f16aca2e36",
     "AgentCrew/modules/memory/types.py": "64a7cd9a321cb624c5aa3c97469d2ecfdd3e9e4e10b1149fb54d738238d1ab06",

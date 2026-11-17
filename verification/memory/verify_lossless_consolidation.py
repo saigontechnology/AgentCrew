@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import copy
 import hashlib
@@ -1303,6 +1304,59 @@ def checks_chroma_query_snapshot_rejection():
 
 
 def checks_freeze_and_schema_contract():
+    def relocated_shape(source, current_paths=False):
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.level == 1:
+                    node.module = "AgentCrew.modules.memory." + node.module
+                    node.level = 0
+                elif node.module == "AgentCrew.modules.memory.benchmark":
+                    node.module = "verification.memory.benchmark"
+                elif node.module == "AgentCrew.modules.memory" and any(
+                    alias.name == "benchmark" for alias in node.names
+                ):
+                    node.module = "verification.memory"
+            elif (
+                current_paths
+                and isinstance(node, ast.Constant)
+                and node.value == "AgentCrew/modules/memory/benchmark.py"
+            ):
+                node.value = "verification/memory/benchmark.py"
+        imports = sorted(
+            ast.dump(node)
+            for node in tree.body
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+        )
+        body = ast.Module(
+            body=[
+                node
+                for node in tree.body
+                if not isinstance(node, (ast.Import, ast.ImportFrom))
+            ],
+            type_ignores=[],
+        )
+        return imports, ast.dump(body)
+
+    relocated = {
+        "verification/memory/benchmark.py": "AgentCrew/modules/memory/benchmark.py",
+        "scripts/benchmark_memory_retrieval.py": "scripts/benchmark_memory_retrieval.py",
+        "scripts/extract_memory_calibration.py": "scripts/extract_memory_calibration.py",
+    }
+    for current, original in relocated.items():
+        original_source = subprocess.check_output(
+            ["git", "show", f"91c3a0dc:{original}"], cwd=ROOT
+        )
+        require(
+            relocated_shape(
+                original_source, current_paths=current.startswith("scripts/")
+            )
+            == relocated_shape(
+                (ROOT / current).read_text(),
+                current_paths=current.startswith("scripts/"),
+            ),
+            "Benchmark relocation changed semantics or historical anchors",
+        )
     state = {
         "hashes": {
             key: hashlib.sha256((ROOT / key).read_bytes()).hexdigest()
@@ -1313,9 +1367,15 @@ def checks_freeze_and_schema_contract():
     }
     baseline = {
         "hashes": {
-            key: hashlib.sha256(
-                subprocess.check_output(["git", "show", f"91c3a0dc:{key}"], cwd=ROOT)
-            ).hexdigest()
+            key: (
+                state["hashes"][key]
+                if key in relocated
+                else hashlib.sha256(
+                    subprocess.check_output(
+                        ["git", "show", f"91c3a0dc:{key}"], cwd=ROOT
+                    )
+                ).hexdigest()
+            )
             for key in phase4.FROZEN_FILE_HASHES
         },
         "methods": "f9c56e3213561ba231ef4f64d7b087eb93d868cba53e0095f43d0d2f44045ac8",
@@ -1324,14 +1384,12 @@ def checks_freeze_and_schema_contract():
     require(
         json.loads(json.dumps(state)) == baseline, "Slice 4 introduced freeze drift"
     )
-    require(SCHEMA_VERSION == 1, "Schema version changed")
-    original = subprocess.check_output(
-        ["git", "show", "91c3a0dc:AgentCrew/modules/memory/benchmark.py"], cwd=ROOT
-    )
     require(
-        original == (ROOT / "AgentCrew/modules/memory/benchmark.py").read_bytes(),
-        "Historical provenance anchors changed",
+        state["hashes"]["verification/memory/benchmark.py"]
+        == phase4.FROZEN_FILE_HASHES["verification/memory/benchmark.py"],
+        "Relocated benchmark freeze mismatch",
     )
+    require(SCHEMA_VERSION == 1, "Schema version changed")
 
 
 def main():

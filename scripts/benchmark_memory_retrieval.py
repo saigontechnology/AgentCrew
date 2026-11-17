@@ -27,7 +27,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from AgentCrew.modules.memory.benchmark import (
+from AgentCrew.modules.memory.retrieval import MemorySearchCoordinator
+from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
+from AgentCrew.modules.memory.types import SQLiteSemanticPolicy
+from scripts.migrate_chroma_memory_to_sqlite import (
+    _ignored,
+    _lock,
+    _overlap,
+    _path,
+    _private_directory,
+    _sdk_collection,
+    _write_json,
+    fingerprint,
+)
+from verification.memory.benchmark import (
     POLICY,
     PROMPT,
     BenchmarkError,
@@ -58,19 +71,6 @@ from AgentCrew.modules.memory.benchmark import (
     read_jsonl,
     rerank_hits,
     scope_eligible,
-)
-from AgentCrew.modules.memory.retrieval import MemorySearchCoordinator
-from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
-from AgentCrew.modules.memory.types import SQLiteSemanticPolicy
-from scripts.migrate_chroma_memory_to_sqlite import (
-    _ignored,
-    _lock,
-    _overlap,
-    _path,
-    _private_directory,
-    _sdk_collection,
-    _write_json,
-    fingerprint,
 )
 
 ASSETS = ROOT / "verification/memory"
@@ -119,7 +119,7 @@ def code_identity() -> dict:
     files = [
         Path(__file__),
         ROOT / "scripts/extract_memory_calibration.py",
-        ROOT / "AgentCrew/modules/memory/benchmark.py",
+        ROOT / "verification/memory/benchmark.py",
         ROOT / "AgentCrew/modules/memory/retrieval.py",
         ROOT / "AgentCrew/modules/memory/sqlite_repository.py",
         ROOT / "AgentCrew/modules/memory/record_parser.py",
