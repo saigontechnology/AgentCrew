@@ -9,17 +9,19 @@ identify conversation evidence, not a promise that bytes remain downloadable.
 from __future__ import annotations
 
 import hashlib
+import ntpath
 import os
 import re
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import quote
 from xml.etree import ElementTree as ET
 
 MAX_RESOURCES_PER_TURN = 32
 MAX_URI_CHARACTERS = 4096
 SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:(?:\\|/(?!/))|\\\\|//)")
 FILE_NAME = re.compile(r"^[^\s/]+\.[A-Za-z0-9]{1,12}$")
 _current_resources: ContextVar[dict[str, ResourceAccess] | None] = ContextVar(
     "agentcrew_resource_access", default=None
@@ -63,8 +65,16 @@ def canonical_uri(
         for char in value
     ):
         return None
+    if WINDOWS_ABSOLUTE.match(value):
+        windows_path = PureWindowsPath(ntpath.normpath(value))
+        if windows_path.is_absolute():
+            uri = windows_path.as_uri()
+            return uri if len(uri) <= MAX_URI_CHARACTERS else None
     if SCHEME.match(value):
         return value if value == value.strip() else None
+    if cwd and WINDOWS_ABSOLUTE.match(cwd) and PureWindowsPath(cwd).is_absolute():
+        uri = PureWindowsPath(ntpath.normpath(ntpath.join(cwd, value))).as_uri()
+        return uri if len(uri) <= MAX_URI_CHARACTERS else None
     if not path and not (
         value.startswith(("/", "./", "../", "~/"))
         or "/" in value
@@ -120,6 +130,24 @@ def capture_resource(uri: str, name: str | None = None, *, path: bool = False) -
 def snapshot_resources() -> tuple[ResourceAccess, ...]:
     resources = _current_resources.get()
     return tuple(resources.values()) if resources else ()
+
+
+def snapshot_resource_data() -> tuple[tuple[str, str | None], ...]:
+    """Immutable, JSON-portable pending-turn metadata; never contains tool results."""
+    return tuple((resource.uri, resource.name) for resource in snapshot_resources())
+
+
+def seed_resource_data(data: object) -> None:
+    """Restore only bounded URI/name pairs from an existing continuation state."""
+    if not isinstance(data, (tuple, list)):
+        return
+    for pair in data[:MAX_RESOURCES_PER_TURN]:
+        if (
+            isinstance(pair, (tuple, list))
+            and len(pair) == 2
+            and isinstance(pair[0], str)
+        ):
+            capture_resource(pair[0], pair[1] if isinstance(pair[1], str) else None)
 
 
 def register_resource_tool(tool_name: str, argument: str = "uri") -> None:
@@ -263,12 +291,18 @@ def enforce_resources(
 
 def query_resource_uris(query: str) -> tuple[str, ...]:
     """Bounded direct lookup only for URI/path-shaped queries, never ordinary words."""
-    if ":" not in query and "/" not in query and not FILE_NAME.fullmatch(query):
+    if (
+        ":" not in query
+        and "/" not in query
+        and not FILE_NAME.fullmatch(query)
+        and not WINDOWS_ABSOLUTE.match(query)
+    ):
         return ()
     values = []
     tokens = (
         [query]
-        if SCHEME.match(query) and not any(c.isspace() for c in query)
+        if WINDOWS_ABSOLUTE.match(query)
+        or (SCHEME.match(query) and not any(c.isspace() for c in query))
         else re.findall(
             r"[A-Za-z][A-Za-z0-9+.-]*:[^\s<>\"']+|(?:^|(?<=\s))(?:/|\./|\.\./|~/)[^\s<>\"']+",
             query,

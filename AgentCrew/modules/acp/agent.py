@@ -607,100 +607,103 @@ class AgentCrewAcpAgent(Agent):
         **kwargs,
     ):
 
+        from AgentCrew.modules.agents.tool_result_summary import (
+            bind_inference_scope,
+            reset_inference_scope,
+        )
+        from AgentCrew.modules.memory.resources import seed_resource_data
+
         async with self._session_request(session_id):
-            logger.debug(f"Prompt: {session_id}, {prompt}, {message_id}, {kwargs}")
-            from .message_extraction import prompt_to_text
+            scope_token = bind_inference_scope(f"acp:{session_id}")
+            state = None
+            try:
+                logger.debug(f"Prompt: {session_id}, {prompt}, {message_id}, {kwargs}")
+                from .message_extraction import prompt_to_text
 
-            # Serialize concurrent prompt calls for the same session
-            async with self._get_session_lock(session_id):
-                state = self._sessions.get(session_id)
-                if state is None:
-                    raise RequestError.resource_not_found(f"session:{session_id}")
+                # Serialize concurrent prompt calls for the same session
+                async with self._get_session_lock(session_id):
+                    state = self._sessions.get(session_id)
+                    if state is None:
+                        raise RequestError.resource_not_found(f"session:{session_id}")
 
-                user_text = prompt_to_text(prompt)
-                if user_text.strip() and state.pending_ask_tool is not None:
-                    handled = await self._turn_executor.resume_pending_ask(
-                        session_id,
-                        state,
-                        user_text,
+                    seed_resource_data(state.pending_resources)
+                    user_text = prompt_to_text(prompt)
+                    if user_text.strip() and state.pending_ask_tool is not None:
+                        handled = await self._turn_executor.resume_pending_ask(
+                            session_id,
+                            state,
+                            user_text,
+                        )
+                        if handled:
+                            user_text = ""
+                    if user_text.strip():
+                        state.history.append(
+                            {
+                                "role": "user",
+                                "content": [{"type": "text", "text": user_text}],
+                            }
+                        )
+                        if not state.title:
+                            state.title = user_text[:80].split("\n")[0].strip()
+                            await self._client_comm.send_session_info_update(
+                                session_id, state
+                            )
+
+                    state.cancelled = False
+                    state.current_task = asyncio.current_task()
+
+                # Release the lock during run_turn so cancel() can interrupt
+                ctx = AcpSessionContext(
+                    conn=self._conn,
+                    session_id=session_id,
+                    client_capabilities=self._tool_manager.client_capabilities,
+                    active_terminals=state.tool_state.acp_active_terminals,
+                )
+                token = _current_acp_session.set(ctx)
+
+                from acp.schema import PromptResponse
+
+                try:
+                    from AgentCrew.modules.memory.resources import capture_attachment
+
+                    for index, block in enumerate(prompt):
+                        if getattr(block, "type", None) == "resource":
+                            resource = getattr(block, "resource", None)
+                            if resource is not None:
+                                capture_attachment(
+                                    str(resource.uri)
+                                    if getattr(resource, "uri", None)
+                                    else None,
+                                    scope=f"acp:{session_id}",
+                                    identifier=f"{message_id or uuid.uuid4()}/{index}",
+                                )
+                    await self._turn_executor.run_turn(session_id, state, self._conn)
+                    return PromptResponse(
+                        stop_reason="cancelled" if state.cancelled else "end_turn",
                     )
-                    if handled:
-                        user_text = ""
-                if user_text.strip():
-                    state.history.append(
-                        {
-                            "role": "user",
-                            "content": [{"type": "text", "text": user_text}],
-                        }
+                except asyncio.CancelledError:
+                    state.cancelled = True
+                    return PromptResponse(
+                        stop_reason="cancelled",
                     )
-                    if not state.title:
-                        state.title = user_text[:80].split("\n")[0].strip()
-                        await self._client_comm.send_session_info_update(
+                except Exception as e:
+                    logger.exception("ACP prompt failed")
+                    await self._client_comm.send_agent_message(
+                        session_id, f"AgentCrew ACP error: {e}"
+                    )
+                    return PromptResponse(
+                        stop_reason="refusal",
+                    )
+                finally:
+                    _current_acp_session.reset(token)
+                    # Re-acquire lock to persist — safe because run_turn has returned
+                    async with self._get_session_lock(session_id):
+                        state.current_task = None
+                        await self._session_lifecycle._persist_session(
                             session_id, state
                         )
-
-                state.cancelled = False
-                state.current_task = asyncio.current_task()
-
-            # Release the lock during run_turn so cancel() can interrupt
-            ctx = AcpSessionContext(
-                conn=self._conn,
-                session_id=session_id,
-                client_capabilities=self._tool_manager.client_capabilities,
-                active_terminals=state.tool_state.acp_active_terminals,
-            )
-            token = _current_acp_session.set(ctx)
-
-            from acp.schema import PromptResponse
-
-            from AgentCrew.modules.agents.tool_result_summary import (
-                bind_inference_scope,
-            )
-
-            scope_token = bind_inference_scope(f"acp:{session_id}")
-
-            try:
-                from AgentCrew.modules.memory.resources import capture_attachment
-
-                for index, block in enumerate(prompt):
-                    if getattr(block, "type", None) == "resource":
-                        resource = getattr(block, "resource", None)
-                        if resource is not None:
-                            capture_attachment(
-                                str(resource.uri)
-                                if getattr(resource, "uri", None)
-                                else None,
-                                scope=f"acp:{session_id}",
-                                identifier=f"{message_id or uuid.uuid4()}/{index}",
-                            )
-                await self._turn_executor.run_turn(session_id, state, self._conn)
-                return PromptResponse(
-                    stop_reason="cancelled" if state.cancelled else "end_turn",
-                )
-            except asyncio.CancelledError:
-                state.cancelled = True
-                return PromptResponse(
-                    stop_reason="cancelled",
-                )
-            except Exception as e:
-                logger.exception("ACP prompt failed")
-                await self._client_comm.send_agent_message(
-                    session_id, f"AgentCrew ACP error: {e}"
-                )
-                return PromptResponse(
-                    stop_reason="refusal",
-                )
             finally:
-                from AgentCrew.modules.agents.tool_result_summary import (
-                    reset_inference_scope,
-                )
-
                 reset_inference_scope(scope_token)
-                _current_acp_session.reset(token)
-                # Re-acquire lock to persist — safe because run_turn has returned
-                async with self._get_session_lock(session_id):
-                    state.current_task = None
-                    await self._session_lifecycle._persist_session(session_id, state)
 
     async def cancel(self, session_id: str, **kwargs):
         logger.debug(f"Cancel: {session_id}, {kwargs}")

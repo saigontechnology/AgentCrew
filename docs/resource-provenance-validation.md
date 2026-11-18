@@ -2,14 +2,18 @@
 
 ## Focused checks
 
-`verification/memory/test_resource_provenance.py`: **41 passed** with pytest.
+`verification/memory/test_resource_provenance.py`: **51 passed** with pytest after review remediation.
 All inputs are fictional; no live network/model calls or private memories were used.
 The deprecated `tests/` tree was not run.
 
 Coverage includes concurrent chat/A2A/ACP/job scope isolation and cleanup on
 success/error/cancellation; actual resolved tool dispatch; successful/failed MCP
 fetches and registration without capture; chat pre-inference attachment seeding;
-actual ACP embedded-resource turns; raw/local/HTTP A2A attachment locators; URI
+actual ACP embedded-resource turns; actual job-file preparation through final
+memory queuing; A2A and ACP chained asks carrying original and newly read resources
+with bounded deduplication (A2A memory/file/Redis backends); chat setup-failure
+retry provenance; host-independent Windows drive/UNC paths; preservation of
+single-letter custom URI schemes; raw/local/HTTP A2A attachment locators; URI
 caps/deduplication/no stat or symlink resolution; legacy/structured XML; Unicode
 entity ambiguity; model URI invention/rewrite rejection; one-call extraction and
 no-model fallback; immutable queue data; explicit candidate/CV links without
@@ -22,6 +26,10 @@ Passing existing harnesses:
 
 - `verify_tool_evidence.py`
 - `verify_exact_lookup.py` — 151 candidate/result comparisons, two index-led plans
+- `verify_fts_payload.py` — full equivalence harness: 140 candidate/coordinator
+  comparisons, 120 entity comparisons, 298 prior-coordinator comparisons, 15 word
+  equivalence/mutation cases, 4 FTS and 12 entity raw SQL checks, and concurrent
+  reader/writer snapshot checks
 - `verify_grounded_reconstruction.py`
 - `verify_migration_operator.py` — 25 fictional source/destination records
 - `verify_startup_migration.py`
@@ -34,10 +42,13 @@ Passing existing harnesses:
   `checks_freeze_and_schema_contract`
 
 Changed Python files pass `uvx ruff check --statistics` and
-`uvx ruff format --check`; `git diff --check` passes. Pyright 1.1.414 reports the
-same **75 existing diagnostics** on the 19 changed existing production files as
-on the base checkout; the new collector makes 20 analyzed files with no additional
-diagnostic messages. This is not a clean repository-wide type-check claim.
+`uvx ruff format --check`; `git diff --check` passes. In the initial implementation,
+Pyright 1.1.414 reported the same **75 existing diagnostics** on the 19 changed
+existing production files as on the original base checkout, with no diagnostics
+in the new collector module. For remediation, all **9 changed production files**
+were compared against an archive of commit `be3064b6`: **5 diagnostics before and
+5 after, with identical diagnostic messages**. This is not a clean repository-wide
+type-check claim.
 
 ## Historical gates, kept explicit
 
@@ -54,11 +65,16 @@ Historical reviewed-derivation hashes/provenance pins were **not updated**.
   freeze contract detects the intentional implementation changes (`Slice 4
   introduced freeze drift`). This is a feature-related historical gate mismatch,
   not a pre-existing failure and not a behavioral pass for the entire harness.
-- `verify_fts_payload.py` attempts to open the schema-2 fixture using a hash-pinned
-  schema-1 reference repository and rejects the version. Its reference code/hash
-  remains unchanged. That full historical comparison is not claimed as passed.
+The FTS payload harness is a **current equivalence harness**, not an excluded
+historical gate. Its schema plumbing was corrected: pinned schema-1 repositories
+read disposable schema-compatible copies made with SQLite backup; only those
+copies drop the schema-2 resource projections and change version markers. The
+current schema-2 fixture is unchanged. Equality of canonical/base derived and FTS
+rows plus foreign-key integrity is asserted when making each copy. All original
+comparison assertions and committed reference hashes remain unchanged, and the
+full harness now passes.
 
-## Performance samples
+## Initial implementation performance samples
 
 Python 3.12.10, SQLite 3.47.1, Linux x86_64, fictional corpus of 2,000 records.
 Search samples: 200 paired, alternating-order measurements after warm-up in the
@@ -92,6 +108,36 @@ and check logs are available locally in `/tmp/agentcrew-resource-checks/`, notab
 `benchmark-final-paired.json`. They are not historical calibration/provenance pins.
 No production instrumentation, logging or polling was added for measurements.
 
+## Review-remediation performance delta
+
+Compared with the committed implementation `be3064b6` using its archived source,
+Python/SQLite and the 2,000-record fixture above. Ordinary search comparisons were
+paired in one process (200 samples). Callback/snapshot comparisons below used
+separate runs with the same warm-up and 5,000 samples; small relative differences
+are raw observations, not noise-free causal estimates. Resource-write and URI
+search runs used 200 samples. No benchmark code was added to production.
+
+| Operation | `be3064b6` p95 | Remediated p95 | Observed change |
+| --- | ---: | ---: | ---: |
+| Non-resource callback | 0.170 µs | 0.174 µs | +2.35% |
+| Custom URI capture with scope | 3.940 µs | 4.007 µs | +1.70% |
+| Local file hook with scope | 11.446 µs | 11.728 µs | +2.46% |
+| Snapshot of 32 | 0.350 µs | 0.362 µs | +3.43% |
+| Write 32 resources/32 links, excluding commit | 300.008 µs | 285.882 µs | −4.71% |
+| Exact URI search | 4.456 ms | 4.475 ms | +0.42% |
+| Ordinary selective search, paired | 3.580 ms | 3.583 ms | +0.10% |
+| Ordinary broad search, paired | 30.978 ms | 31.051 ms | +0.23% |
+
+Raw samples: `/tmp/agentcrew-resource-checks/benchmark-remediation-paired.json`
+and `benchmark-remediation-baseline.json`. These remain fixture-specific samples;
+large production corpora and resource-bearing ordinary-query regression are not
+established by them.
+
+The optional chat retry finding was reproduced by a focused failing test: stream
+setup cleared a queued attachment before execution. Clearing now occurs only after
+stream setup/binding succeeds; the same test verifies a successful retry still
+seeds the original URI. No new persistence or background work was added.
+
 ## Commands
 
 During this work, the feature worktree reused the installed base environment with
@@ -117,3 +163,8 @@ under a writer transaction; read-only v1 opens cannot upgrade; raw upload eviden
 locators do not retain content; relation labels are model extraction claims checked
 for structural validity, not independently verified identity claims; and real
 large-corpus performance remains to be measured on an appropriate private dataset.
+Exact HTTP/MCP URIs may retain credential-bearing query strings; this is an explicit
+residual privacy/security caveat of the approved exact-URI semantics, not redacted
+or encrypted by this feature. Cursor SDK-internal and remote-agent accesses remain
+outside the documented local capture surfaces. ACP pending-ask state remains
+session-local rather than restart-durable, matching its existing ask lifecycle.

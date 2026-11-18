@@ -206,6 +206,7 @@ class AgentCrewSessionStore(ABC):
         remaining_tools: list,
         owner: str = "default",
         agent_namespace: str = "",
+        resources: tuple[tuple[str, str | None], ...] = (),
     ) -> None: ...
     @abstractmethod
     async def get_pending_tools(
@@ -270,11 +271,13 @@ class InMemorySessionStore(AgentCrewSessionStore):
         remaining_tools: list,
         owner: str = "default",
         agent_namespace: str = "",
+        resources: tuple[tuple[str, str | None], ...] = (),
     ) -> None:
         async with self._lock:
             self._pending[self._pk(task_id, owner, agent_namespace)] = {
                 "ask_tool_use": ask_tool_use,
                 "remaining_tools": remaining_tools,
+                "resources": resources,
             }
 
     async def get_pending_tools(
@@ -367,9 +370,14 @@ class FileSessionStore(AgentCrewSessionStore):
         remaining_tools: list,
         owner: str = "default",
         agent_namespace: str = "",
+        resources: tuple[tuple[str, str | None], ...] = (),
     ) -> None:
         path = self._pending_path(task_id, owner, agent_namespace)
-        data = {"ask_tool_use": ask_tool_use, "remaining_tools": remaining_tools}
+        data = {
+            "ask_tool_use": ask_tool_use,
+            "remaining_tools": remaining_tools,
+            "resources": resources,
+        }
         async with self._lock_for(path):
             await asyncio.to_thread(atomic_write, path, data)
 
@@ -462,9 +470,14 @@ class RedisSessionStore(AgentCrewSessionStore):
         remaining_tools: list,
         owner: str = "default",
         agent_namespace: str = "",
+        resources: tuple[tuple[str, str | None], ...] = (),
     ) -> None:
         r = await self._get_redis()
-        data = {"ask_tool_use": ask_tool_use, "remaining_tools": remaining_tools}
+        data = {
+            "ask_tool_use": ask_tool_use,
+            "remaining_tools": remaining_tools,
+            "resources": resources,
+        }
         await r.setex(
             self._pk(task_id, owner, agent_namespace), self._ttl, json.dumps(data)
         )

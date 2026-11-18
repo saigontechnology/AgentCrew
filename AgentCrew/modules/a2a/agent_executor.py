@@ -119,6 +119,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
             )
 
             if pending:
+                from AgentCrew.modules.memory.resources import seed_resource_data
+
+                seed_resource_data(pending.get("resources", ()))
                 await self._resume_from_input_required(
                     context, event_queue, task_id, context_id, history, pending
                 )
@@ -288,7 +291,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         context_id: str,
         history: list[dict[str, Any]],
         answer_state: AnswerArtifactState,
-    ) -> None:
+    ) -> tuple[str, TokenUsage] | None:
         agent = self.agent
         artifacts: list[Any] = []
         token_usage = TokenUsage()
@@ -296,7 +299,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         cancel_event = await self._get_cancel_event(task_id)
 
         try:
-            await self._process_task(
+            return await self._process_task(
                 context,
                 event_queue,
                 task_id,
@@ -732,23 +735,19 @@ class AgentCrewA2AExecutor(AgentExecutor):
         answer_state = self._build_answer_state(context, task_id)
 
         if remaining_tools:
-            for remaining_tool in remaining_tools:
-                result = await self._execute_single_tool(
-                    self.agent,
-                    task_id,
-                    context_id,
-                    remaining_tool,
-                    history,
-                    event_queue,
-                    owner,
-                )
-                if result == ToolCallResult.INPUT_REQUIRED:
-                    return
+            result = await self._execute_tool_calls(
+                self.agent,
+                task_id,
+                context_id,
+                remaining_tools,
+                history,
+                event_queue,
+                owner,
+            )
+            if result == ToolCallResult.INPUT_REQUIRED:
+                return
 
-        await self.session_store.clear_pending_tools(
-            task_id, owner, self._agent_namespace
-        )
-        await self._run_agent_loop(
+        result = await self._run_agent_loop(
             context,
             event_queue,
             task_id,
@@ -756,6 +755,10 @@ class AgentCrewA2AExecutor(AgentExecutor):
             history,
             answer_state,
         )
+        if result and result[0].strip():
+            await self.session_store.clear_pending_tools(
+                task_id, owner, self._agent_namespace
+            )
 
     async def _finalize_task(
         self,

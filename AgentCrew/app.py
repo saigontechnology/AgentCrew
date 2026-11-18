@@ -574,6 +574,13 @@ class AgentCrewApplication:
                                     file_path
                                 )
                                 if file_content:
+                                    from AgentCrew.modules.memory.resources import (
+                                        capture_attachment,
+                                    )
+
+                                    capture_attachment(
+                                        file_path, os.path.basename(file_path)
+                                    )
                                     all_file_contents.append(file_content)
                             if all_file_contents:
                                 history.append(

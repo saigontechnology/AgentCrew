@@ -870,7 +870,6 @@ class MessageHandler:
 
             for uri in self._pending_resource_attachments:
                 capture_resource(uri)
-            self._pending_resource_attachments.clear()
             loop = asyncio.get_running_loop()
             session = self._create_stream_session()
             task = loop.create_task(
@@ -879,6 +878,7 @@ class MessageHandler:
                 )
             )
             session.bind(loop, task)
+            self._pending_resource_attachments.clear()
 
             audio_handler = None
             if self.voice_service is not None:

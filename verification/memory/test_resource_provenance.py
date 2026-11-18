@@ -672,10 +672,17 @@ async def test_chat_pending_attachment_and_scope_seed(tmp_path):
     assert response == "Reviewed"
     assert handler._pending_resource_attachments == []
     assert snapshot_resources() == ()
+    handler._pending_resource_attachments.append((tmp_path / "candidate.pdf").as_uri())
     handler._create_stream_session.side_effect = RuntimeError("setup failed")
     with pytest.raises(RuntimeError):
         await MessageHandler.get_assistant_response(handler)
     assert snapshot_resources() == () and current_inference_scope() is None
+    assert handler._pending_resource_attachments == [
+        (tmp_path / "candidate.pdf").as_uri()
+    ]
+    handler._create_stream_session.side_effect = None
+    response, _usage = await MessageHandler.get_assistant_response(handler)
+    assert response == "Reviewed" and handler._pending_resource_attachments == []
 
 
 @pytest.mark.asyncio
@@ -786,6 +793,7 @@ async def test_actual_acp_embedded_attachment_scope_and_cleanup(outcome):
 
     state = SimpleNamespace(
         pending_ask_tool=None,
+        pending_resources=(),
         history=[],
         title="Existing session",
         cancelled=False,
@@ -864,3 +872,359 @@ async def test_ambiguous_merge_cannot_destroy_preserved_links():
     assert {item.uri for item in parsed.resources} == {URI, CV}
     assert len(parsed.resource_links) == 1
     assert llm.process_message.await_count == 1
+
+
+def _queueing_agent():
+    from AgentCrew.modules.agents.local_agent import LocalAgent
+    from AgentCrew.modules.memory.sqlite_service import SQLiteMemoryService
+
+    service = object.__new__(SQLiteMemoryService)
+    service._session_id = "fictional-session"
+    service._worker = SimpleNamespace(queue_store=Mock(return_value=True))
+    agent = object.__new__(LocalAgent)
+    agent.name = "FictionalAgent"
+    agent.llm = Mock()
+    agent._memory_coordinator = SimpleNamespace(
+        extract_last_user_message_for_memory=lambda _history: "Review CV",
+        store_memory_if_available=lambda user, _history, response, session: (
+            service.store_conversation(user, [response], agent.name, session)
+        ),
+    )
+    agent.format_message = lambda _kind, data: {
+        "role": "assistant",
+        "content": [{"type": "text", "text": data.get("message", "tool result")}],
+    }
+    return agent, service._worker.queue_store
+
+
+class _FictionalStream:
+    def __init__(self, callback, tools=()):
+        self.callback = callback
+        self.tools = list(tools)
+
+    async def __aiter__(self):
+        from AgentCrew.modules.llm.token_usage import TokenUsage
+
+        self.callback(self.tools, TokenUsage())
+        yield "Reviewed CV", "", None
+
+    def format_assistant_message(self, response, **_kwargs):
+        return {"role": "assistant", "content": [{"type": "text", "text": response}]}
+
+    async def aclose(self):
+        pass
+
+
+def test_actual_job_file_preparation_queues_canonical_uri(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+
+    from AgentCrew.app import AgentCrewApplication
+    from AgentCrew.modules.utils.file_handler import FileHandler
+
+    agent, queued = _queueing_agent()
+    agent.process_messages = lambda _history, callback: _FictionalStream(callback)
+    path = tmp_path / "Candidate CV.pdf"
+    monkeypatch.setattr(
+        FileHandler,
+        "async_process_file",
+        AsyncMock(side_effect=[{"type": "text", "text": "CV"}, None]),
+    )
+    manager = SimpleNamespace(
+        get_local_agent=lambda _name: agent,
+        select_agent_async=AsyncMock(return_value=True),
+    )
+
+    @contextmanager
+    def host():
+        with asyncio.Runner() as runner:
+            yield runner
+
+    app = SimpleNamespace(
+        _host_lifecycle=host,
+        setup=SimpleNamespace(
+            resolve_runtime_model=Mock(
+                return_value=SimpleNamespace(provider="fictional", model_id="mock")
+            ),
+            setup_services=Mock(return_value={}),
+            setup_agents=Mock(),
+        ),
+        agent_manager=manager,
+    )
+    assert (
+        AgentCrewApplication.run_job(
+            app,
+            "Review CV",
+            agent=agent.name,
+            files=[str(path), str(tmp_path / "failed.pdf")],
+        )
+        == "Reviewed CV"
+    )
+    operation = queued.call_args.args[0]
+    assert operation["resources"] == (ResourceAccess(path.as_uri(), path.name),)
+    built = asyncio.run(MemoryRecordBuilder().build(operation))
+    assert [
+        node.get("uri")
+        for node in ET.fromstring(built.document).findall("RESOURCES/RESOURCE")
+    ] == [path.as_uri()]
+    assert snapshot_resources() == () and current_inference_scope() is None
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        (r"C:\cvs\Candidate CV.pdf", "file:///C:/cvs/Candidate%20CV.pdf"),
+        ("C:/cvs/../candidate.pdf", "file:///C:/candidate.pdf"),
+        (r"\\server\share\Candidate CV.pdf", "file://server/share/Candidate%20CV.pdf"),
+        ("//server/share/candidate.pdf", "file://server/share/candidate.pdf"),
+    ],
+)
+def test_windows_paths_are_host_independent_uris(path, expected):
+    from AgentCrew.modules.memory.resources import query_resource_uris
+
+    assert canonical_uri(path) == expected
+    assert canonical_uri(path, path=True) == expected
+    assert expected in query_resource_uris(path)
+    token = bind_inference_scope("acp:windows")
+    try:
+        capture_attachment(path, "Candidate CV")
+        for tool in ("read_file", "acp_read_file"):
+            capture_tool_access(
+                {
+                    "resolved_tool_name": tool,
+                    "resolved_tool_input": {"file_path": path},
+                },
+                {"tool_result": "Read CV", "is_error": False},
+            )
+        assert snapshot_resources() == (ResourceAccess(expected, "Candidate CV"),)
+    finally:
+        reset_inference_scope(token)
+    assert canonical_uri(URI) == URI
+    assert canonical_uri("s://Bucket/EXACT?x=1") == "s://Bucket/EXACT?x=1"
+    assert (
+        canonical_uri("candidate.pdf", cwd=r"C:\cvs") == "file:///C:/cvs/candidate.pdf"
+    )
+
+
+def _ask(identifier):
+    return {
+        "id": identifier,
+        "name": "ask",
+        "input": {"questions": [{"question": "Continue?", "guided_answers": ["Yes"]}]},
+    }
+
+
+def _scripted_agent(stages):
+    agent, queued = _queueing_agent()
+    turns = iter(stages)
+    agent.process_messages = lambda _history, callback: _FictionalStream(
+        callback, next(turns)
+    )
+    agent.validate_tool_use = Mock(return_value=None)
+    agent.llm.execute_tool = AsyncMock(return_value="Read fictional file")
+    agent.calculate_usage_cost = Mock(return_value=0.0)
+    agent.get_model = Mock(return_value="fictional")
+    return agent, queued
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_count", [1, 40])
+async def test_actual_acp_chained_asks_keep_bounded_resources(new_count, tmp_path):
+    from contextlib import asynccontextmanager
+
+    from AgentCrew.modules.acp.agent import AgentCrewAcpAgent
+    from AgentCrew.modules.acp.session_state import AcpSessionState
+    from AgentCrew.modules.acp.turn_executor import TurnExecutor
+
+    new_tools = [
+        {
+            "id": f"read-{index}",
+            "name": "read_file",
+            "input": {"file_path": f"/fictional/cv-{index}.pdf"},
+        }
+        for index in range(new_count)
+    ]
+    new_tools.insert(
+        0,
+        {
+            "id": "duplicate",
+            "name": "read_file",
+            "input": {"file_path": "/home/user/cvs/example-candidate.pdf"},
+        },
+    )
+    agent, queued = _scripted_agent([[_ask("ask-1")], [*new_tools, _ask("ask-2")], []])
+    comm = SimpleNamespace(
+        **{
+            name: AsyncMock()
+            for name in (
+                "send_agent_message",
+                "send_thought_chunk",
+                "send_ask_request",
+                "send_tool_started",
+                "send_tool_completed",
+                "send_usage_update",
+                "send_session_info_update",
+            )
+        }
+    )
+    manager = SimpleNamespace(
+        client_capabilities={}, ensure_tools_for_session=AsyncMock()
+    )
+    turns = TurnExecutor(comm, manager)
+    turns._get_agent = AsyncMock(return_value=agent)
+    state = AcpSessionState(str(tmp_path), agent.name, title="Candidate review")
+
+    def queue_before_clear(operation):
+        assert state.pending_resources
+        assert operation["resources"][0].uri == CV
+        return True
+
+    queued.side_effect = queue_before_clear
+    lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def request(_session):
+        yield
+
+    host = SimpleNamespace(
+        _session_request=request,
+        _get_session_lock=lambda _session: lock,
+        _sessions={"session": state},
+        _tool_manager=manager,
+        _conn=None,
+        _client_comm=comm,
+        _turn_executor=turns,
+        _session_lifecycle=SimpleNamespace(_persist_session=AsyncMock()),
+    )
+    attached = SimpleNamespace(
+        type="resource", resource=SimpleNamespace(uri=CV, text="Candidate CV")
+    )
+    response = await AgentCrewAcpAgent.prompt(host, "session", [attached])
+    assert response.stop_reason == "end_turn" and state.pending_ask_tool is not None
+    assert state.pending_resources == ((CV, None),)
+    queued.assert_not_called()
+    assert snapshot_resources() == ()
+    answer = [SimpleNamespace(type="text", text="q0: Yes")]
+    await AgentCrewAcpAgent.prompt(host, "session", answer)
+    assert state.pending_ask_tool["tool_use"]["id"] == "ask-2"
+    assert len(state.pending_resources) == min(32, new_count + 1)
+    assert state.pending_resources[0] == (CV, None)
+    queued.assert_not_called()
+    await AgentCrewAcpAgent.prompt(host, "session", answer)
+    queued.assert_called_once()
+    captured = queued.call_args.args[0]["resources"]
+    assert len(captured) == min(32, new_count + 1)
+    assert captured[0] == ResourceAccess(CV)
+    assert len({item.uri for item in captured}) == len(captured)
+    built = await MemoryRecordBuilder().build(queued.call_args.args[0])
+    assert {
+        node.get("uri")
+        for node in ET.fromstring(built.document).findall("RESOURCES/RESOURCE")
+    } == {item.uri for item in captured}
+    assert state.pending_resources == () and state.pending_ask_tool is None
+    assert current_inference_scope() is None and snapshot_resources() == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store_kind", ["memory", "file", "redis"])
+async def test_actual_a2a_chained_asks_keep_attachment_and_remaining_tool_resources(
+    store_kind, monkeypatch, tmp_path
+):
+    from a2a.types.a2a_pb2 import Message, Part, Role, TaskState
+
+    from AgentCrew.modules.a2a.agent_executor import AgentCrewA2AExecutor
+    from AgentCrew.modules.a2a.session_store import (
+        FileSessionStore,
+        InMemorySessionStore,
+        RedisSessionStore,
+    )
+    from AgentCrew.modules.utils.file_handler import FileHandler
+
+    reads = [
+        {
+            "id": f"read-{index}",
+            "name": "read_file",
+            "input": {"file_path": f"/fictional/candidate-{index}.pdf"},
+        }
+        for index in range(2)
+    ]
+    agent, queued = _scripted_agent(
+        [[_ask("ask-1"), reads[0], _ask("ask-2"), reads[1]], []]
+    )
+    if store_kind == "memory":
+        store = InMemorySessionStore()
+    elif store_kind == "file":
+        store = FileSessionStore(str(tmp_path / "a2a"))
+    else:
+        store = RedisSessionStore()
+        data = {}
+        store._redis = SimpleNamespace(
+            get=AsyncMock(side_effect=lambda key: data.get(key)),
+            setex=AsyncMock(
+                side_effect=lambda key, _ttl, value: data.update({key: value})
+            ),
+            delete=AsyncMock(side_effect=lambda key: data.pop(key, None)),
+        )
+    executor = AgentCrewA2AExecutor(agent, store)
+    clear_pending = store.clear_pending_tools
+
+    async def clear_after_queue(*args):
+        queued.assert_called_once()
+        await clear_pending(*args)
+
+    monkeypatch.setattr(store, "clear_pending_tools", clear_after_queue)
+    monkeypatch.setattr(
+        FileHandler,
+        "async_process_file",
+        AsyncMock(return_value={"type": "text", "text": "Candidate CV"}),
+    )
+    events = SimpleNamespace(enqueue_event=AsyncMock())
+    context = SimpleNamespace(
+        task_id="task-1",
+        context_id="context-1",
+        call_context=None,
+        current_task=None,
+        message=Message(
+            role=Role.ROLE_USER, parts=[Part(url=CV, filename="Candidate CV.pdf")]
+        ),
+    )
+    await executor.execute(context, events)
+    pending = await store.get_pending_tools("task-1", "default", agent.name)
+    assert pending is not None and pending["ask_tool_use"]["id"] == "ask-1"
+    assert [tuple(pair) for pair in pending["resources"]] == [(CV, "Candidate CV.pdf")]
+    assert len(pending["remaining_tools"]) == 3
+    assert (
+        await store.get_pending_tools("task-1", "different-owner", agent.name) is None
+    )
+    assert await store.get_pending_tools("task-1", "default", "OtherAgent") is None
+    queued.assert_not_called()
+    assert current_inference_scope() is None and snapshot_resources() == ()
+    context.message = Message(role=Role.ROLE_USER, parts=[Part(text="Yes")])
+    await executor.execute(context, events)
+    pending = await store.get_pending_tools("task-1", "default", agent.name)
+    assert pending["ask_tool_use"]["id"] == "ask-2"
+    assert {pair[0] for pair in pending["resources"]} == {
+        CV,
+        "file:///fictional/candidate-0.pdf",
+    }
+    queued.assert_not_called()
+    await executor.execute(context, events)
+    queued.assert_called_once()
+    operation = queued.call_args.args[0]
+    assert {item.uri for item in operation["resources"]} == {
+        CV,
+        "file:///fictional/candidate-0.pdf",
+        "file:///fictional/candidate-1.pdf",
+    }
+    assert operation["resources"][0] == ResourceAccess(CV, "Candidate CV.pdf")
+    built = await MemoryRecordBuilder().build(operation)
+    assert {
+        node.get("uri")
+        for node in ET.fromstring(built.document).findall("RESOURCES/RESOURCE")
+    } == {item.uri for item in operation["resources"]}
+    assert await store.get_pending_tools("task-1", "default", agent.name) is None
+    assert any(
+        getattr(event.args[0], "status", None)
+        and event.args[0].status.state == TaskState.TASK_STATE_COMPLETED
+        for event in events.enqueue_event.call_args_list
+    )
+    assert current_inference_scope() is None and snapshot_resources() == ()

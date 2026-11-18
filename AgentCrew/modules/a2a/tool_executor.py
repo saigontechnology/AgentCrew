@@ -91,16 +91,9 @@ class ToolExecutor:
                     event_queue,
                     owner,
                     cancel_event_getter,
+                    remaining_tools=tool_uses[i + 1 :] if tool_name == "ask" else None,
                 )
                 if result == ToolCallResult.INPUT_REQUIRED:
-                    remaining = tool_uses[i + 1 :]
-                    await self._session_store.save_pending_tools(
-                        task_id,
-                        tool_use,
-                        remaining,
-                        owner,
-                        self._agent_namespace,
-                    )
                     return ToolCallResult.INPUT_REQUIRED
             else:
                 parallel_buffer.append(tool_use)
@@ -127,6 +120,8 @@ class ToolExecutor:
         event_queue: EventQueue,
         owner: str,
         cancel_event_getter: Any,
+        *,
+        remaining_tools: list[dict[str, Any]] | None = None,
     ) -> str:
         """Execute a single tool with validation and error handling."""
         tool_name = tool_use["name"]
@@ -158,6 +153,7 @@ class ToolExecutor:
                 history,
                 event_queue,
                 owner,
+                remaining_tools=remaining_tools,
             )
 
         try:
@@ -260,6 +256,8 @@ class ToolExecutor:
         history: list[dict[str, Any]],
         event_queue: EventQueue,
         owner: str,
+        *,
+        remaining_tools: list[dict[str, Any]] | None = None,
     ) -> str:
         """Handle ask tool with pending tool persistence and INPUT_REQUIRED event."""
         from .adapters import create_ask_message
@@ -268,9 +266,16 @@ class ToolExecutor:
         if not questions or not isinstance(questions, list):
             questions = []
 
+        from AgentCrew.modules.memory.resources import snapshot_resource_data
+
         ask_msg = create_ask_message(questions)
         await self._session_store.save_pending_tools(
-            task_id, tool_use, [], owner, self._agent_namespace
+            task_id,
+            tool_use,
+            remaining_tools or [],
+            owner,
+            self._agent_namespace,
+            resources=snapshot_resource_data(),
         )
 
         ts = self._now_timestamp()

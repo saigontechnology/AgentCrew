@@ -38,6 +38,7 @@ class AcpSessionState:
     tool_state: AcpToolState = field(default_factory=AcpToolState)
     permission_broker: AcpPermissionBroker | None = None
     pending_ask_tool: dict[str, Any] | None = None
+    pending_resources: tuple[tuple[str, str | None], ...] = ()
     token_usage: TokenUsage = field(default_factory=TokenUsage)
 
     # TODO: Remove backward-compat properties in next major version

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import sqlite3
 import subprocess
 import sys
 import types
@@ -62,6 +63,41 @@ def reference_repository():
         REFERENCE_SHA256,
         "_fts_payload_reference",
     ).SQLiteMemoryRepository
+
+
+def reference_fixture(path, name):
+    """Clone fictional data into schema 1 without changing hash-pinned source."""
+    target = path.with_name(name)
+    with sqlite3.connect(path) as source, sqlite3.connect(target) as destination:
+        source.backup(destination)
+        require(
+            source.execute("PRAGMA user_version").fetchone()[0] == 2,
+            "Current fixture is not schema 2",
+        )
+        destination.execute("PRAGMA foreign_keys=ON")
+        destination.execute("DROP TABLE memory_resource_entity")
+        destination.execute("DROP TABLE memory_resource")
+        destination.execute("UPDATE schema_version SET version=1")
+        destination.execute("PRAGMA user_version=1")
+        for table in (
+            "memory_record",
+            "retrieval_unit",
+            "memory_entity",
+            "memory_tag",
+            "memory_fts",
+        ):
+            require(
+                source.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+                == destination.execute(
+                    f"SELECT * FROM {table} ORDER BY rowid"
+                ).fetchall(),
+                f"Reference fixture changed {table}",
+            )
+        require(
+            destination.execute("PRAGMA foreign_key_check").fetchone() is None,
+            "Reference fixture foreign keys failed",
+        )
+    return target
 
 
 def check_words(reference):
@@ -355,7 +391,6 @@ def check_entity_reference(path, current, variants, coordinator_reference):
         ENTITY_REFERENCE_SHA256,
         "_entity_payload_reference",
     ).SQLiteMemoryRepository
-    reference = legacy_class(path, read_only=True)
     writer = SQLiteMemoryRepository(path)
     padding = "fictional wide canonical payload " * 32
     notes = "".join(
@@ -384,6 +419,9 @@ def check_entity_reference(path, current, variants, coordinator_reference):
                 "SELECT memory_id,id,?,? FROM retrieval_unit WHERE memory_id IN ('tie-outcome','tie-unit')",
                 (value, value.casefold()),
             )
+    reference = legacy_class(
+        reference_fixture(path, "entity-reference-v1.sqlite3"), read_only=True
+    )
     combinations = (
         ("alpha_code",),
         ("alpha_code", "beta_code"),
@@ -595,7 +633,9 @@ def main():
         populate(writer)
         populate_payload(writer)
         current = SQLiteMemoryRepository(path, read_only=True)
-        reference = reference_class(path, read_only=True)
+        reference = reference_class(
+            reference_fixture(path, "fts-reference-v1.sqlite3"), read_only=True
+        )
         base = MemoryQuery("Alpha_Code common-domain", "ExactAgent", "current")
         variants = [
             base,

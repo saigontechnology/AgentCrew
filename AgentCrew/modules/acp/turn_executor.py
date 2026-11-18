@@ -115,6 +115,7 @@ class TurnExecutor:
                 current_response,
                 session_id=session_id,
             )
+            state.pending_resources = ()
         except Exception as e:
             from openai import APIError
 
@@ -350,11 +351,14 @@ class TurnExecutor:
                 )
                 return
 
-        await self._client_comm.send_ask_request(session_id, questions)
+        from AgentCrew.modules.memory.resources import snapshot_resource_data
+
         state.pending_ask_tool = {
             "tool_use": tool_use,
             "questions": questions,
         }
+        state.pending_resources = snapshot_resource_data()
+        await self._client_comm.send_ask_request(session_id, questions)
 
     async def resume_pending_ask(
         self,
