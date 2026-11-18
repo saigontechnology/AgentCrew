@@ -6,6 +6,7 @@ import json
 import re
 import unicodedata
 from collections import defaultdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 
 from .record_parser import checksum, normalize_text
@@ -143,8 +144,20 @@ class MemorySearchCoordinator:
         self.repository = repository
 
     def search(self, query: MemoryQuery) -> MemorySearchResult:
+        if isinstance(self.repository, SQLiteMemoryRepository):
+            with self.repository._transaction() as connection:
+                return self._search_snapshot(query, connection)
+        return self._search_snapshot(query, None)
+
+    def _search_snapshot(self, query: MemoryQuery, connection) -> MemorySearchResult:
         exact, expression = _query_parts(query.query)
-        batch = self.repository.candidates(query, exact, expression)
+        batch = (
+            self.repository.candidates(
+                query, exact, expression, read_connection=connection
+            )
+            if connection is not None
+            else self.repository.candidates(query, exact, expression)
+        )
         grouped: dict[str, list[MemoryCandidate]] = defaultdict(list)
         for candidate in batch.candidates:
             if candidate.reason.source == CandidateSource.SEMANTIC and not (
@@ -163,7 +176,9 @@ class MemorySearchCoordinator:
             ]
             record = entries[0].record
             exact_id = any(
-                entry.reason.source == CandidateSource.MEMORY_ID for entry in lexical
+                entry.reason.source
+                in {CandidateSource.MEMORY_ID, CandidateSource.RESOURCE_URI}
+                for entry in lexical
             )
             evidence_words = _words(
                 " ".join(entry.unit.text for entry in lexical)
@@ -194,7 +209,12 @@ class MemorySearchCoordinator:
                 continue
             by_source = {entry.reason.source: entry for entry in admitted}
             strong = bool(
-                {CandidateSource.ENTITY, CandidateSource.TAG} & by_source.keys()
+                {
+                    CandidateSource.ENTITY,
+                    CandidateSource.TAG,
+                    CandidateSource.RESOURCE_URI,
+                }
+                & by_source.keys()
             )
             reasons = tuple(
                 entry.reason
@@ -266,6 +286,39 @@ class MemorySearchCoordinator:
             )
             if len(hits) >= query.limit:
                 break
+        evidence = (
+            self.repository.resource_evidence(
+                query,
+                [
+                    hit.memory_id
+                    for hit in hits
+                    if any(entry.has_resources for entry in grouped[hit.memory_id])
+                ],
+                read_connection=connection,
+            )
+            if connection is not None
+            else {}
+        )
+        if evidence:
+            hits = [
+                replace(hit, resources=evidence.get(hit.memory_id, ())) for hit in hits
+            ]
+            hits = [
+                replace(
+                    hit,
+                    reasons=hit.reasons
+                    + (
+                        MatchReason(
+                            CandidateSource.RESOURCE_ENTITY,
+                            0,
+                            "Explicit entity-resource links available",
+                        ),
+                    ),
+                )
+                if any(item.entity_name for item in hit.resources)
+                else hit
+                for hit in hits
+            ]
         warning = (
             "no_qualified_evidence"
             if query.semantic_policy.max_distance is not None
@@ -305,6 +358,7 @@ def format_search_result(result: MemorySearchResult) -> str:
             if hit.conflict
             else None,
             "parse_warnings": hit.parse_warnings,
+            "resources": [asdict(item) for item in hit.resources],
         }
         lines.append(json.dumps(evidence, ensure_ascii=False))
     return "\n".join(lines)

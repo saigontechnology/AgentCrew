@@ -8,13 +8,14 @@ import math
 import sqlite3
 import struct
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, time
 from pathlib import Path
 
 from . import provenance
 from .record_parser import checksum, derive_memory_units, normalize_text
+from .resources import query_resource_uris
 from .types import (
     DOCUMENT_VECTOR_DIMENSIONS,
     CandidateBatch,
@@ -24,17 +25,37 @@ from .types import (
     MemoryQuery,
     MemoryRecord,
     ParsedMemory,
+    ResourceEvidence,
     RetrievalUnit,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+RESOURCE_SCHEMA = (
+    """CREATE TABLE memory_resource (
+        memory_id TEXT NOT NULL REFERENCES memory_record(id) ON DELETE CASCADE,
+        resource_id TEXT NOT NULL, resource_unit_id TEXT NOT NULL,
+        uri TEXT NOT NULL, normalized_uri TEXT NOT NULL, scheme TEXT NOT NULL,
+        display_name TEXT, PRIMARY KEY(memory_id,resource_id),
+        FOREIGN KEY(resource_unit_id,memory_id) REFERENCES retrieval_unit(id,memory_id) ON DELETE CASCADE
+    )""",
+    "CREATE INDEX resource_uri ON memory_resource(normalized_uri)",
+    "CREATE INDEX resource_parent ON memory_resource(memory_id)",
+    """CREATE TABLE memory_resource_entity (
+        memory_id TEXT NOT NULL, resource_id TEXT NOT NULL,
+        entity_unit_id TEXT NOT NULL, relation TEXT NOT NULL,
+        PRIMARY KEY(memory_id,resource_id,entity_unit_id,relation),
+        FOREIGN KEY(memory_id,resource_id) REFERENCES memory_resource(memory_id,resource_id) ON DELETE CASCADE,
+        FOREIGN KEY(entity_unit_id,memory_id) REFERENCES retrieval_unit(id,memory_id) ON DELETE CASCADE
+    )""",
+    "CREATE INDEX resource_entity ON memory_resource_entity(memory_id,entity_unit_id)",
+)
 VECTOR_TABLE = "memory_document_vector"
 VECTOR_TABLE_SQL = f"""CREATE TABLE {VECTOR_TABLE} (
     memory_id TEXT PRIMARY KEY REFERENCES memory_record(id) ON DELETE CASCADE,
     dimensions INTEGER NOT NULL CHECK(dimensions={DOCUMENT_VECTOR_DIMENSIONS}),
     vector BLOB NOT NULL
 )"""
-SCHEMA = (
+SCHEMA_V1 = (
     "CREATE TABLE schema_version (version INTEGER PRIMARY KEY)",
     """CREATE TABLE memory_record (
         id TEXT PRIMARY KEY, agent_name TEXT NOT NULL, session_id TEXT,
@@ -98,6 +119,7 @@ SCHEMA = (
         VALUES(new.rowid,new.title,new.important,new.body,new.identifiers);
     END""",
 )
+SCHEMA = (*SCHEMA_V1, *RESOURCE_SCHEMA)
 RECORD_COLUMNS = (
     "id",
     "agent_name",
@@ -169,6 +191,27 @@ class SQLiteMemoryRepository:
                         "INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,)
                     )
                     connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                if connection.execute("PRAGMA user_version").fetchone()[0] == 1:
+                    self._validate_schema(connection, version=1)
+                    for statement in RESOURCE_SCHEMA:
+                        connection.execute(statement)
+                    rows = connection.execute(
+                        "SELECT * FROM memory_record ORDER BY id"
+                    ).fetchall()
+                    for row in rows:
+                        record = self._record(row)
+                        parsed = self.validate_record(record)
+                        self._reindex_record(connection, record, parsed)
+                        connection.execute(
+                            "UPDATE memory_record SET structured_json=?,parse_warnings_json=? WHERE id=?",
+                            (
+                                parsed.structured_json,
+                                json.dumps(parsed.warnings),
+                                record.id,
+                            ),
+                        )
+                    connection.execute("UPDATE schema_version SET version=2")
+                    connection.execute("PRAGMA user_version=2")
                 self._validate_schema(connection)
             with closing(self._connect(write=True)) as connection:
                 if connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
@@ -229,7 +272,9 @@ class SQLiteMemoryRepository:
                 raise
 
     @staticmethod
-    def _validate_schema(connection: sqlite3.Connection) -> None:
+    def _validate_schema(
+        connection: sqlite3.Connection, version: int = SCHEMA_VERSION
+    ) -> None:
         objects = {
             row[0] for row in connection.execute("SELECT name FROM sqlite_master")
         }
@@ -245,14 +290,24 @@ class SQLiteMemoryRepository:
             "unit_delete",
             "unit_update",
         }
+        if version >= 2:
+            required.update(
+                {
+                    "memory_resource",
+                    "memory_resource_entity",
+                    "resource_uri",
+                    "resource_parent",
+                    "resource_entity",
+                }
+            )
         if not required <= objects:
             raise SQLiteMemoryError("Unrecognized or incomplete SQLite memory schema")
         versions = [
             row[0] for row in connection.execute("SELECT version FROM schema_version")
         ]
         if (
-            versions != [SCHEMA_VERSION]
-            or connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION
+            versions != [version]
+            or connection.execute("PRAGMA user_version").fetchone()[0] != version
         ):
             raise SQLiteMemoryError("Unsupported SQLite memory schema version")
         columns = {
@@ -260,6 +315,30 @@ class SQLiteMemoryRepository:
         }
         if not set(RECORD_COLUMNS) <= columns:
             raise SQLiteMemoryError("Incomplete canonical memory schema")
+        if version >= 2:
+            for table, expected in (
+                (
+                    "memory_resource",
+                    {
+                        "memory_id",
+                        "resource_id",
+                        "resource_unit_id",
+                        "uri",
+                        "normalized_uri",
+                        "scheme",
+                        "display_name",
+                    },
+                ),
+                (
+                    "memory_resource_entity",
+                    {"memory_id", "resource_id", "entity_unit_id", "relation"},
+                ),
+            ):
+                actual = {
+                    row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+                }
+                if actual != expected:
+                    raise SQLiteMemoryError("Incomplete resource projection schema")
 
     def upsert_record(self, record: MemoryRecord) -> ParsedMemory:
         """Atomically replace derived indexes without rewriting canonical input."""
@@ -356,6 +435,11 @@ class SQLiteMemoryRepository:
             f"VALUES ({','.join('?' for _ in values)}) ON CONFLICT(id) DO UPDATE SET {assignments}",
             values,
         )
+        SQLiteMemoryRepository._reindex_record(connection, record, parsed)
+
+    @staticmethod
+    def _reindex_record(connection, record, parsed) -> None:
+        """Replace only derived rows; schema upgrades never reserialize canonical data."""
         connection.execute("DELETE FROM retrieval_unit WHERE memory_id=?", (record.id,))
         for unit in parsed.units:
             connection.execute(
@@ -376,6 +460,41 @@ class SQLiteMemoryRepository:
                         for normalized, value in unique.items()
                     ),
                 )
+
+        SQLiteMemoryRepository._write_resources(connection, record.id, parsed)
+
+    @staticmethod
+    def _resource_rows(memory_id, parsed):
+        return [
+            (
+                memory_id,
+                item.resource_id,
+                item.resource_unit_id,
+                item.uri,
+                item.normalized_uri,
+                item.scheme,
+                item.display_name,
+            )
+            for item in parsed.resources
+        ]
+
+    @staticmethod
+    def _link_rows(memory_id, parsed):
+        return [
+            (memory_id, item.resource_id, item.entity_unit_id, item.relation)
+            for item in parsed.resource_links
+        ]
+
+    @staticmethod
+    def _write_resources(connection, memory_id, parsed):
+        connection.executemany(
+            "INSERT INTO memory_resource VALUES (?,?,?,?,?,?,?)",
+            SQLiteMemoryRepository._resource_rows(memory_id, parsed),
+        )
+        connection.executemany(
+            "INSERT INTO memory_resource_entity VALUES (?,?,?,?)",
+            SQLiteMemoryRepository._link_rows(memory_id, parsed),
+        )
 
     @staticmethod
     def _unit_values(unit: RetrievalUnit) -> tuple:
@@ -445,6 +564,8 @@ class SQLiteMemoryRepository:
                     "retrieval_unit",
                     "memory_entity",
                     "memory_tag",
+                    "memory_resource",
+                    "memory_resource_entity",
                     "memory_fts_docsize",
                 )
             }
@@ -591,6 +712,16 @@ class SQLiteMemoryRepository:
             if {tuple(row) for row in actual} != expected_entries:
                 raise SQLiteMemoryError("Migration exact-index ownership mismatch")
 
+        for table, expected_rows in (
+            ("memory_resource", self._resource_rows(record.id, parsed)),
+            ("memory_resource_entity", self._link_rows(record.id, parsed)),
+        ):
+            actual = connection.execute(
+                f"SELECT * FROM {table} WHERE memory_id=?", (record.id,)
+            ).fetchall()
+            if {tuple(row) for row in actual} != set(expected_rows):
+                raise SQLiteMemoryError("Migration resource projection mismatch")
+
     def verify_migration_batch(
         self,
         records: list[tuple[MemoryRecord, str]],
@@ -720,6 +851,8 @@ class SQLiteMemoryRepository:
         query: MemoryQuery,
         exact_values: tuple[str, ...],
         fts_expression: str,
+        *,
+        read_connection: sqlite3.Connection | None = None,
     ) -> CandidateBatch:
         """Filter before ranking/limits; exact indexes drive fenced inner joins.
 
@@ -730,7 +863,11 @@ class SQLiteMemoryRepository:
         """
         scope, scope_values = self._eligibility(query)
         candidates = []
-        with self._transaction() as connection:
+        with (
+            nullcontext(read_connection)
+            if read_connection is not None
+            else self._transaction()
+        ) as connection:
             sources = []
             if query.memory_ids:
                 sources.append((CandidateSource.MEMORY_ID, "", "1", [], "m.id", "0"))
@@ -750,6 +887,19 @@ class SQLiteMemoryRepository:
                             "0",
                         )
                     )
+            uris = query_resource_uris(query.query)
+            if uris:
+                placeholders = ",".join("?" for _ in uris)
+                sources.append(
+                    (
+                        CandidateSource.RESOURCE_URI,
+                        "memory_resource x INDEXED BY resource_uri",
+                        f"x.normalized_uri IN ({placeholders})",
+                        list(uris),
+                        "x.uri",
+                        "0",
+                    )
+                )
             if fts_expression:
                 sources.append(
                     (
@@ -762,9 +912,18 @@ class SQLiteMemoryRepository:
                     )
                 )
             for source, join, predicate, values, detail, score in sources:
-                if source in (CandidateSource.ENTITY, CandidateSource.TAG):
+                if source in (
+                    CandidateSource.ENTITY,
+                    CandidateSource.TAG,
+                    CandidateSource.RESOURCE_URI,
+                ):
+                    unit_column = (
+                        "resource_unit_id"
+                        if source == CandidateSource.RESOURCE_URI
+                        else "unit_id"
+                    )
                     from_clause = f"""{join}
-                    CROSS JOIN retrieval_unit u ON u.id=x.unit_id
+                    CROSS JOIN retrieval_unit u ON u.id=x.{unit_column}
                     CROSS JOIN memory_record m ON m.id=u.memory_id"""
                 else:
                     from_clause = f"retrieval_unit u JOIN memory_record m ON m.id=u.memory_id {join}"
@@ -815,6 +974,43 @@ class SQLiteMemoryRepository:
                 scope_values,
             ).fetchall()
         return CandidateBatch(tuple(candidates), frozenset(row[0] for row in conflicts))
+
+    def resource_evidence(
+        self,
+        query: MemoryQuery,
+        memory_ids: list[str],
+        *,
+        read_connection: sqlite3.Connection | None = None,
+    ) -> dict[str, tuple[ResourceEvidence, ...]]:
+        """One scoped batch for selected parents; no resource joins in ranking paths."""
+        if not memory_ids:
+            return {}
+        scope, values = self._eligibility(query)
+        placeholders = ",".join("?" for _ in memory_ids)
+        with (
+            nullcontext(read_connection)
+            if read_connection is not None
+            else self._transaction()
+        ) as connection:
+            rows = connection.execute(
+                f"""SELECT r.memory_id,r.uri,r.display_name,e.value AS entity_name,l.relation
+                FROM memory_resource r JOIN memory_record m ON m.id=r.memory_id
+                LEFT JOIN memory_resource_entity l ON l.memory_id=r.memory_id AND l.resource_id=r.resource_id
+                LEFT JOIN memory_entity e ON e.memory_id=l.memory_id AND e.unit_id=l.entity_unit_id
+                    AND e.rowid=(SELECT rowid FROM memory_entity WHERE unit_id=l.entity_unit_id ORDER BY rowid LIMIT 1)
+                WHERE {scope} AND m.id IN ({placeholders})
+                ORDER BY r.memory_id,r.uri,e.value,l.relation""",
+                (*values, *memory_ids),
+            ).fetchall()
+        result = {}
+        for row in rows:
+            evidence = ResourceEvidence(
+                row["uri"], row["display_name"], row["entity_name"], row["relation"]
+            )
+            entries = result.setdefault(row["memory_id"], [])
+            if evidence not in entries:
+                entries.append(evidence)
+        return {key: tuple(items) for key, items in result.items()}
 
     def _semantic_candidates(
         self,
@@ -902,6 +1098,7 @@ class SQLiteMemoryRepository:
         detail: str,
         distance: float | None = None,
     ) -> MemoryCandidate:
+        structured = json.loads(row["structured_json"] or "{}")
         return MemoryCandidate(
             record=self._record(row),
             unit=RetrievalUnit(
@@ -915,9 +1112,8 @@ class SQLiteMemoryRepository:
             ),
             reason=MatchReason(source, rank, detail, distance),
             parse_warnings=tuple(json.loads(row["parse_warnings_json"])),
-            source_headline=(
-                json.loads(row["structured_json"] or "{}").get("HEAD") or [None]
-            )[0],
+            source_headline=(structured.get("HEAD") or [None])[0],
+            has_resources=bool(structured.get("RESOURCES/RESOURCE")),
         )
 
     @staticmethod

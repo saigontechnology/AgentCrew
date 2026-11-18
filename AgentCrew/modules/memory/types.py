@@ -18,6 +18,8 @@ class ConfidenceBand(StrEnum):
 class CandidateSource(StrEnum):
     MEMORY_ID = "exact_memory_id"
     ENTITY = "exact_entity_or_resource"
+    RESOURCE_URI = "exact_resource_uri"
+    RESOURCE_ENTITY = "explicit_entity_resource_link"
     TAG = "exact_tag"
     FTS = "weighted_fts5"
     SEMANTIC = "semantic_document_vector"
@@ -146,11 +148,38 @@ class RetrievalUnit:
     tags: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class MemoryResource:
+    resource_id: str
+    resource_unit_id: str
+    uri: str
+    normalized_uri: str
+    scheme: str
+    display_name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceEntityLink:
+    resource_id: str
+    entity_unit_id: str
+    relation: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceEvidence:
+    uri: str
+    display_name: str | None = None
+    entity_name: str | None = None
+    relation: str | None = None
+
+
 @dataclass(frozen=True)
 class ParsedMemory:
     units: tuple[RetrievalUnit, ...]
     structured_json: str | None
     warnings: tuple[str, ...] = ()
+    resources: tuple[MemoryResource, ...] = ()
+    resource_links: tuple[ResourceEntityLink, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -168,6 +197,7 @@ class MemoryCandidate:
     reason: MatchReason
     parse_warnings: tuple[str, ...] = ()
     source_headline: str | None = None
+    has_resources: bool = False
 
 
 @dataclass(frozen=True)
@@ -190,6 +220,8 @@ class MemorySearchHit:
     score: float
     conflict: bool = False
     parse_warnings: tuple[str, ...] = ()
+
+    resources: tuple[ResourceEvidence, ...] = ()
 
     @property
     def citation(self) -> str:

@@ -123,6 +123,17 @@ class HookRegistry:
         self._hooks: dict[str, list[Hook]] = {}
         self._registration_counter = 0
         self._initialized = True
+        from AgentCrew.modules.memory.resources import capture_tool_access
+
+        self.register(
+            Hook(
+                HookPoints.TOOL_EXECUTE,
+                HookPhase.AFTER,
+                capture_tool_access,
+                priority=10000,
+                owner="resource_provenance",
+            )
+        )
 
     @classmethod
     def get_instance(cls) -> HookRegistry:

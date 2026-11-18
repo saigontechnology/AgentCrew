@@ -32,6 +32,7 @@ Rules:
 - Output ONLY the <MEMORY> XML block. No other text.
 - Use "" for any field with nothing relevant.
 - FLOW: capture how the conversation progressed — what the user asked (INTENT), what was explored or discussed (EXPLORATION), and what was concluded or left open (OUTCOME). This is NOT a flat summary; it must show the dialogue arc from question to resolution.
+- RESOURCES: use only exact URIs supplied in ACCESSED_RESOURCES or previous context. A RESOURCE may have uri and name attributes and ENTITY_REF relation children referring to an exact ENTITIES/ENTITY/NAME. Link only explicitly supported unique entities; leave ambiguous resources unlinked. Never invent or rewrite a URI.
 - CONVERSATION_NOTES: capture ONLY actionable notes for future reference — caveats, edge cases, workarounds (note what they fix and when removable), non-obvious decisions with rationale, constraints, unresolved issues, user corrections/preferences.
 
 <EXAMPLE>
@@ -57,7 +58,7 @@ Rules:
         <DOMAIN>Async Programming</DOMAIN>
     </DOMAINS>
     <RESOURCES>
-        <RESOURCE>AgentCrew/modules/a2a/task_manager.py</RESOURCE>
+        <RESOURCE uri="file:///workspace/AgentCrew/modules/a2a/task_manager.py" name="Task manager"/>
     </RESOURCES>
     <CONVERSATION_NOTES>
         <NOTE>Caveat: task state dict must not be mutated while an async generator is yielding from it — causes RuntimeError. Deep copy before yielding.</NOTE>

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
@@ -61,29 +62,35 @@ class AttachmentProcessor:
 
         processed_content: list[dict[str, Any]] = []
 
-        for item in content:
+        from AgentCrew.modules.agents.tool_result_summary import current_inference_scope
+        from AgentCrew.modules.memory.resources import capture_attachment
+
+        for index, item in enumerate(content):
             if not isinstance(item, dict):
                 processed_content.append(item)
                 continue
 
             item_type = item.get("type")
 
-            if item_type == "file":
-                result = await self._process_raw_file_item(item)
-                if result is not None:
-                    processed_content.append(result)
-                else:
-                    processed_content.append(item)
-
-            elif item_type == "file_uri":
-                result = await self._process_file_uri_item(item)
-                if result is not None:
-                    processed_content.append(result)
-                else:
-                    processed_content.append(item)
-
-            else:
+            if item_type not in {"file", "file_uri"}:
                 processed_content.append(item)
+                continue
+            result = await (
+                self._process_raw_file_item(item)
+                if item_type == "file"
+                else self._process_file_uri_item(item)
+            )
+            if result is None:
+                processed_content.append(item)
+                continue
+            capture_attachment(
+                item.get("uri") if item_type == "file_uri" else None,
+                item.get("file_name"),
+                scope=current_inference_scope() or "ephemeral",
+                identifier=str(item.get("id") or user_message.get("id") or uuid.uuid4())
+                + f"/{index}",
+            )
+            processed_content.append(result)
 
         user_message["content"] = processed_content
         return user_message

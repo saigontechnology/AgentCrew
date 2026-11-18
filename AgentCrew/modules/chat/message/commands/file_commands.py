@@ -45,6 +45,15 @@ class FileCommands:
             )
 
             if file_content:
+                from AgentCrew.modules.memory.resources import (
+                    MAX_RESOURCES_PER_TURN,
+                    canonical_uri,
+                )
+
+                uri = canonical_uri(file_path, cwd=os.getcwd(), path=True)
+                pending = self.message_handler._pending_resource_attachments
+                if uri and uri not in pending and len(pending) < MAX_RESOURCES_PER_TURN:
+                    pending.append(uri)
                 all_file_contents.append(file_content)
                 processed_files.append(file_path)
                 self.message_handler.bus.emit_sync(

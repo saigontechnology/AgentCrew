@@ -648,12 +648,18 @@ def current_inference_scope() -> str | None:
     return _current_inference_scope.get()
 
 
-def bind_inference_scope(scope_id: str) -> Token[str | None] | None:
+def bind_inference_scope(scope_id: str) -> tuple[Token, Token] | None:
     if current_inference_scope() is not None:
         return None
-    return _current_inference_scope.set(scope_id)
+    from AgentCrew.modules.memory.resources import bind_resources
+
+    return _current_inference_scope.set(scope_id), bind_resources()
 
 
-def reset_inference_scope(token: Token[str | None] | None) -> None:
+def reset_inference_scope(token: tuple[Token, Token] | None) -> None:
     if token is not None:
-        _current_inference_scope.reset(token)
+        from AgentCrew.modules.memory.resources import reset_resources
+
+        scope_token, resource_token = token
+        reset_resources(resource_token)
+        _current_inference_scope.reset(scope_token)

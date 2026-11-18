@@ -8,6 +8,8 @@ lexical candidate source (MEM-507).
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -35,7 +37,9 @@ def parse_xml_block(text: str, tag_name: str) -> dict[str, Any] | None:
     start = text.index(open_tag)
     end = text.index(close_tag) + len(close_tag)
     xml_block = text[start:end]
-    xml_block = xml_block.replace("&", "&amp;")
+    xml_block = re.sub(
+        r"&(?!#\d+;|#x[0-9a-fA-F]+;|amp;|lt;|gt;|quot;|apos;)", "&amp;", xml_block
+    )
     return xmltodict.parse(xml_block)
 
 
@@ -73,6 +77,19 @@ def build_consolidation_query(memory_data: dict[str, Any]) -> str:
     if query_parts:
         return " ".join(query_parts)
     return ""
+
+
+def _fallback_memory(
+    user_message: str, assistant_response_for_memory: str
+) -> dict[str, Any]:
+    return {
+        "MEMORY": {
+            "DATE": datetime.now(UTC).strftime("%Y-%m-%d"),
+            "CONVERSATION_NOTES": {
+                "NOTE": [user_message, assistant_response_for_memory]
+            },
+        }
+    }
 
 
 class MemoryRecordBuilder:
@@ -114,6 +131,9 @@ class MemoryRecordBuilder:
             for index, message in enumerate(assistant_messages, start=1)
         )
 
+        from .resources import enforce_resources
+
+        captured = operation_data.get("resources", ())
         memory_data = None
         retried = 0
         if self.llm_service:
@@ -143,6 +163,13 @@ class MemoryRecordBuilder:
                         .replace("{user_message}", user_message)
                         .replace("{assistant_response}", assistant_response_for_memory)
                     )
+                    analyzed_prompt += (
+                        "\n<ACCESSED_RESOURCES>"
+                        + json.dumps(
+                            [item.uri for item in captured], ensure_ascii=False
+                        )
+                        + "</ACCESSED_RESOURCES>\nUse only these exact URIs or resources from previous context. You may propose RESOURCE uri and name attributes and ENTITY_REF relation links only when the conversation explicitly supports a unique named entity. Ambiguous resources must remain unlinked."
+                    )
                     analyzed_text = await self.llm_service.process_message(
                         analyzed_prompt
                     )
@@ -154,7 +181,10 @@ class MemoryRecordBuilder:
                             "LLM response missing <MEMORY>...</MEMORY> block"
                         )
                     memory_data = parse_xml_block(analyzed_text, "MEMORY")
-                    if memory_data is None:
+                    if memory_data is None or not isinstance(
+                        memory_data.get("MEMORY"), dict
+                    ):
+                        memory_data = None
                         raise ValueError("Failed to parse <MEMORY> XML block")
                     logger.debug(f"Memory data: {memory_data}")
                     break
@@ -169,14 +199,7 @@ class MemoryRecordBuilder:
                     continue
 
         if memory_data is None:
-            memory_data = {
-                "MEMORY": {
-                    "DATE": datetime.now(UTC).strftime("%Y-%m-%d"),
-                    "CONVERSATION_NOTES": {
-                        "NOTE": [user_message, assistant_response_for_memory]
-                    },
-                }
-            }
+            memory_data = _fallback_memory(user_message, assistant_response_for_memory)
 
         after_envelope: dict[str, Any] = {
             "memory_data": memory_data,
@@ -194,6 +217,21 @@ class MemoryRecordBuilder:
         conversation_document = xmltodict.unparse(
             memory_data, pretty=True, full_document=False
         )
+        try:
+            conversation_document = enforce_resources(
+                conversation_document,
+                captured,
+                (session_context,) if session_context else (),
+            )
+        except ValueError:
+            memory_data = _fallback_memory(user_message, assistant_response_for_memory)
+            conversation_document = enforce_resources(
+                xmltodict.unparse(memory_data, pretty=True, full_document=False),
+                captured,
+                (session_context,) if session_context else (),
+            )
+            memory_header = None
+        memory_data = xmltodict.parse(conversation_document)
         return BuiltMemoryRecord(
             memory_data=memory_data,
             document=conversation_document,

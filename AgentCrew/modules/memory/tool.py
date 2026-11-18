@@ -293,6 +293,19 @@ def _format_memory_hits(
         else:
             block.append(f"   Excerpt: {hit.excerpt[:200]}")
         if detail in ("evidence", "full"):
+            for resource in hit.resources:
+                block.append(
+                    "   Resource: "
+                    + json.dumps(
+                        {
+                            "uri": resource.uri,
+                            "name": resource.display_name,
+                            "entity": resource.entity_name,
+                            "relation": resource.relation,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
             matched = "; ".join(reason.detail for reason in hit.reasons)
             block.append(f"   Matched because: {matched}")
         block.append(f"   Confidence: {hit.confidence.value}")

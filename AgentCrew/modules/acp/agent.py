@@ -660,6 +660,19 @@ class AgentCrewAcpAgent(Agent):
             scope_token = bind_inference_scope(f"acp:{session_id}")
 
             try:
+                from AgentCrew.modules.memory.resources import capture_attachment
+
+                for index, block in enumerate(prompt):
+                    if getattr(block, "type", None) == "resource":
+                        resource = getattr(block, "resource", None)
+                        if resource is not None:
+                            capture_attachment(
+                                str(resource.uri)
+                                if getattr(resource, "uri", None)
+                                else None,
+                                scope=f"acp:{session_id}",
+                                identifier=f"{message_id or uuid.uuid4()}/{index}",
+                            )
                 await self._turn_executor.run_turn(session_id, state, self._conn)
                 return PromptResponse(
                     stop_reason="cancelled" if state.cancelled else "end_turn",

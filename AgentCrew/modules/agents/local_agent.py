@@ -504,7 +504,7 @@ class LocalAgent(BaseAgent):
             "tool_name": resolved_name,
             "tool_input": copy.deepcopy(resolved_input),
             "resolved_tool_name": resolved_name,
-            "resolved_tool_input": copy.deepcopy(resolved_input),
+            "resolved_tool_input": resolved_input,
         }
         result_envelope: ToolExecuteResult = {
             "tool_result": result,

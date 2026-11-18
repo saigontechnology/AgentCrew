@@ -143,9 +143,12 @@ class SQLiteMemoryService(BaseMemoryService):
         agent_name: str = "None",
         session_id: str | None = None,
     ) -> list[str]:
+        from .resources import snapshot_resources
+
         operation_id = str(uuid.uuid4())
         operation_data = {
             "type": "store_conversation",
+            "resources": snapshot_resources(),
             "operation_id": operation_id,
             "user_message": user_message,
             "assistant_messages": assistant_messages,

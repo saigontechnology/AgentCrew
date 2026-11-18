@@ -139,9 +139,12 @@ class ChromaMemoryService(BaseMemoryService):
     ) -> list[str]:
         self._initialize_collection()
 
+        from .resources import snapshot_resources
+
         operation_id = str(uuid.uuid4())
         operation_data = {
             "type": "store_conversation",
+            "resources": snapshot_resources(),
             "operation_id": operation_id,
             "user_message": user_message,
             "assistant_messages": assistant_messages,

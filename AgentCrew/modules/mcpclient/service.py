@@ -670,6 +670,9 @@ class MCPService:
     def _register_get_resource_tool(
         self, agent: LocalAgent, combined_server_id: str, server_name: str
     ) -> None:
+        from AgentCrew.modules.memory.resources import register_resource_tool
+
+        register_resource_tool(f"{server_name}__get_resource")
         agent.register_tool(
             lambda: self._get_resource_tool_definition(server_name),
             self._create_get_resource_handler(combined_server_id, server_name),
@@ -718,8 +721,20 @@ class MCPService:
                 ctx = None
                 try:
                     session, ctx = await self._create_session(server_config)
-                    return await self._format_resource_link_async(
-                        resource_link, session
+                    from AgentCrew.modules.memory.resources import ResourceToolResult
+
+                    try:
+                        resource_result = await session.read_resource(resource_uri)
+                    except Exception as error:
+                        return ResourceToolResult(
+                            [self._resource_link_fallback(resource_link, str(error))],
+                            accessed=False,
+                        )
+                    return ResourceToolResult(
+                        await self._format_resource_result(
+                            resource_link, resource_result
+                        ),
+                        accessed=True,
                     )
                 finally:
                     if session and ctx:

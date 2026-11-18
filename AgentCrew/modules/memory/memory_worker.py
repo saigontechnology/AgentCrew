@@ -433,6 +433,20 @@ class MemoryWorker:
                 operation_data, built, candidates, memory_id
             )
             if merged_document is not None or ids_to_supersede:
+                from .resources import enforce_resources
+
+                merged_document = enforce_resources(
+                    merged_document or built.document,
+                    (),
+                    (
+                        built.document,
+                        *(
+                            candidate["document"]
+                            for candidate in candidates
+                            if candidate["id"] in ids_to_supersede
+                        ),
+                    ),
+                )
                 self._persistence.apply_consolidation(
                     operation_data, built, memory_id, merged_document, ids_to_supersede
                 )

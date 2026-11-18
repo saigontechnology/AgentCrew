@@ -8,7 +8,14 @@ import re
 import unicodedata
 from xml.etree import ElementTree
 
-from .types import MemoryRecord, ParsedMemory, RetrievalUnit
+from .resources import SCHEME, canonical_uri, resource_id
+from .types import (
+    MemoryRecord,
+    MemoryResource,
+    ParsedMemory,
+    ResourceEntityLink,
+    RetrievalUnit,
+)
 
 MAX_DOCUMENT_CHARACTERS = 1_000_000
 MAX_INDEX_CHARACTERS = 100_000
@@ -39,6 +46,8 @@ def derive_memory_units(record: MemoryRecord) -> ParsedMemory:
     warnings: list[str] = []
     fields: list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]] = []
     structured: dict[str, list[str]] = {}
+    resource_nodes = []
+    entity_counts = {}
     try:
         if len(record.document) > MAX_DOCUMENT_CHARACTERS:
             raise ValueError("document_size_limit")
@@ -61,7 +70,18 @@ def derive_memory_units(record: MemoryRecord) -> ParsedMemory:
         )
         for source_field, kind in mapping:
             for node in root.findall(source_field):
-                text = " ".join(" ".join(node.itertext()).split())
+                if kind == "resource":
+                    uri = canonical_uri(
+                        node.get("uri") or (node.text or "").strip(), cwd=record.cwd
+                    )
+                    if uri is None:
+                        warnings.append("unparseable_resource_uri")
+                        text = " ".join(" ".join(node.itertext()).split())
+                    else:
+                        text = uri
+                        resource_nodes.append((uri, node))
+                else:
+                    text = " ".join(" ".join(node.itertext()).split())
                 if not text:
                     continue
                 entities: tuple[str, ...] = ()
@@ -69,8 +89,8 @@ def derive_memory_units(record: MemoryRecord) -> ParsedMemory:
                 if kind == "entity":
                     name = node.findtext("NAME") or text
                     entities = (name.strip(),)
-                elif kind == "resource":
-                    entities = (text,)
+                    key = normalize_text(name)
+                    entity_counts[key] = entity_counts.get(key, 0) + 1
                 elif kind == "tag":
                     tags = (text,)
                 fields.append((source_field, kind, text, entities, tags))
@@ -81,7 +101,8 @@ def derive_memory_units(record: MemoryRecord) -> ParsedMemory:
         warnings.append("malformed_xml_fallback")
     except ValueError as error:
         warnings.append(str(error))
-    if warnings:
+    if any(warning != "unparseable_resource_uri" for warning in warnings):
+        resource_nodes = []
         fields = [("BODY", "body", record.document, (), ())]
         structured = {}
     units = []
@@ -93,7 +114,7 @@ def derive_memory_units(record: MemoryRecord) -> ParsedMemory:
         if len(text) > MAX_INDEX_CHARACTERS:
             text = text[:MAX_INDEX_CHARACTERS]
             warnings.append("indexed_text_truncated")
-        digest = checksum(normalize_text(text))
+        digest = checksum(text if kind == "resource" else normalize_text(text))
         identity = (source_field, digest)
         if identity in seen:
             continue
@@ -108,11 +129,58 @@ def derive_memory_units(record: MemoryRecord) -> ParsedMemory:
                 text=text,
                 ordinal=len(units),
                 checksum=digest,
-                entities=tuple(dict.fromkeys((*entities, *_identifiers(text)))),
+                entities=tuple(dict.fromkeys((*entities, *_identifiers(text))))
+                if kind != "resource"
+                else (),
                 tags=tags,
             )
         )
+    resources = {}
+    links = set()
+    entity_units = {}
+    for unit in units:
+        if unit.kind == "entity" and unit.entities:
+            entity_units.setdefault(normalize_text(unit.entities[0]), []).append(
+                unit.id
+            )
+    resource_units = {unit.text: unit.id for unit in units if unit.kind == "resource"}
+    for uri, node in resource_nodes:
+        if uri not in resource_units:
+            warnings.append("resource_unit_missing")
+            continue
+        identifier = resource_id(uri)
+        resources.setdefault(
+            identifier,
+            MemoryResource(
+                identifier,
+                resource_units[uri],
+                uri,
+                uri,
+                uri.split(":", 1)[0].lower() if SCHEME.match(uri) else "",
+                node.get("name", "")[:256] or None,
+            ),
+        )
+        for ref in node.findall("ENTITY_REF"):
+            key = normalize_text(ref.text or "")
+            matches = entity_units.get(key, [])
+            relation = ref.get("relation", "")
+            if (
+                len(matches) != 1
+                or entity_counts.get(key) != 1
+                or not relation
+                or len(relation) > 128
+            ):
+                warnings.append("unsafe_resource_entity_link")
+                continue
+            links.add(ResourceEntityLink(identifier, matches[0], relation))
     return ParsedMemory(
+        resources=tuple(resources.values()),
+        resource_links=tuple(
+            sorted(
+                links,
+                key=lambda link: (link.resource_id, link.entity_unit_id, link.relation),
+            )
+        ),
         units=tuple(units),
         structured_json=json.dumps(structured, ensure_ascii=False, sort_keys=True)
         if structured

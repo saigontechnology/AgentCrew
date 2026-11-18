@@ -31,6 +31,7 @@ class ConversationManager:
                 )
 
             self.message_handler._queued_attached_files = []
+            self.message_handler._pending_resource_attachments = []
             self.message_handler.current_conversation_id = (
                 self.message_handler.persistent_service.start_conversation()
             )
@@ -159,6 +160,7 @@ class ConversationManager:
         last_agent_name: str,
     ) -> None:
         """Post-agent-selection logic: memory, turns, token usage, events."""
+        self.message_handler._pending_resource_attachments = []
         self.message_handler.current_conversation_id = conversation_id
         self._preload_tool_result_summaries(conversation_id)
 
