@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from AgentCrew.modules.llm.base import LLMResponseError
+
 
 class ResponsesStreamGuard:
     """Require a successful terminal event on natural stream exhaustion."""
@@ -28,14 +30,21 @@ class ResponsesStreamGuard:
         except StopAsyncIteration:
             self._exhausted = True
             if not self._completed:
-                raise RuntimeError(
+                raise LLMResponseError(
                     f"{self._provider} Responses stream ended without completion; request was not replayed"
                 ) from None
             raise
         event_type = getattr(event, "type", None)
         if event_type in ("response.failed", "response.incomplete", "error"):
-            raise RuntimeError(
-                f"{self._provider} Responses stream failed or incomplete; request was not replayed ({event_type})"
+            details = getattr(
+                getattr(event, "response", None), "incomplete_details", None
+            )
+            raise LLMResponseError(
+                f"{self._provider} Responses stream failed or incomplete; request was not replayed ({event_type})",
+                output_truncated=(
+                    event_type == "response.incomplete"
+                    and getattr(details, "reason", None) == "max_output_tokens"
+                ),
             )
         if event_type == "response.completed":
             self._completed = True

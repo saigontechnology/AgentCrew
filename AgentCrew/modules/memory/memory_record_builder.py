@@ -12,6 +12,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import xmltodict
@@ -27,6 +28,60 @@ if TYPE_CHECKING:
     from AgentCrew.modules.llm.base import BaseLLMService
 
 EXTRACTION_RETRIES = 3
+
+
+class ExtractionFailure(StrEnum):
+    """Stable, content-free failure categories shared by extraction diagnostics."""
+
+    PROVIDER_ERROR = "provider_error"
+    EMPTY_RESPONSE = "empty_response"
+    MISSING_MEMORY_BLOCK = "missing_memory_block"
+    MALFORMED_XML = "malformed_xml"
+    INVALID_MEMORY_ROOT = "invalid_memory_root"
+    OUTPUT_TRUNCATED = "output_truncated"
+    RESOURCE_ENFORCEMENT_FAILED = "resource_enforcement_failed"
+
+
+def _extraction_diagnostic(
+    service: BaseLLMService | None,
+    *,
+    category: ExtractionFailure,
+    attempt: int,
+    response_characters: int,
+    exception_class: str,
+    final: bool = False,
+) -> None:
+    """Log only identity, counters and categories, never exception text or output."""
+    from AgentCrew.modules.llm.service_manager import ServiceManager
+
+    fields = {
+        **ServiceManager.describe_service(service),
+        "event": "memory_extraction_fallback" if final else "memory_extraction_attempt",
+        "category": category.value,
+        "attempt": attempt,
+        "retry_count": max(0, attempt - 1),
+        "response_characters": response_characters,
+        "exception_class": exception_class
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,99}", exception_class)
+        else "unknown",
+        "final_fallback_reason": category.value if final else None,
+    }
+    logger.bind(**fields).log(
+        "ERROR" if final else "WARNING",
+        "Memory extraction {}: category={} attempt={} retry_count={} "
+        "response_characters={} exception_class={} provider={} "
+        "service_family={} service_class={} model={}",
+        "fallback" if final else "attempt failed",
+        fields["category"],
+        fields["attempt"],
+        fields["retry_count"],
+        fields["response_characters"],
+        fields["exception_class"],
+        fields["provider"],
+        fields["service_family"],
+        fields["service_class"],
+        fields["qualified_model"],
+    )
 
 
 def parse_xml_block(text: str, tag_name: str) -> dict[str, Any] | None:
@@ -136,9 +191,16 @@ class MemoryRecordBuilder:
         captured = operation_data.get("resources", ())
         memory_data = None
         retried = 0
+        attempt = 0
+        response_characters = 0
+        failure = None
+        exception_class = "none"
         if self.llm_service:
             while retried < EXTRACTION_RETRIES:
                 analyzed_text = None
+                attempt = retried + 1
+                category = ExtractionFailure.PROVIDER_ERROR
+                response_characters = 0
                 try:
                     if session_context:
                         analyzed_prompt = PRE_ANALYZE_PROMPT.replace(
@@ -173,6 +235,13 @@ class MemoryRecordBuilder:
                     analyzed_text = await self.llm_service.process_message(
                         analyzed_prompt
                     )
+                    response_characters = (
+                        len(analyzed_text) if isinstance(analyzed_text, str) else 0
+                    )
+                    category = ExtractionFailure.EMPTY_RESPONSE
+                    if not isinstance(analyzed_text, str) or not analyzed_text.strip():
+                        raise ValueError("empty_response")
+                    category = ExtractionFailure.MISSING_MEMORY_BLOCK
                     if (
                         "<MEMORY>" not in analyzed_text
                         or "</MEMORY>" not in analyzed_text
@@ -180,20 +249,34 @@ class MemoryRecordBuilder:
                         raise ValueError(
                             "LLM response missing <MEMORY>...</MEMORY> block"
                         )
+                    category = ExtractionFailure.MALFORMED_XML
                     memory_data = parse_xml_block(analyzed_text, "MEMORY")
+                    category = ExtractionFailure.INVALID_MEMORY_ROOT
                     if memory_data is None or not isinstance(
                         memory_data.get("MEMORY"), dict
                     ):
                         memory_data = None
                         raise ValueError("Failed to parse <MEMORY> XML block")
-                    logger.debug(f"Memory data: {memory_data}")
+                    failure = None
                     break
                 except Exception as e:
-                    analyzed_preview = None
-                    if isinstance(analyzed_text, str):
-                        analyzed_preview = analyzed_text[:500]
-                    logger.warning(
-                        f"Error processing conversation with LLM on retry {retried + 1}/3: {e!s} | analyzed_preview={analyzed_preview}",
+                    from AgentCrew.modules.llm.base import LLMResponseError
+
+                    if (
+                        category == ExtractionFailure.PROVIDER_ERROR
+                        and isinstance(e, LLMResponseError)
+                        and e.output_truncated
+                    ):
+                        category = ExtractionFailure.OUTPUT_TRUNCATED
+                    memory_data = None
+                    failure = category
+                    exception_class = type(e).__name__
+                    _extraction_diagnostic(
+                        self.llm_service,
+                        category=category,
+                        attempt=attempt,
+                        response_characters=response_characters,
+                        exception_class=exception_class,
                     )
                     retried += 1
                     continue
@@ -214,16 +297,27 @@ class MemoryRecordBuilder:
 
         timestamp = datetime.now(UTC).timestamp()
         memory_header = memory_data["MEMORY"].get("HEAD", None)
-        conversation_document = xmltodict.unparse(
-            memory_data, pretty=True, full_document=False
-        )
         try:
+            conversation_document = xmltodict.unparse(
+                memory_data, pretty=True, full_document=False
+            )
             conversation_document = enforce_resources(
                 conversation_document,
                 captured,
                 (session_context,) if session_context else (),
             )
-        except ValueError:
+        except Exception as exc:
+            failure = ExtractionFailure.RESOURCE_ENFORCEMENT_FAILED
+            exception_class = type(exc).__name__
+            _extraction_diagnostic(
+                self.llm_service,
+                category=failure,
+                attempt=attempt,
+                response_characters=response_characters,
+                exception_class=exception_class,
+                final=True,
+            )
+            failure = None
             memory_data = _fallback_memory(user_message, assistant_response_for_memory)
             conversation_document = enforce_resources(
                 xmltodict.unparse(memory_data, pretty=True, full_document=False),
@@ -231,6 +325,15 @@ class MemoryRecordBuilder:
                 (session_context,) if session_context else (),
             )
             memory_header = None
+        if failure is not None:
+            _extraction_diagnostic(
+                self.llm_service,
+                category=failure,
+                attempt=attempt,
+                response_characters=response_characters,
+                exception_class=exception_class,
+                final=True,
+            )
         memory_data = xmltodict.parse(conversation_document)
         return BuiltMemoryRecord(
             memory_data=memory_data,

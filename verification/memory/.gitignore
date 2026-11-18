@@ -28,4 +28,5 @@
 !verify_phase6.py
 !verify_tool_evidence.py
 !test_resource_provenance.py
+!test_extraction_reliability.py
 !benchmark_resource_provenance.py

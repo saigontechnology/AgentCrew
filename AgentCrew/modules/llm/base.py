@@ -15,6 +15,14 @@ if TYPE_CHECKING:
     from typing import Any
 
 
+class LLMResponseError(RuntimeError):
+    """Provider-neutral terminal failure with bounded, non-content metadata."""
+
+    def __init__(self, message: str, *, output_truncated: bool = False):
+        super().__init__(message)
+        self.output_truncated = output_truncated
+
+
 def read_text_file(file_path):
     """Read and return the contents of a text file."""
     try:

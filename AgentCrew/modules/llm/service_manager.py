@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,38 @@ class ServiceManager:
         if cls._instance is None:
             cls._instance = ServiceManager()
         return cls._instance
+
+    @staticmethod
+    def describe_service(service: BaseLLMService | None) -> dict[str, str]:
+        """Describe an existing LLM without exposing configuration or loading services.
+
+        Only bounded identity tokens are returned. Registry inspection never
+        initializes the singleton, reads configuration, or creates a client.
+        """
+
+        def safe_identity(value: object) -> str:
+            if (
+                isinstance(value, str)
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,199}", value)
+                and ".." not in value
+            ):
+                return value
+            return "unknown"
+
+        provider = safe_identity(getattr(service, "provider_name", None))
+        model_id = safe_identity(getattr(service, "model", None))
+        service_class = safe_identity(type(service).__name__) if service else "none"
+        registry = ModelRegistry._instance
+        model = registry.get_model(f"{provider}/{model_id}") if registry else None
+        return {
+            "provider": provider,
+            "model": model_id,
+            "qualified_model": f"{provider}/{model_id}",
+            "service_family": safe_identity(model.resolved_service_name())
+            if model
+            else "unknown",
+            "service_class": service_class,
+        }
 
     def __init__(self):
         """Initialize the service manager with empty service instances."""
