@@ -515,21 +515,25 @@ def ensure_startup_sqlite_store(
         raise MemoryEngineError(
             f"Incomplete migration requires interactive recovery: {plan.display}"
         )
-    executable = (find_executable or shutil.which)("uvx")
-    if not executable:
-        raise MemoryEngineError(
-            f"uvx is unavailable. Install uv, then run: {plan.display}"
-        )
-    if completed:
+    backup_only = completed
+    if backup_only:
         _verified(plan)
-    message = (
-        f"Source: {plan.source}\nDestination: {plan.destination}\nWork directory: {plan.work}\nStop all Chroma/AgentCrew writers. uvx may download and execute @latest; network access and version drift are explicitly involved.\nCommand: {plan.display}\n"
-        + (
-            "Finish verified Chroma artifact backup (migration will not rerun)."
-            if completed
-            else "Run migration in the foreground, verify independently, then back up detected Chroma artifacts."
+        message = (
+            f"Source: {plan.source}\nDestination: {plan.destination}\nWork directory: {plan.work}\n"
+            f"Backup path: {pending[0] if pending else backups}\n"
+            "Stop all Chroma/AgentCrew writers. The existing migration is already verified "
+            "and will NOT be rerun. Only detected Chroma artifacts will be backed up."
         )
-    )
+    else:
+        executable = (find_executable or shutil.which)("uvx")
+        if not executable:
+            raise MemoryEngineError(
+                f"uvx is unavailable. Install uv, then run: {plan.display}"
+            )
+        message = (
+            f"Source: {plan.source}\nDestination: {plan.destination}\nWork directory: {plan.work}\nStop all Chroma/AgentCrew writers. uvx may download and execute @latest; network access and version drift are explicitly involved.\nCommand: {plan.display}\n"
+            "Run migration in the foreground, verify independently, then back up detected Chroma artifacts."
+        )
     try:
         accepted = (confirm or _confirm)(message)
     except (EOFError, KeyboardInterrupt) as exc:
@@ -551,6 +555,10 @@ def ensure_startup_sqlite_store(
                 "applied",
                 "verified",
             }
+            if backup_only and not completed:
+                raise MemoryEngineError(
+                    "Verified migration state changed; backup-only confirmation cannot authorize migration; startup aborted."
+                )
             incomplete = (plan.work / "snapshot.json").exists() or report.exists()
             if plan.destination.exists() and not completed and not incomplete:
                 logger.warning("{} Recovery command: {}", WARNING, plan.display)

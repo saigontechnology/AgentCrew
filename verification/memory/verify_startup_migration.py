@@ -562,6 +562,184 @@ def checks_active_store_is_not_automatically_merged():
         require(not case.backups.exists(), "Changed state triggered backup")
 
 
+def require_backup_only_prompt(message, case):
+    require(
+        all(
+            str(path) in message
+            for path in (case.source, case.destination, case.work, case.backups)
+        ),
+        "Backup-only confirmation omitted paths",
+    )
+    text = message.casefold()
+    require(
+        "already verified" in text
+        and "will not be rerun" in text
+        and "stop all chroma/agentcrew writers" in text,
+        "Backup-only confirmation omitted verification or quiescence disclosure",
+    )
+    require(
+        all(
+            fragment not in text
+            for fragment in ("download", "network", "version drift", "@latest")
+        ),
+        "Backup-only confirmation claimed migration execution risk",
+    )
+
+
+def backup_only_state(case):
+    paths = (case.source / "chroma.sqlite3", case.segment, case.empty_segment)
+    return (
+        {path.name: startup._hash(path) if path.exists() else None for path in paths},
+        startup._hash(case.work),
+        {str(path): path.read_bytes() for path in case.backups.glob("*/manifest.json")},
+    )
+
+
+def prepare_backup_recovery(case, state):
+    case.ensure()
+    directory, manifest = case.manifest()
+    entries = (
+        manifest["artifacts"]
+        if state == "rolled_back"
+        else [
+            next(
+                item
+                for item in manifest["artifacts"]
+                if item["relative_path"] == case.empty_segment.name
+            )
+        ]
+    )
+    for entry in entries:
+        name = entry["relative_path"]
+        shutil.move(str(directory / name), str(case.source / name))
+        entry["post_sha256"] = None
+    manifest["completion_status"] = state
+    startup._write(directory / "manifest.json", manifest)
+    case.confirm.reset_mock()
+    return directory
+
+
+def checks_backup_only_without_uvx():
+    for status in ("verified", "applied"):
+        for discover_fails in (False, True):
+            with Case() as case:
+                case.success(case.plan.argv)
+                startup._write(case.work / "report.json", {"status": status})
+                discover = (
+                    Mock(side_effect=AssertionError("backup-only discovered uvx"))
+                    if discover_fails
+                    else Mock(return_value=None)
+                )
+                execute = Mock(side_effect=AssertionError("backup-only executed uvx"))
+                require(
+                    case.ensure(find_executable=discover, execute=execute)
+                    == case.destination,
+                    "Verified backup-only finalization needs uvx",
+                )
+                discover.assert_not_called()
+                execute.assert_not_called()
+                case.confirm.assert_called_once()
+                require_backup_only_prompt(case.confirm.call_args.args[0], case)
+                _, manifest = case.manifest()
+                require(
+                    manifest["report_status"] == status,
+                    "Backup lost verified report status",
+                )
+                require(
+                    not startup._artifacts(case.source), "Backup-only artifacts remain"
+                )
+
+
+def checks_backup_recovery_without_uvx():
+    for state in ("in_progress", "rolled_back", "rollback_failed"):
+        with Case() as case:
+            directory = prepare_backup_recovery(case, state)
+            discover = Mock(
+                side_effect=AssertionError("backup recovery discovered uvx")
+            )
+            execute = Mock(side_effect=AssertionError("backup recovery executed uvx"))
+            require(
+                case.ensure(find_executable=discover, execute=execute)
+                == case.destination,
+                "Backup recovery failed without uvx",
+            )
+            discover.assert_not_called()
+            execute.assert_not_called()
+            case.confirm.assert_called_once()
+            require_backup_only_prompt(case.confirm.call_args.args[0], case)
+            completed, _ = case.manifest()
+            if state != "rolled_back":
+                require(
+                    completed == directory, "Recovery did not finish original backup"
+                )
+            require(
+                not startup._artifacts(case.source), "Recovery left Chroma artifacts"
+            )
+
+
+def checks_backup_only_decline_without_uvx():
+    for partial in (False, True):
+        for response in (False, EOFError(), KeyboardInterrupt()):
+            with Case() as case:
+                if partial:
+                    prepare_backup_recovery(case, "in_progress")
+                else:
+                    case.success(case.plan.argv)
+                before = backup_only_state(case)
+                if isinstance(response, BaseException):
+                    case.confirm.side_effect = response
+                else:
+                    case.confirm.return_value = response
+                discover = Mock(
+                    side_effect=AssertionError("declined backup discovered uvx")
+                )
+                execute = Mock(
+                    side_effect=AssertionError("declined backup executed uvx")
+                )
+                rejected(
+                    lambda discover=discover, execute=execute: case.ensure(
+                        find_executable=discover, execute=execute
+                    )
+                )
+                case.confirm.assert_called_once()
+                require_backup_only_prompt(case.confirm.call_args.args[0], case)
+                discover.assert_not_called()
+                execute.assert_not_called()
+                require(
+                    backup_only_state(case) == before,
+                    "Decline changed artifacts, work, or manifest",
+                )
+
+
+def checks_backup_only_consent_never_authorizes_migration():
+    with Case() as case:
+        case.success(case.plan.argv)
+        before = case.chroma_snapshot()
+        discover = Mock(side_effect=AssertionError("backup-only discovered uvx"))
+        execute = Mock(side_effect=AssertionError("backup-only executed uvx"))
+
+        def state_changed(message):
+            require_backup_only_prompt(message, case)
+            startup._write(case.work / "report.json", {"status": "blocked"})
+            return True
+
+        message = rejected(
+            lambda: case.ensure(
+                confirm=state_changed, find_executable=discover, execute=execute
+            )
+        )
+        require(
+            "backup-only" in message.casefold(),
+            "Changed backup-only state lacks diagnosis",
+        )
+        discover.assert_not_called()
+        execute.assert_not_called()
+        require(
+            case.chroma_snapshot() == before and not case.backups.exists(),
+            "Changed state triggered backup",
+        )
+
+
 def checks_path_refusal_and_runtime_surfaces():
     for target in ("source", "destination", "work", "artifact"):
         with Case() as case:
@@ -690,6 +868,10 @@ def main():
         checks_permanent_noninteractive_skip,
         checks_active_store_is_not_automatically_merged,
         checks_path_refusal_and_runtime_surfaces,
+        checks_backup_only_without_uvx,
+        checks_backup_recovery_without_uvx,
+        checks_backup_only_decline_without_uvx,
+        checks_backup_only_consent_never_authorizes_migration,
     ):
         check()
         print(f"PASS {check.__name__}")
