@@ -197,6 +197,8 @@ class SQLiteMemoryRepository:
     No live conversation state or connection is stored on this object. A search
     obtains all candidate sources and conflict markers within one read snapshot.
     Write methods support queued production memory storage and offline migration.
+    Legacy read-only inspection is opt-in for migration preflight; it never upgrades
+    the store or promises current-schema query capabilities.
     """
 
     def __init__(
@@ -204,19 +206,29 @@ class SQLiteMemoryRepository:
         path: str | Path,
         *,
         read_only: bool = False,
+        allow_legacy_schema: bool = False,
         busy_timeout_ms: int = 2000,
     ) -> None:
         if str(path) == ":memory:":
             raise ValueError("Use a disposable file for operation-owned connections")
         if type(busy_timeout_ms) is not int or not 1 <= busy_timeout_ms <= 30_000:
             raise ValueError("Busy timeout must be within 1..30000 ms")
+        if allow_legacy_schema and not read_only:
+            raise ValueError("Legacy schema inspection requires read-only access")
         self.path = Path(path).resolve()
         self.read_only = read_only
         self.busy_timeout_ms = busy_timeout_ms
         self.check_fts5()
         if read_only:
             with self._transaction() as connection:
-                self._validate_schema(connection)
+                version = (
+                    connection.execute("PRAGMA user_version").fetchone()[0]
+                    if allow_legacy_schema
+                    else SCHEMA_VERSION
+                )
+                if version not in (1, 2, SCHEMA_VERSION):
+                    raise SQLiteMemoryError("Unsupported SQLite memory schema version")
+                self._validate_schema(connection, version=version)
         else:
             with self._transaction(write=True, create=True) as connection:
                 tables = connection.execute(
@@ -414,6 +426,45 @@ class SQLiteMemoryRepository:
         }
         if not set(RECORD_COLUMNS) <= columns:
             raise SQLiteMemoryError("Incomplete canonical memory schema")
+        for table, expected in (
+            ("schema_version", {"version"}),
+            (
+                "retrieval_unit",
+                {
+                    "rowid",
+                    "id",
+                    "memory_id",
+                    "kind",
+                    "source_field",
+                    "text",
+                    "ordinal",
+                    "checksum",
+                    "title",
+                    "important",
+                    "body",
+                    "identifiers",
+                },
+            ),
+            ("memory_entity", {"memory_id", "unit_id", "value", "normalized_value"}),
+            ("memory_tag", {"memory_id", "unit_id", "value", "normalized_value"}),
+            (
+                "migration_ledger",
+                {
+                    "source_fingerprint",
+                    "source_id",
+                    "memory_id",
+                    "source_checksum",
+                    "destination_checksum",
+                    "migrated_at",
+                },
+            ),
+            ("memory_fts", {"title", "important", "body", "identifiers"}),
+        ):
+            actual = {
+                row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            if actual != expected:
+                raise SQLiteMemoryError(f"Incomplete {table} schema")
         if version >= 2:
             for table, expected in (
                 (

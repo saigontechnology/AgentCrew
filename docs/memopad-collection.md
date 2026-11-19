@@ -162,7 +162,7 @@ repositories and mocked LLM extraction. Existing memory harnesses additionally
 cover schema/FTS integrity, migration, retrieval, lossless consolidation and
 backend contracts. No private memory data or network service is needed.
 
-### Implementation validation record (2026-11-19)
+### Initial implementation validation record (407606ab, 2026-11-19)
 
 Commands ran from the dedicated feature worktree, reusing the original checkout's
 installed environment without syncing dependencies:
@@ -230,6 +230,94 @@ performance benchmark or private database migration was run. Secret filtering is
 heuristic, and retained proposals are candidates, not validated facts. A failed
 projection has no automatic retry; recollection needs a subsequent explicit
 memory-store action. Revision snapshots do not preserve historical source text.
+
+### Architectural review correction: cross-version migration resume
+
+Migration preflight now explicitly opts into read-only validation of supported
+legacy schemas. Ordinary read-only repositories still require schema 3; normal
+writable application startup still upgrades valid v1/v2 stores transactionally.
+Legacy inspection does not upgrade the destination or promise current-schema
+query capabilities. Future/unknown schema versions and incomplete layouts are
+refused rather than repaired.
+
+Both production and standalone migration paths check schema (including core table
+column layouts), read-only SQLite/FK integrity and migration ownership/counts
+before writes. They repeat these checks under the destination migration lock
+before invoking the existing writable constructor. Only that locked constructor performs the v2→v3 upgrade. Failed
+upgrade DDL rolls back, preserving the partial destination and its ledger for a
+subsequent explicit resume. Memopad tables start empty: migration is not backfill.
+
+The standalone snapshot also binds exact mapper/repository/parser code hashes.
+Changing only schema preflight would therefore still reject a genuine old
+checkpoint. Compatibility is deliberately limited to the audited code identities
+from `661df4b0b43be32f6cb10265c806161a43a1253c` (schema 2) and
+`407606aba878504c4c9cdc432585041fefb5df0d` (initial schema 3), whose canonical mapper
+and parser are unchanged. These immutable code-hash tuples are allowlisted in the
+migrator; no Git lookup is required at runtime. Unknown/modified code identities
+remain refused, and the current parser hash must still match the predecessor's
+parser. Compatibility requires explicit apply/resume and an existing destination.
+Every other checkpoint field, including contract, source, collection,
+destination, unexpected fields and the inspection fingerprint, remains checked.
+Source/backup checks, ledger verification and no-overwrite semantics are retained.
+The saved checkpoint is not rewritten to disguise its predecessor code identity.
+
+The no-injection verification now compares committed `HEAD` against the actual
+pre-memopad base commit for all four protected files: `context_manager.py`,
+`memory_coordinator.py`, `retrieval.py` and `memory_worker.py`. It separately checks
+pending changes and verifies no memopad references exist in any of those files.
+A negative test injects each protected path into the committed-diff result and
+confirms the guard fails, even when the working tree would otherwise be clean.
+It does not pin checksums of mutable working-tree bytes.
+
+Correction validation commands (same environment export as above):
+
+```bash
+uv run --no-sync python verification/memory/verify_memopad.py
+uv run --no-sync python -m pytest verification/memory/test_migration_schema_resume.py -q
+uv run --no-sync python -m pytest \
+  verification/memory/test_migration_schema_resume.py \
+  verification/memory/test_resource_provenance.py \
+  verification/memory/test_structured_extraction.py \
+  verification/memory/test_extraction_reliability.py -q
+for name in verify_phase2 verify_phase5 verify_phase6 verify_migration_operator \
+  verify_startup_migration verify_fts_payload; do
+  uv run --no-sync python verification/memory/$name.py
+done
+uvx ruff check AgentCrew/modules/memory/{sqlite_repository,engine_selection,migrate_chroma_memory_to_sqlite}.py \
+  verification/memory/{verify_memopad,test_migration_schema_resume}.py --statistics
+uvx ruff format --check AgentCrew/modules/memory/{sqlite_repository,engine_selection,migrate_chroma_memory_to_sqlite}.py \
+  verification/memory/{verify_memopad,test_migration_schema_resume}.py
+```
+
+- Dedicated memopad verification: **20 passed**.
+- Cross-release regression suite: **35 passed**, including counterfactual failures
+  on immutable initial-feature code, real committed schema-2/3 partial writers,
+  both migration paths, locked upgrades, read-only non-mutation, repeat resume,
+  preserved canonical/ledger rows, empty memopad, malformed/future rejection,
+  failed-upgrade rollback, checkpoint tampering and backup/inspection validation.
+  SDK access is replaced with a fictional collection; the existing phase 2/6
+  harnesses additionally exercise real disposable offline Chroma stores.
+- Combined migration/resource/extraction pytest invocation: **142 passed**.
+- All six standalone harnesses in the loop above passed.
+- Historical Phase 4 and consolidation behavioral checks, using the previously
+  documented runner, again passed **10 + 12** checks with only historical freeze
+  functions excluded.
+- Complete `verify_phase1.py`, `verify_phase4.py`, and
+  `verify_lossless_consolidation.py` were attempted and retain the same three
+  pre-existing import/freeze failures listed in the initial validation record.
+  Freeze hashes were not updated or silently exempted. The unrelated auxiliary
+  provider-model snapshot was not rerun as part of this focused correction.
+- Ruff lint reports zero findings and formatting passes for all **five changed
+  Python files**. AST syntax checks and imports pass; all seven changed files
+  were reread. No deprecated `tests/`, live providers, private databases or
+  production-scale benchmarks were used.
+
+Scope remains collection-only. Nonblocking limitations are unchanged: project
+stats show opaque keys rather than friendly name/key pairs; failed projections
+have no persisted counter/retry; revision checksums do not preserve old text;
+optional same-call proposals may affect live extraction length/quality; secret
+detection is heuristic; Chroma does not collect memopad. No promotion, retrieval
+integration, historical backfill or context injection was introduced.
 
 References: [SQLite foreign keys/cascades](https://www.sqlite.org/foreignkeys.html),
 [Pydantic strict validation](https://docs.pydantic.dev/latest/concepts/strict_mode/),

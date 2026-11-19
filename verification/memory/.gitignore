@@ -28,6 +28,7 @@
 !verify_phase6.py
 !verify_tool_evidence.py
 !verify_memopad.py
+!test_migration_schema_resume.py
 !test_resource_provenance.py
 !test_extraction_reliability.py
 !test_structured_extraction.py

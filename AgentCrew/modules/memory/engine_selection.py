@@ -302,8 +302,11 @@ def _migrate_chroma_to_sqlite(
             report["source_fingerprint"] = source_hash
             report["source_tree_fingerprint"] = checksum(json_text(source_files))
             if destination.exists():
-                repository = SQLiteMemoryRepository(destination, read_only=True)
+                repository = SQLiteMemoryRepository(
+                    destination, read_only=True, allow_legacy_schema=True
+                )
                 report["destination_opened"] = True
+                repository.check_read_only_integrity()
                 _assert_counts(repository.migration_counts(source_hash))
             with _sdk_collection(work_dir, collection) as collection_obj:
                 expected = _inspect(
@@ -336,8 +339,14 @@ def _migrate_chroma_to_sqlite(
                         f"warnings ({report['warning_counts']}); details: {report_path}"
                     )
                 with _lock(destination.with_name(destination.name + ".migration.lock")):
-                    if destination.exists() and not resume:
-                        raise MigrationError("destination_created_concurrently")
+                    if destination.exists():
+                        if not resume:
+                            raise MigrationError("destination_created_concurrently")
+                        repository = SQLiteMemoryRepository(
+                            destination, read_only=True, allow_legacy_schema=True
+                        )
+                        repository.check_read_only_integrity()
+                        _assert_counts(repository.migration_counts(source_hash))
                     repository = SQLiteMemoryRepository(destination)
                     report["destination_opened"] = True
                     report["destination_write_opened"] = True

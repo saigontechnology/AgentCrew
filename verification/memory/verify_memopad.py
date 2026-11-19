@@ -44,6 +44,13 @@ from AgentCrew.modules.memory.sqlite_service import (
 )
 from AgentCrew.modules.memory.types import MemoryRecord
 
+MEMOPAD_BASE_COMMIT = "661df4b0b43be32f6cb10265c806161a43a1253c"
+PROTECTED_MEMORY_PATHS = (
+    "AgentCrew/modules/agents/context_manager.py",
+    "AgentCrew/modules/agents/memory_coordinator.py",
+    "AgentCrew/modules/memory/retrieval.py",
+    "AgentCrew/modules/memory/memory_worker.py",
+)
 STATEMENT = "Use bounded retries for fictional requests."
 DOCUMENT = f"<MEMORY><HEAD>Fictional retry policy</HEAD><CONVERSATION_NOTES><NOTE>{STATEMENT}</NOTE></CONVERSATION_NOTES></MEMORY>"
 PROPOSAL = {
@@ -539,13 +546,31 @@ class MemopadVerification(unittest.TestCase):
         self.assertEqual(before, self.rows("memopad"))
 
     def test_context_injection_files_unchanged(self):
-        changed = subprocess.check_output(
-            ["git", "diff", "HEAD", "--name-only"], cwd=ROOT, text=True
-        ).splitlines()
-        self.assertNotIn("AgentCrew/modules/agents/context_manager.py", changed)
-        self.assertNotIn("AgentCrew/modules/agents/memory_coordinator.py", changed)
-        source = (ROOT / "AgentCrew/modules/agents/context_manager.py").read_text()
-        self.assertNotIn("memopad", source.lower())
+        for revisions in ((MEMOPAD_BASE_COMMIT, "HEAD"), ("HEAD",)):
+            changed = subprocess.check_output(
+                [
+                    "git",
+                    "diff",
+                    "--name-only",
+                    *revisions,
+                    "--",
+                    *PROTECTED_MEMORY_PATHS,
+                ],
+                cwd=ROOT,
+                text=True,
+            ).splitlines()
+            self.assertEqual(changed, [], "Protected memory boundary changed")
+        for path in PROTECTED_MEMORY_PATHS:
+            self.assertNotIn("memopad", (ROOT / path).read_text().lower(), path)
+
+    def test_context_guard_rejects_committed_boundary_changes(self):
+        for path in PROTECTED_MEMORY_PATHS:
+            with (
+                self.subTest(path=path),
+                patch("subprocess.check_output", return_value=path + "\n"),
+                self.assertRaises(AssertionError),
+            ):
+                self.test_context_injection_files_unchanged()
 
 
 if __name__ == "__main__":

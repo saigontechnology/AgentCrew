@@ -37,6 +37,22 @@ from AgentCrew.modules.memory.sqlite_repository import (
 from AgentCrew.modules.memory.types import MemoryRecord
 
 CONTRACT_VERSION = 1
+LEGACY_CHECKPOINT_CODE_IDENTITIES = frozenset(
+    {
+        (
+            2,
+            "1fee25d8ad1be159a5d693f4727f87db37466972bfd1eba398de4726e8c312bb",
+            "8209c0912d9e4cd779922ed598b3059ac4f627c6460c8e7e5de304b506db887b",
+            "072ad8e8801e9187e7758c493eaaf0ceda2e3e1eb5680eb6a60217e9f9b08b2d",
+        ),
+        (
+            3,
+            "1fee25d8ad1be159a5d693f4727f87db37466972bfd1eba398de4726e8c312bb",
+            "c086f5beb5d1c7ddc3a6b274d478a78c999c8d64e7ecb54392f1bdc3cfaac771",
+            "072ad8e8801e9187e7758c493eaaf0ceda2e3e1eb5680eb6a60217e9f9b08b2d",
+        ),
+    }
+)
 
 
 def fingerprint(directory: Path) -> dict[str, str]:
@@ -305,6 +321,35 @@ def _sdk_collection(work: Path, collection_name: str):
                 os.close(descriptor)
 
 
+def _snapshot_identity_matches(identity, expected: dict, *, allow_legacy: bool) -> bool:
+    """Accept audited predecessor code only; all non-code checkpoint fields match.
+
+    The pinned tuples are schema/mapper/repository/parser identities from commits
+    661df4b0 (schema 2) and 407606ab (initial schema 3). Their canonical mapping and
+    parser are unchanged. Unknown code drift still requires a fresh migration.
+    """
+    if identity == expected:
+        return True
+    if not allow_legacy or not isinstance(identity, dict):
+        return False
+    keys = (
+        "schema_version",
+        "mapping_tool_sha256",
+        "repository_sha256",
+        "parser_sha256",
+    )
+    code_identity = tuple(identity.get(key) for key in keys)
+    if type(code_identity[0]) is not int or any(
+        not isinstance(value, str) for value in code_identity[1:]
+    ):
+        return False
+    if code_identity not in LEGACY_CHECKPOINT_CODE_IDENTITIES:
+        return False
+    if identity["parser_sha256"] != expected["parser_sha256"]:
+        return False
+    return {**identity, **{key: expected[key] for key in keys}} == expected
+
+
 def _snapshot(options: MigrationOptions) -> tuple[str, dict]:
     source_files = fingerprint(options.source)
     source_hash = checksum(
@@ -340,7 +385,11 @@ def _snapshot(options: MigrationOptions) -> tuple[str, dict]:
     if state_path.exists():
         _path(state_path)
         saved = json.loads(state_path.read_text(encoding="utf-8"))
-        if not options.resume or saved.get("identity") != expected:
+        if not options.resume or not _snapshot_identity_matches(
+            saved.get("identity"),
+            expected,
+            allow_legacy=options.apply and options.destination.is_file(),
+        ):
             raise MigrationError("snapshot_identity_mismatch")
         if (
             saved.get("source_files") != source_files
@@ -631,8 +680,11 @@ def migrate(options: MigrationOptions) -> dict:
             report["source_fingerprint"] = source_hash
             report["source_tree_fingerprint"] = checksum(json_text(source_files))
             if options.destination.exists() and options.apply:
-                repository = SQLiteMemoryRepository(options.destination, read_only=True)
+                repository = SQLiteMemoryRepository(
+                    options.destination, read_only=True, allow_legacy_schema=True
+                )
                 report["destination_opened"] = True
+                repository.check_read_only_integrity()
                 _assert_counts(repository.migration_counts(source_hash))
             with _sdk_collection(options.work_dir, options.collection) as collection:
                 expected = _inspect(
@@ -677,7 +729,13 @@ def migrate(options: MigrationOptions) -> dict:
                         if options.destination.exists():
                             if not options.resume:
                                 raise MigrationError("destination_created_concurrently")
-                            SQLiteMemoryRepository(options.destination, read_only=True)
+                            repository = SQLiteMemoryRepository(
+                                options.destination,
+                                read_only=True,
+                                allow_legacy_schema=True,
+                            )
+                            repository.check_read_only_integrity()
+                            _assert_counts(repository.migration_counts(source_hash))
                         repository = SQLiteMemoryRepository(options.destination)
                         report["destination_opened"] = True
                         report["destination_write_opened"] = True
