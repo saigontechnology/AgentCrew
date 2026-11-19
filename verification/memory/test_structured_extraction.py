@@ -85,6 +85,41 @@ def test_json_contract_xml_escaping_and_one_call(fence):
         ("[]", "schema_validation_failed"),
         (json.dumps(payload(extra="invented")), "schema_validation_failed"),
         (json.dumps(payload(head=5)), "schema_validation_failed"),
+        (json.dumps(payload(entities=[{"name": "  "}])), "schema_validation_failed"),
+        (
+            json.dumps(
+                payload(entities=[{"name": "Entity", "update_existing": "yes"}])
+            ),
+            "schema_validation_failed",
+        ),
+        (
+            json.dumps(
+                payload(
+                    resources=[
+                        {
+                            "id": "r1",
+                            "entity_refs": [
+                                {"name": " ", "relation": "source_document"}
+                            ],
+                        }
+                    ]
+                )
+            ),
+            "schema_validation_failed",
+        ),
+        (
+            json.dumps(
+                payload(
+                    resources=[
+                        {
+                            "id": "r1",
+                            "entity_refs": [{"name": "Entity", "relation": " "}],
+                        }
+                    ]
+                )
+            ),
+            "schema_validation_failed",
+        ),
         (json.dumps(payload(head="x\x00y")), "schema_validation_failed"),
         (
             json.dumps(payload(resources=[{"id": "r1", "uri": "urn:invented"}])),
@@ -229,3 +264,110 @@ def test_fallback_replaces_xml_illegal_characters_and_is_bounded():
     notes = root.findall("CONVERSATION_NOTES/NOTE")
     assert notes[0].text == "x\ufffdy"
     assert len(notes[1].text) == MAX_ASSISTANT_EVIDENCE_CHARACTERS
+
+
+def test_unique_entity_continuation_retains_descriptions_and_explicit_links():
+    previous = '<MEMORY><ENTITIES><ENTITY><NAME>Existing Entity</NAME><DESC>Old detail</DESC><TYPE>service</TYPE></ENTITY></ENTITIES><RESOURCES><RESOURCE uri="urn:old"><ENTITY_REF relation="source_document">Existing Entity</ENTITY_REF></RESOURCE></RESOURCES></MEMORY>'
+    data = payload(
+        entities=[
+            {"name": "existing entity", "desc": "New detail", "update_existing": True}
+        ],
+        resources=[
+            {
+                "id": "r1",
+                "entity_refs": [
+                    {"name": "Existing Entity", "relation": "source_document"}
+                ],
+            }
+        ],
+    )
+    result, llm = build(
+        [json.dumps(data)], previous=previous, resources=(ResourceAccess("urn:new"),)
+    )
+    root = ET.fromstring(result.document)
+    entities = root.findall("ENTITIES/ENTITY")
+    assert len(entities) == 1
+    assert entities[0].findtext("DESC") == "Old detail\n\nNew detail"
+    assert entities[0].findtext("TYPE") == "service"
+    assert all(
+        resource.findtext("ENTITY_REF") == "Existing Entity"
+        for resource in root.findall("RESOURCES/RESOURCE")
+    )
+    assert llm.process_message.await_count == 1
+
+
+def test_identical_ambiguous_entities_are_not_deduplicated_on_continuation():
+    previous = (
+        "<MEMORY><ENTITIES><ENTITY><NAME>Other</NAME></ENTITY></ENTITIES></MEMORY>"
+    )
+    data = payload(
+        entities=[{"name": "Ambiguous"}, {"name": "Ambiguous"}],
+        resources=[
+            {
+                "id": "r1",
+                "entity_refs": [{"name": "Ambiguous", "relation": "source_document"}],
+            }
+        ],
+    )
+    result, _ = build(
+        [json.dumps(data)],
+        previous=previous,
+        resources=(ResourceAccess("urn:ambiguous"),),
+    )
+    root = ET.fromstring(result.document)
+    assert len(root.findall("ENTITIES/ENTITY")) == 3
+    assert root.find("RESOURCES/RESOURCE/ENTITY_REF") is None
+
+
+def test_name_collision_without_explicit_update_never_infers_identity():
+    previous = '<MEMORY><ENTITIES><ENTITY><NAME>Same Name</NAME><DESC>Old identity</DESC></ENTITY></ENTITIES><RESOURCES><RESOURCE uri="urn:old"><ENTITY_REF relation="source_document">Same Name</ENTITY_REF></RESOURCE></RESOURCES></MEMORY>'
+    data = payload(
+        entities=[{"name": "Same Name", "desc": "Different identity"}],
+        resources=[
+            {
+                "id": "r1",
+                "entity_refs": [{"name": "Same Name", "relation": "source_document"}],
+            }
+        ],
+    )
+    result, _ = build(
+        [json.dumps(data)],
+        previous=previous,
+        resources=(ResourceAccess("urn:new"),),
+        assistant="Different identity must not inherit the old resource link",
+    )
+    root = ET.fromstring(result.document)
+    resources = {
+        resource.get("uri"): resource for resource in root.findall("RESOURCES/RESOURCE")
+    }
+    assert resources["urn:old"].findtext("ENTITY_REF") == "Same Name"
+    assert resources["urn:new"].find("ENTITY_REF") is None
+    assert root.findtext("ENTITIES/ENTITY/DESC") == "Old identity"
+    assert "Different identity" in result.document
+
+
+def test_update_flag_cannot_collapse_preexisting_ambiguity():
+    previous = "<MEMORY><ENTITIES><ENTITY><NAME>Same</NAME><DESC>One</DESC></ENTITY><ENTITY><NAME>Same</NAME><DESC>Two</DESC></ENTITY></ENTITIES></MEMORY>"
+    data = payload(
+        entities=[{"name": "Same", "desc": "Update", "update_existing": True}],
+        resources=[
+            {
+                "id": "r1",
+                "entity_refs": [{"name": "Same", "relation": "source_document"}],
+            }
+        ],
+    )
+    result, _ = build(
+        [json.dumps(data)], previous=previous, resources=(ResourceAccess("urn:new"),)
+    )
+    root = ET.fromstring(result.document)
+    assert len(root.findall("ENTITIES/ENTITY")) == 3
+    assert root.find("RESOURCES/RESOURCE/ENTITY_REF") is None
+
+
+def test_empty_header_projection_matches_canonical_xml():
+    result, llm = build([json.dumps(payload(head=""))])
+    assert result.header is None
+    assert result.memory_data["MEMORY"]["HEAD"] is None
+    assert ET.fromstring(result.document).findtext("HEAD") == ""
+    assert llm.process_message.await_count == 1

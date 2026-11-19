@@ -175,13 +175,14 @@ class ExtractionFlow(_ExtractionModel):
 
 
 class ExtractionEntity(_ExtractionModel):
-    name: Annotated[MemoryName, Field(min_length=1)]
+    name: Annotated[MemoryName, Field(min_length=1, pattern=r"\S")]
     desc: MemoryText = ""
+    update_existing: bool = False
 
 
 class ExtractionEntityRef(_ExtractionModel):
-    name: Annotated[MemoryName, Field(min_length=1)]
-    relation: Annotated[MemoryName, Field(min_length=1, max_length=128)]
+    name: Annotated[MemoryName, Field(min_length=1, pattern=r"\S")]
+    relation: Annotated[MemoryName, Field(min_length=1, max_length=128, pattern=r"\S")]
 
 
 class ExtractionResource(_ExtractionModel):
@@ -303,8 +304,46 @@ def _extracted_memory(
     return {"MEMORY": memory}
 
 
+def _merge_entities(old_items: list, new_items: list, updates: tuple[str, ...]) -> list:
+    """Apply explicit unique-name updates, never infer identity from a name collision."""
+    from collections import Counter
+
+    from .record_parser import normalize_text
+
+    def name(item: Any) -> str:
+        value = item.get("NAME") if isinstance(item, dict) else None
+        return normalize_text(value) if isinstance(value, str) else ""
+
+    update_keys = {normalize_text(value) for value in updates}
+    old_counts = Counter(map(name, old_items))
+    new_counts = Counter(map(name, new_items))
+    positions = {name(item): index for index, item in enumerate(old_items)}
+    retained = list(old_items)
+    for item in new_items:
+        key = name(item)
+        if key and key in update_keys and old_counts[key] == new_counts[key] == 1:
+            position = positions[key]
+            target = dict(retained[position])
+            for field, value in item.items():
+                if field == "NAME" or not value:
+                    continue
+                previous = target.get(field)
+                if not previous:
+                    target[field] = value
+                elif previous != value:
+                    target[field] = (
+                        previous + "\n\n" + value
+                        if isinstance(previous, str) and isinstance(value, str)
+                        else [previous, value]
+                    )
+            retained[position] = target
+        else:
+            retained.append(item)
+    return retained
+
+
 def _preserve_previous(
-    memory_data: dict[str, Any], session_context: str
+    memory_data: dict[str, Any], session_context: str, updates: tuple[str, ...] = ()
 ) -> dict[str, Any]:
     """Retain existing semantic data even when prompt bounds or fallback omit it."""
     if not session_context:
@@ -333,13 +372,16 @@ def _preserve_previous(
         )
         old_items = old if isinstance(old, list) else [old] if old is not None else []
         new_items = new if isinstance(new, list) else [new] if new is not None else []
-        retained = list(old_items)
-        seen = {json.dumps(item, sort_keys=True) for item in retained}
-        for item in new_items:
-            identity = json.dumps(item, sort_keys=True)
-            if identity not in seen:
-                retained.append(item)
-                seen.add(identity)
+        if container == "ENTITIES":
+            retained = _merge_entities(old_items, new_items, updates)
+        else:
+            retained = list(old_items)
+            seen = {json.dumps(item, sort_keys=True) for item in retained}
+            for item in new_items:
+                identity = json.dumps(item, sort_keys=True)
+                if identity not in seen:
+                    retained.append(item)
+                    seen.add(identity)
         merged[container] = {
             **(old_container if isinstance(old_container, dict) else {}),
             tag: retained,
@@ -438,6 +480,7 @@ class MemoryRecordBuilder:
         response_characters = 0
         failure = None
         exception_class = "none"
+        entity_updates: tuple[str, ...] = ()
         if self.llm_service:
             for attempt in range(1, EXTRACTION_RETRIES + 1):
                 category = ExtractionFailure.PROVIDER_ERROR
@@ -512,6 +555,15 @@ class MemoryRecordBuilder:
                     category = ExtractionFailure.SCHEMA_VALIDATION_FAILED
                     payload = parse_extraction(analyzed_text, minimal=minimal)
                     memory_data = _extracted_memory(payload, captured)
+                    entity_updates = (
+                        tuple(
+                            entity.name
+                            for entity in payload.entities
+                            if entity.update_existing
+                        )
+                        if isinstance(payload, MemoryExtraction)
+                        else ()
+                    )
                     failure = None
                     break
                 except Exception as exc:
@@ -557,7 +609,7 @@ class MemoryRecordBuilder:
         if isinstance(modified, dict) and isinstance(modified.get("memory_data"), dict):
             memory_data = modified["memory_data"]
 
-        memory_data = _preserve_previous(memory_data, session_context)
+        memory_data = _preserve_previous(memory_data, session_context, entity_updates)
         timestamp = datetime.now(UTC).timestamp()
         memory_header = memory_data["MEMORY"].get("HEAD", None)
         try:
@@ -601,6 +653,7 @@ class MemoryRecordBuilder:
                 final=True,
             )
         memory_data = xmltodict.parse(conversation_document)
+        memory_header = memory_data["MEMORY"].get("HEAD")
         return BuiltMemoryRecord(
             memory_data=memory_data,
             document=conversation_document,
