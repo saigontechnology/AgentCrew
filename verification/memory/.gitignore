@@ -29,4 +29,5 @@
 !verify_tool_evidence.py
 !test_resource_provenance.py
 !test_extraction_reliability.py
+!test_structured_extraction.py
 !benchmark_resource_provenance.py

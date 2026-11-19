@@ -129,3 +129,78 @@ implementation slice; those paths are not modified here. The deprecated `tests/`
 tree is not run.
 
 Logging reference: [Loguru binding and structured fields](https://loguru.readthedocs.io/en/stable/api/logger.html#loguru._logger.Logger.bind).
+
+## Phase 2: structured extraction
+
+Normal extraction now uses provider-neutral JSON-only prompting followed by
+strict Pydantic validation in `MemoryRecordBuilder`. Native provider JSON modes
+are deliberately not required: provider service families do not currently share
+one native structured-output contract. The local `parse_extraction()` boundary
+can validate either prompted or future native JSON without changing persistence.
+
+The full payload requires `head`, `flow` (`intent`, `exploration`, `outcome`) and
+`notes`. Optional `insights`, `entities` (`name`, `desc`), `domains` and `resources`
+default to empty lists. Unknown keys, coercions, duplicate JSON keys, non-finite
+constants and XML-illegal characters fail validation. JSON Markdown fences with
+LF/CRLF are accepted, but arbitrary surrounding prose is not repaired. All
+semantic text is serialized by `xmltodict`, never unescaped XML interpolation.
+Date is assigned by the application. Legacy XML parsing remains available to
+consolidation and existing-record readers, but is not the new extraction contract.
+
+Resource proposals contain only bounded IDs `r1` through `r32`, display names and
+entity references; a URI field is forbidden. The application maps IDs back to
+captured URIs, rejects IDs absent from that turn, then runs the existing authority
+enforcer after hooks and serialization. Invalid/ambiguous entity references stay
+unlinked, and all authoritative resources are inserted even if the model omits
+them or the final minimal response has no resource field. Previous resources and
+explicit links are preserved by the existing enforcer.
+
+Central limits (characters, not token guarantees):
+
+| Input/output | Limit |
+| --- | ---: |
+| Previous-memory prompt evidence | 30,000 |
+| Assistant prompt evidence | 40,000 |
+| User prompt evidence | 12,000 |
+| Full JSON response | 12,000 |
+| Minimal final JSON response | 4,000 |
+| Resources | Existing 32 resources, 4,096 characters per URI |
+
+The existing upstream tool-summary budget remains 8 items/6,000 characters;
+combined assistant evidence is independently capped. Long evidence keeps both
+ends with a shortening marker. Resource descriptors are outside those lossy text
+bounds and can add up to approximately 131k URI characters at the existing caps.
+Fields are additionally bounded: head/names 256 characters, semantic text 1,200,
+relationships 128; 8 notes/insights/domains, 24 entities, 32 proposals with at most
+8 references each. The full-result cap applies across fields. These starting
+limits follow the reviewed evidence budgets; the extra user/final-minimal limits
+prevent a single huge user turn or third response from defeating the budget.
+
+Three attempts remain the maximum, not three calls on success. After a failure,
+the next prompt adds only a stable category and shorter-response guidance, never
+raw invalid output or Pydantic error details. Attempt 3 uses the reduced
+`head`/`notes` schema. Provider failures have bounded async delays of 0.1 then 0.2
+seconds; validation/truncation retries have no delay. Additional categories are
+`malformed_json`, `schema_validation_failed`, `unknown_resource_id` and
+`output_too_large`. Missing closing JSON is not assumed to prove truncation.
+
+The application deterministically retains prior insights, entities, domains,
+notes and legacy fields outside prompt truncation, and appends distinct current
+flow text. Thus a minimal response or deterministic fallback cannot erase older
+facts merely because the model did not see the full prior XML. Fallback notes
+are also evidence-bounded and replace XML-illegal characters with U+FFFD. Old
+canonical documents are not rewritten in place. Accumulated session records can
+still grow; these limits constrain new extraction/evidence, not a lossy cap on
+previously persisted facts. Summaries remain model proposals, not proof of truth.
+
+Validation at this milestone: **97 focused tests passed** (the earlier 75 plus
+22 structured-extraction cases). SQLite write-path (`verify_phase5.py`) and tool
+evidence harnesses pass. Their fictional successful-extractor replies were
+updated to JSON; historical benchmark pins, gates and canonical XML fixtures were
+not changed to hide incompatibility. Tests cover technical generic syntax/XML
+escaping, fenced JSON, schema policy, unknown IDs/invalid links, corrective and
+minimal retries, provider failure, long evidence with exact URI retention,
+previous-memory preservation and bounded fallback. Retrieval/consolidation
+regressions are rerun at final integration.
+
+Validation reference: [Pydantic models, strict validation and forbidden extras](https://docs.pydantic.dev/latest/concepts/models/#extra-data).

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import sys
 from dataclasses import replace
@@ -296,7 +297,30 @@ async def test_builder_fallback_llm_and_previous_links():
         item.uri
         for item in derive_memory_units(record(document=built.document)).resources
     } == {CV, URI}
-    llm = SimpleNamespace(process_message=AsyncMock(return_value=xml(CV)))
+    llm = SimpleNamespace(
+        process_message=AsyncMock(
+            return_value=json.dumps(
+                {
+                    "head": "Candidate review",
+                    "notes": [],
+                    "flow": {
+                        "intent": "Review",
+                        "exploration": "",
+                        "outcome": "Reviewed",
+                    },
+                    "entities": [{"name": NAME}],
+                    "resources": [
+                        {
+                            "id": "r1",
+                            "entity_refs": [
+                                {"name": NAME, "relation": "source_document"}
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+    )
     built = await MemoryRecordBuilder(llm).build(operation)
     parsed = derive_memory_units(record(document=built.document))
     assert len(parsed.resources) == 2 and len(parsed.resource_links) == 1
@@ -858,7 +882,25 @@ async def test_ambiguous_merge_cannot_destroy_preserved_links():
     )
     with pytest.raises(ValueError, match="ambiguous_preserved_resource_entity"):
         enforce_resources(source, (), (xml(),))
-    llm = SimpleNamespace(process_message=AsyncMock(return_value=source))
+    llm = SimpleNamespace(
+        process_message=AsyncMock(
+            return_value=json.dumps(
+                {
+                    "head": "Candidate details",
+                    "notes": [],
+                    "flow": {
+                        "intent": "Review",
+                        "exploration": "",
+                        "outcome": "Reviewed",
+                    },
+                    "entities": [
+                        {"name": NAME},
+                        {"name": NAME, "desc": "Ambiguous identity"},
+                    ],
+                }
+            )
+        )
+    )
     built = await MemoryRecordBuilder(llm).build(
         {
             "operation_id": "fictional",

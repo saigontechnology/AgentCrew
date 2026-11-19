@@ -13,10 +13,11 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import xmltodict
 from loguru import logger
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
 from AgentCrew.modules.prompts.constants import (
     FIRST_TURN_INSTRUCTIONS,
@@ -28,6 +29,11 @@ if TYPE_CHECKING:
     from AgentCrew.modules.llm.base import BaseLLMService
 
 EXTRACTION_RETRIES = 3
+MAX_PREVIOUS_MEMORY_CHARACTERS = 30_000
+MAX_ASSISTANT_EVIDENCE_CHARACTERS = 40_000
+MAX_USER_EVIDENCE_CHARACTERS = 12_000
+MAX_EXTRACTION_CHARACTERS = 12_000
+MAX_MINIMAL_EXTRACTION_CHARACTERS = 4_000
 
 
 class ExtractionFailure(StrEnum):
@@ -40,6 +46,10 @@ class ExtractionFailure(StrEnum):
     INVALID_MEMORY_ROOT = "invalid_memory_root"
     OUTPUT_TRUNCATED = "output_truncated"
     RESOURCE_ENFORCEMENT_FAILED = "resource_enforcement_failed"
+    MALFORMED_JSON = "malformed_json"
+    SCHEMA_VALIDATION_FAILED = "schema_validation_failed"
+    UNKNOWN_RESOURCE_ID = "unknown_resource_id"
+    OUTPUT_TOO_LARGE = "output_too_large"
 
 
 def _extraction_diagnostic(
@@ -134,6 +144,228 @@ def build_consolidation_query(memory_data: dict[str, Any]) -> str:
     return ""
 
 
+def _valid_xml_character(character: str) -> bool:
+    value = ord(character)
+    return (
+        value in (9, 10, 13)
+        or 0x20 <= value <= 0xD7FF
+        or 0xE000 <= value <= 0xFFFD
+        or 0x10000 <= value <= 0x10FFFF
+    )
+
+
+def _xml_text(value: str) -> str:
+    if not all(_valid_xml_character(character) for character in value):
+        raise ValueError("invalid_xml_character")
+    return value
+
+
+MemoryText = Annotated[str, Field(max_length=1200), AfterValidator(_xml_text)]
+MemoryName = Annotated[str, Field(max_length=256), AfterValidator(_xml_text)]
+
+
+class _ExtractionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
+
+
+class ExtractionFlow(_ExtractionModel):
+    intent: MemoryText
+    exploration: MemoryText
+    outcome: MemoryText
+
+
+class ExtractionEntity(_ExtractionModel):
+    name: Annotated[MemoryName, Field(min_length=1)]
+    desc: MemoryText = ""
+
+
+class ExtractionEntityRef(_ExtractionModel):
+    name: Annotated[MemoryName, Field(min_length=1)]
+    relation: Annotated[MemoryName, Field(min_length=1, max_length=128)]
+
+
+class ExtractionResource(_ExtractionModel):
+    id: Annotated[str, Field(pattern=r"^r(?:[1-9]|[12][0-9]|3[0-2])$")]
+    name: MemoryName = ""
+    entity_refs: list[ExtractionEntityRef] = Field(default_factory=list, max_length=8)
+
+
+class MinimalMemoryExtraction(_ExtractionModel):
+    head: MemoryName
+    notes: list[MemoryText] = Field(max_length=8)
+
+
+class MemoryExtraction(MinimalMemoryExtraction):
+    flow: ExtractionFlow
+    insights: list[MemoryText] = Field(default_factory=list, max_length=8)
+    entities: list[ExtractionEntity] = Field(default_factory=list, max_length=24)
+    domains: list[MemoryName] = Field(default_factory=list, max_length=8)
+    resources: list[ExtractionResource] = Field(default_factory=list, max_length=32)
+
+
+class ExtractionValidationError(ValueError):
+    def __init__(self, category: ExtractionFailure):
+        super().__init__(category.value)
+        self.category = category
+
+
+def _bounded_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    marker = "\n[Evidence shortened]\n"
+    remaining = limit - len(marker)
+    head = remaining // 2
+    return text[:head] + marker + text[-(remaining - head) :]
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_json_key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(_value: str) -> None:
+    raise ValueError("invalid_json_constant")
+
+
+def parse_extraction(text: str, *, minimal: bool = False) -> MinimalMemoryExtraction:
+    """Provider-neutral JSON boundary; never repair or echo invalid model output."""
+    limit = MAX_MINIMAL_EXTRACTION_CHARACTERS if minimal else MAX_EXTRACTION_CHARACTERS
+    if len(text) > limit:
+        raise ExtractionValidationError(ExtractionFailure.OUTPUT_TOO_LARGE)
+    fenced = re.fullmatch(
+        r"\s*```(?:json)?\s*(.*?)\s*```\s*", text, re.DOTALL | re.IGNORECASE
+    )
+    if fenced:
+        text = fenced.group(1)
+    try:
+        payload = json.loads(
+            text,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (ValueError, RecursionError) as exc:
+        raise ExtractionValidationError(ExtractionFailure.MALFORMED_JSON) from exc
+    try:
+        schema = MinimalMemoryExtraction if minimal else MemoryExtraction
+        return schema.model_validate(payload)
+    except ValidationError as exc:
+        raise ExtractionValidationError(
+            ExtractionFailure.SCHEMA_VALIDATION_FAILED
+        ) from exc
+
+
+def _extracted_memory(
+    payload: MinimalMemoryExtraction, captured: tuple
+) -> dict[str, Any]:
+    """Map validated semantic fields to canonical XML keys; URIs are app-owned."""
+    memory: dict[str, Any] = {
+        "HEAD": payload.head,
+        "DATE": datetime.now(UTC).strftime("%Y-%m-%d"),
+        "CONVERSATION_NOTES": {"NOTE": payload.notes},
+    }
+    if isinstance(payload, MemoryExtraction):
+        allowed = {f"r{index}": item for index, item in enumerate(captured[:32], 1)}
+        resources = []
+        for proposal in payload.resources:
+            if proposal.id not in allowed:
+                raise ExtractionValidationError(ExtractionFailure.UNKNOWN_RESOURCE_ID)
+            resources.append(
+                {
+                    "@uri": allowed[proposal.id].uri,
+                    "@name": proposal.name,
+                    "ENTITY_REF": [
+                        {"@relation": ref.relation, "#text": ref.name}
+                        for ref in proposal.entity_refs
+                    ],
+                }
+            )
+        memory.update(
+            {
+                "FLOW": {
+                    key.upper(): value
+                    for key, value in payload.flow.model_dump().items()
+                },
+                "INSIGHTS": {"INSIGHT": payload.insights},
+                "ENTITIES": {
+                    "ENTITY": [
+                        {"NAME": entity.name, "DESC": entity.desc}
+                        for entity in payload.entities
+                    ]
+                },
+                "DOMAINS": {"DOMAIN": payload.domains},
+                "RESOURCES": {"RESOURCE": resources},
+            }
+        )
+    return {"MEMORY": memory}
+
+
+def _preserve_previous(
+    memory_data: dict[str, Any], session_context: str
+) -> dict[str, Any]:
+    """Retain existing semantic data even when prompt bounds or fallback omit it."""
+    if not session_context:
+        return memory_data
+    try:
+        previous = xmltodict.parse(session_context).get("MEMORY")
+    except Exception:
+        return memory_data
+    if not isinstance(previous, dict):
+        return memory_data
+    incoming = memory_data["MEMORY"]
+    merged = {**previous, **incoming}
+    for container, tag in (
+        ("INSIGHTS", "INSIGHT"),
+        ("ENTITIES", "ENTITY"),
+        ("DOMAINS", "DOMAIN"),
+        ("CONVERSATION_NOTES", "NOTE"),
+    ):
+        old_container = previous.get(container) or {}
+        new_container = incoming.get(container) or {}
+        old = (
+            old_container.get(tag) if isinstance(old_container, dict) else old_container
+        )
+        new = (
+            new_container.get(tag) if isinstance(new_container, dict) else new_container
+        )
+        old_items = old if isinstance(old, list) else [old] if old is not None else []
+        new_items = new if isinstance(new, list) else [new] if new is not None else []
+        retained = list(old_items)
+        seen = {json.dumps(item, sort_keys=True) for item in retained}
+        for item in new_items:
+            identity = json.dumps(item, sort_keys=True)
+            if identity not in seen:
+                retained.append(item)
+                seen.add(identity)
+        merged[container] = {
+            **(old_container if isinstance(old_container, dict) else {}),
+            tag: retained,
+        }
+    old_flow = previous.get("FLOW") or {}
+    new_flow = incoming.get("FLOW") or {}
+    if isinstance(old_flow, str):
+        old_flow = {"EXPLORATION": old_flow}
+    if isinstance(new_flow, str):
+        new_flow = {"EXPLORATION": new_flow}
+    old_flow = old_flow if isinstance(old_flow, dict) else {}
+    new_flow = new_flow if isinstance(new_flow, dict) else {}
+    flow: dict[str, Any] = {**old_flow, **new_flow}
+    merged["FLOW"] = flow
+    for key in ("INTENT", "EXPLORATION", "OUTCOME"):
+        old_value, new_value = old_flow.get(key), new_flow.get(key)
+        values = [value for value in (old_value, new_value) if value]
+        if all(isinstance(value, str) for value in values):
+            flow[key] = "\n\n".join(dict.fromkeys(values))
+        else:
+            flow[key] = values
+    if not incoming.get("HEAD"):
+        merged["HEAD"] = previous.get("HEAD")
+    return {"MEMORY": merged}
+
+
 def _fallback_memory(
     user_message: str, assistant_response_for_memory: str
 ) -> dict[str, Any]:
@@ -141,7 +373,19 @@ def _fallback_memory(
         "MEMORY": {
             "DATE": datetime.now(UTC).strftime("%Y-%m-%d"),
             "CONVERSATION_NOTES": {
-                "NOTE": [user_message, assistant_response_for_memory]
+                "NOTE": [
+                    "".join(
+                        character if _valid_xml_character(character) else "\ufffd"
+                        for character in text
+                    )
+                    for text in (
+                        _bounded_text(user_message, MAX_USER_EVIDENCE_CHARACTERS),
+                        _bounded_text(
+                            assistant_response_for_memory,
+                            MAX_ASSISTANT_EVIDENCE_CHARACTERS,
+                        ),
+                    )
+                ]
             },
         }
     }
@@ -190,48 +434,72 @@ class MemoryRecordBuilder:
 
         captured = operation_data.get("resources", ())
         memory_data = None
-        retried = 0
         attempt = 0
         response_characters = 0
         failure = None
         exception_class = "none"
         if self.llm_service:
-            while retried < EXTRACTION_RETRIES:
-                analyzed_text = None
-                attempt = retried + 1
+            for attempt in range(1, EXTRACTION_RETRIES + 1):
                 category = ExtractionFailure.PROVIDER_ERROR
                 response_characters = 0
                 try:
-                    if session_context:
-                        analyzed_prompt = PRE_ANALYZE_PROMPT.replace(
-                            "{context_instructions}",
-                            MERGE_INSTRUCTIONS,
-                        ).replace(
-                            "{conversation_context}",
-                            f"""<PREVIOUS_CONVERSATION_CONTEXT>
-        {session_context}
-        </PREVIOUS_CONVERSATION_CONTEXT>""",
-                        )
-                    else:
-                        analyzed_prompt = PRE_ANALYZE_PROMPT.replace(
-                            "{context_instructions}",
-                            FIRST_TURN_INSTRUCTIONS,
-                        ).replace("{conversation_context}", "")
-                    analyzed_prompt = (
-                        analyzed_prompt.replace(
-                            "{current_date}",
-                            datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                        )
-                        .replace("{user_message}", user_message)
-                        .replace("{assistant_response}", assistant_response_for_memory)
+                    minimal = attempt == EXTRACTION_RETRIES
+                    schema = MinimalMemoryExtraction if minimal else MemoryExtraction
+                    instructions = (
+                        FIRST_TURN_INSTRUCTIONS
+                        if not session_context
+                        else MERGE_INSTRUCTIONS
                     )
-                    analyzed_prompt += (
-                        "\n<ACCESSED_RESOURCES>"
-                        + json.dumps(
-                            [item.uri for item in captured], ensure_ascii=False
-                        )
-                        + "</ACCESSED_RESOURCES>\nUse only these exact URIs or resources from previous context. You may propose RESOURCE uri and name attributes and ENTITY_REF relation links only when the conversation explicitly supports a unique named entity. Ambiguous resources must remain unlinked."
+                    previous = (
+                        "<PREVIOUS_CONVERSATION_CONTEXT>\n"
+                        + _bounded_text(session_context, MAX_PREVIOUS_MEMORY_CHARACTERS)
+                        + "\n</PREVIOUS_CONVERSATION_CONTEXT>"
+                        if session_context
+                        else ""
                     )
+                    evidence = json.dumps(
+                        {
+                            "user": _bounded_text(
+                                user_message, MAX_USER_EVIDENCE_CHARACTERS
+                            ),
+                            "assistant": _bounded_text(
+                                assistant_response_for_memory,
+                                MAX_ASSISTANT_EVIDENCE_CHARACTERS,
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                    analyzed_prompt = PRE_ANALYZE_PROMPT.format(
+                        current_date=datetime.now(UTC).strftime("%Y-%m-%d"),
+                        context_instructions=instructions,
+                        conversation_context=previous,
+                        conversation_turn=evidence,
+                        output_schema=json.dumps(
+                            schema.model_json_schema(), ensure_ascii=False
+                        ),
+                        output_limit=MAX_MINIMAL_EXTRACTION_CHARACTERS
+                        if minimal
+                        else MAX_EXTRACTION_CHARACTERS,
+                        accessed_resources=json.dumps(
+                            [
+                                {"id": f"r{index}", "uri": item.uri, "name": item.name}
+                                for index, item in enumerate(captured[:32], 1)
+                            ],
+                            ensure_ascii=False,
+                        ),
+                    )
+                    if failure is not None:
+                        analyzed_prompt += (
+                            "\n<RETRY_GUIDANCE>Previous attempt failed: "
+                            + failure.value
+                            + ". Return a shorter JSON object matching the supplied schema exactly; no XML, commentary, unknown fields or resource URIs."
+                            + (
+                                " Use only head and notes on this final attempt."
+                                if minimal
+                                else ""
+                            )
+                            + "</RETRY_GUIDANCE>"
+                        )
                     analyzed_text = await self.llm_service.process_message(
                         analyzed_prompt
                     )
@@ -240,37 +508,26 @@ class MemoryRecordBuilder:
                     )
                     category = ExtractionFailure.EMPTY_RESPONSE
                     if not isinstance(analyzed_text, str) or not analyzed_text.strip():
-                        raise ValueError("empty_response")
-                    category = ExtractionFailure.MISSING_MEMORY_BLOCK
-                    if (
-                        "<MEMORY>" not in analyzed_text
-                        or "</MEMORY>" not in analyzed_text
-                    ):
-                        raise ValueError(
-                            "LLM response missing <MEMORY>...</MEMORY> block"
-                        )
-                    category = ExtractionFailure.MALFORMED_XML
-                    memory_data = parse_xml_block(analyzed_text, "MEMORY")
-                    category = ExtractionFailure.INVALID_MEMORY_ROOT
-                    if memory_data is None or not isinstance(
-                        memory_data.get("MEMORY"), dict
-                    ):
-                        memory_data = None
-                        raise ValueError("Failed to parse <MEMORY> XML block")
+                        raise ExtractionValidationError(category)
+                    category = ExtractionFailure.SCHEMA_VALIDATION_FAILED
+                    payload = parse_extraction(analyzed_text, minimal=minimal)
+                    memory_data = _extracted_memory(payload, captured)
                     failure = None
                     break
-                except Exception as e:
+                except Exception as exc:
                     from AgentCrew.modules.llm.base import LLMResponseError
 
-                    if (
+                    if isinstance(exc, ExtractionValidationError):
+                        category = exc.category
+                    elif (
                         category == ExtractionFailure.PROVIDER_ERROR
-                        and isinstance(e, LLMResponseError)
-                        and e.output_truncated
+                        and isinstance(exc, LLMResponseError)
+                        and exc.output_truncated
                     ):
                         category = ExtractionFailure.OUTPUT_TRUNCATED
                     memory_data = None
                     failure = category
-                    exception_class = type(e).__name__
+                    exception_class = type(exc).__name__
                     _extraction_diagnostic(
                         self.llm_service,
                         category=category,
@@ -278,8 +535,13 @@ class MemoryRecordBuilder:
                         response_characters=response_characters,
                         exception_class=exception_class,
                     )
-                    retried += 1
-                    continue
+                    if (
+                        category == ExtractionFailure.PROVIDER_ERROR
+                        and attempt < EXTRACTION_RETRIES
+                    ):
+                        import asyncio
+
+                        await asyncio.sleep(0.1 * attempt)
 
         if memory_data is None:
             memory_data = _fallback_memory(user_message, assistant_response_for_memory)
@@ -295,6 +557,7 @@ class MemoryRecordBuilder:
         if isinstance(modified, dict) and isinstance(modified.get("memory_data"), dict):
             memory_data = modified["memory_data"]
 
+        memory_data = _preserve_previous(memory_data, session_context)
         timestamp = datetime.now(UTC).timestamp()
         memory_header = memory_data["MEMORY"].get("HEAD", None)
         try:
@@ -318,13 +581,16 @@ class MemoryRecordBuilder:
                 final=True,
             )
             failure = None
-            memory_data = _fallback_memory(user_message, assistant_response_for_memory)
+            memory_data = _preserve_previous(
+                _fallback_memory(user_message, assistant_response_for_memory),
+                session_context,
+            )
             conversation_document = enforce_resources(
                 xmltodict.unparse(memory_data, pretty=True, full_document=False),
                 captured,
                 (session_context,) if session_context else (),
             )
-            memory_header = None
+            memory_header = memory_data["MEMORY"].get("HEAD")
         if failure is not None:
             _extraction_diagnostic(
                 self.llm_service,

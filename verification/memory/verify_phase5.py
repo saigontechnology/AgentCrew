@@ -7,6 +7,7 @@ sealed Phase 3 artifacts are used.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sqlite3
 import sys
@@ -84,8 +85,23 @@ def require(condition, message: str) -> None:
 
 
 class FictionalLLM:
-    def __init__(self, reply=MEMORY_XML, fail=False):
-        self.reply = reply
+    def __init__(self, reply=None, fail=False):
+        self.reply = (
+            reply
+            if reply is not None
+            else json.dumps(
+                {
+                    "head": "Fictional alpha headline",
+                    "notes": [],
+                    "flow": {
+                        "intent": "",
+                        "exploration": "",
+                        "outcome": "AlphaService handled the fictional alpha outcome",
+                    },
+                    "entities": [{"name": "AlphaService", "desc": "service"}],
+                }
+            )
+        )
         self.fail = fail
         self.prompts: list[str] = []
 

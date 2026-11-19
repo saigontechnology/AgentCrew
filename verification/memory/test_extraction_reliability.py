@@ -29,7 +29,18 @@ OPERATION = {
     "assistant_messages": [SECRET],
     "resources": (ResourceAccess("attachment://private-cv"),),
 }
-VALID = "<MEMORY><HEAD>Fictional review</HEAD></MEMORY>"
+
+
+def payload(head="Fictional review", **extra):
+    return {
+        "head": head,
+        "notes": [],
+        "flow": {"intent": "", "exploration": "", "outcome": ""},
+        **extra,
+    }
+
+
+VALID = json.dumps(payload())
 
 
 @pytest.fixture(autouse=True)
@@ -71,11 +82,21 @@ def assert_private(records):
 @pytest.mark.parametrize(
     ("reply", "error", "category", "exception_class"),
     [
-        (None, None, "empty_response", "ValueError"),
-        ("  ", None, "empty_response", "ValueError"),
-        (SECRET, None, "missing_memory_block", "ValueError"),
-        (f"<MEMORY><HEAD>{SECRET}</MEMORY>", None, "malformed_xml", "ExpatError"),
-        (f"<MEMORY>{SECRET}</MEMORY>", None, "invalid_memory_root", "ValueError"),
+        (None, None, "empty_response", "ExtractionValidationError"),
+        ("  ", None, "empty_response", "ExtractionValidationError"),
+        (SECRET, None, "malformed_json", "ExtractionValidationError"),
+        (
+            f"<MEMORY><HEAD>{SECRET}</MEMORY>",
+            None,
+            "malformed_json",
+            "ExtractionValidationError",
+        ),
+        (
+            json.dumps(SECRET),
+            None,
+            "schema_validation_failed",
+            "ExtractionValidationError",
+        ),
         (None, RuntimeError(SECRET), "provider_error", "RuntimeError"),
         (
             None,
@@ -110,7 +131,7 @@ def test_failure_categories_and_private_error_level_fallback(
 
 
 def test_success_does_not_log_extracted_memory(logs):
-    llm = service(reply=f"<MEMORY><HEAD>{SECRET}</HEAD></MEMORY>")
+    llm = service(reply=json.dumps(payload(SECRET)))
     built = asyncio.run(MemoryRecordBuilder(llm).build(OPERATION))
     assert SECRET in built.memory_data["MEMORY"]["HEAD"]
     assert llm.process_message.await_count == 1
