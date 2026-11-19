@@ -213,30 +213,32 @@ Validation reference: [Pydantic models, strict validation and forbidden extras](
 ## Phase 3: auxiliary routing and service-role visibility
 
 `ServiceManager.initialize_auxiliary_service(primary, provider_override)` is the
-shared setup path for memory extraction and tool-result summarization:
+shared setup path for memory extraction, tool-result summarization, and code
+analysis. Model preferences live only in
+`AgentCrew/modules/llm/auxiliary_model_selection.py`:
 
-- No override or a same-provider override retains the **actual runtime service's
-  selected model**, resolving its registered `service_name`, implementation and
-  authentication family. It does not consult an unrelated current-model pointer.
-- A different provider uses its registered default. If a provider catalog has no
-  explicit default, it uses the first registered model, matching the existing
-  service-manager convention. An empty catalog fails rather than copying an
-  incompatible primary model ID.
-- The existing `copilot_response` CLI alias selects only registered GitHub
-  Copilot Responses models, retaining the current compatible selection when
-  applicable. Qualified model overrides were not added to the provider-only CLI.
-- Unregistered runtime model IDs retain the recorded implementation family when
-  available. Standalone and cached factory creation now record that family on the
-  client; diagnostics do not infer the actual family from arbitrary class checks.
-- Auxiliary clients deliberately request no interactive reasoning default
-  (`none`, or the provider adapter's disabled budget). They do not apply the
-  selected chat model's potentially expensive default reasoning setting, and do
-  not mutate the primary client. Provider `process_message()` reasoning behavior
-  remains unchanged.
-- Chroma memory and tool-summary constructors no longer silently overwrite the
-  chosen model with hard-coded cheap models. SQLite already retained its injected
-  client. Existing code-analysis model-selection policy is outside this routing
-  fix and remains unchanged; `/stats` reports its instantiated client as-is.
+- No override (including a same-provider override) selects the primary provider's
+  registered lightweight model, **not the primary runtime model**. A provider
+  override selects that provider's lightweight model, not its catalog default.
+- Every built-in provider has an explicit registered preference. Models bind
+  through their declared `resolved_service_name()`, preserving authentication and
+  endpoint families even in mixed OpenAI, Copilot, OpenCode and CommandCode
+  catalogs. The legacy `copilot_response` alias selects a lightweight registered
+  GitHub Copilot Responses model.
+- Custom providers use their configured default model, or their first registered
+  model if no default exists. Only a same-provider custom client without a
+  catalog retains the raw runtime model and recorded implementation family.
+  Unknown overrides fail rather than guessing incompatible model IDs.
+- `--memory-llm` remains the provider-only CLI option for all three background
+  roles. Its built-in choices now also include Fireworks. The central API also
+  accepts configured custom provider names and explicit endpoint-family aliases.
+- Each role gets a fresh standalone client and requests reasoning disabled via
+  the existing lenient adapter. Constructors consume that selection unchanged;
+  neither primary chat selection nor the registry's current model is mutated.
+- Memory and summary worker loops retain ownership of their separate clients.
+  Only code analysis is application-owned when standalone ownership is enabled.
+  Clients that fail configuration or role construction are closed before the
+  failure propagates or the optional role is marked unavailable.
 
 This routing correction is separate from the reported Codex extraction incident.
 Neither the earlier model-selection speculation nor the newly found constructor
@@ -402,10 +404,12 @@ ensure no duplicate `/stats` entry was introduced.
   rates were not measured. Retrieval/SQLite projection code is unchanged, and
   existing fictional equivalence harnesses pass; their timings are not a new
   production performance guarantee.
-- Retaining the actual selected model instead of silent cheap substitutions can
-  increase auxiliary cost/latency. Reasoning defaults are deliberately disabled,
-  but the existing 5-second tool-summary request timeout can still expire for
-  slow models. Its fail-open queue/cache behavior and timeout were not changed.
+- Lightweight preferences reduce reliance on expensive chat defaults, but are
+  catalog-based, not latency benchmarks. xAI has no small/flash tier or published
+  comparison in this catalog; its preference is the low-reasoning Grok 4.3 model.
+  Custom-provider defaults may still be expensive. Reasoning is requested off,
+  but providers retain their existing lenient handling of unsupported settings.
+  The 5-second summary timeout and fail-open queue/cache behavior are unchanged.
 - Confirmed token exhaustion is distinguished when the Responses guard exposes
   `max_output_tokens`. Other text-only provider interfaces do not consistently
   expose finish reasons yet; incomplete JSON alone is not labeled truncation.

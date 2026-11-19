@@ -77,6 +77,7 @@ def common_options(func):
                 "xai",
                 "google",
                 "deepinfra",
+                "fireworks",
                 "together",
                 "opencode_go",
                 "commandcode",
@@ -86,7 +87,7 @@ def common_options(func):
             ]
         ),
         default=None,
-        help="Auxiliary provider for memory and tool summaries. Same provider keeps the runtime model; a different provider uses its registered default.",
+        help="Provider for LLM-backed background services (memory extraction, tool summaries, and code analysis). Uses a lightweight registered model; defaults to the primary provider.",
     )
     @click.option(
         "--memory-path", default=None, help="Path to the memory database location"
@@ -412,14 +413,12 @@ class ApplicationSetup:
         *,
         application_owned_llms: bool = False,
     ) -> dict[str, Any]:
-        from AgentCrew.modules.llm.model_registry import ModelRegistry
         from AgentCrew.modules.llm.service_manager import ServiceManager
 
         self._run_async = run_async
         own_llms = interactive or application_owned_llms
         if own_llms:
             self.services = {}
-        registry = ModelRegistry.get_instance()
         llm_manager = ServiceManager.get_instance()
 
         provider = runtime.provider
@@ -489,35 +488,46 @@ class ApplicationSetup:
                 llm_service, memory_llm
             )
 
-            memory_engine = resolve_memory_engine(global_settings)
-            if memory_engine == "sqlite":
-                from AgentCrew.modules.memory.engine_selection import (
-                    chroma_source_path,
-                    ensure_sqlite_store,
-                    sqlite_migration_work_path,
-                    sqlite_store_path,
-                )
+            try:
+                memory_engine = resolve_memory_engine(global_settings)
+                if memory_engine == "sqlite":
+                    from AgentCrew.modules.memory.engine_selection import (
+                        chroma_source_path,
+                        ensure_sqlite_store,
+                        sqlite_migration_work_path,
+                        sqlite_store_path,
+                    )
 
-                memory_db_path = ensure_sqlite_store(
-                    sqlite_store_path(),
-                    chroma_source_path(),
-                    sqlite_migration_work_path(),
-                    interactive=interactive,
-                )
-                from AgentCrew.modules.memory.sqlite_service import SQLiteMemoryService
+                    memory_db_path = ensure_sqlite_store(
+                        sqlite_store_path(),
+                        chroma_source_path(),
+                        sqlite_migration_work_path(),
+                        interactive=interactive,
+                    )
+                    from AgentCrew.modules.memory.sqlite_service import (
+                        SQLiteMemoryService,
+                    )
 
-                memory_service = SQLiteMemoryService(
-                    db_path=memory_db_path, llm_service=memory_llm_svc
-                )
-                logger.info("SQLite memory service initialized")
-            else:
-                from AgentCrew.modules.memory.engine_selection import require_chromadb
+                    memory_service = SQLiteMemoryService(
+                        db_path=memory_db_path, llm_service=memory_llm_svc
+                    )
+                    logger.info("SQLite memory service initialized")
+                else:
+                    from AgentCrew.modules.memory.engine_selection import (
+                        require_chromadb,
+                    )
 
-                require_chromadb()
-                from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
+                    require_chromadb()
+                    from AgentCrew.modules.memory.chroma_service import (
+                        ChromaMemoryService,
+                    )
 
-                memory_service = ChromaMemoryService(llm_service=memory_llm_svc)
-                logger.info("Chroma memory service initialized")
+                    memory_service = ChromaMemoryService(llm_service=memory_llm_svc)
+                    logger.info("Chroma memory service initialized")
+
+            except Exception:
+                llm_manager.close_service(memory_llm_svc)
+                raise
 
             context_service = ContextPersistenceService()
         context_shrink_enabled = global_settings.get("auto_context_shrink", True)
@@ -530,6 +540,7 @@ class ApplicationSetup:
                 ToolResultSummaryService,
             )
 
+            summary_llm = None
             try:
                 summary_llm = llm_manager.initialize_auxiliary_service(
                     llm_service, memory_llm
@@ -538,6 +549,7 @@ class ApplicationSetup:
                     summary_llm, context_service
                 )
             except Exception as exc:
+                llm_manager.close_service(summary_llm)
                 logger.warning(f"Tool-result summaries unavailable: {exc}")
 
         if own_llms:
@@ -568,21 +580,18 @@ class ApplicationSetup:
         try:
             from AgentCrew.modules.code_analysis import CodeAnalysisService
 
-            code_analysis_llm = llm_manager.initialize_standalone_service(provider)
+            code_analysis_llm = llm_manager.initialize_auxiliary_service(
+                llm_service, memory_llm
+            )
+            try:
+                code_analysis_service = CodeAnalysisService(
+                    llm_service=code_analysis_llm
+                )
+            except Exception:
+                llm_manager.close_service(code_analysis_llm)
+                raise
             if own_llms:
                 self._track_standalone_llm(code_analysis_llm)
-
-            if runtime.model_id:
-                model = registry.get_model(f"{provider}/{runtime.model_id}")
-                if model:
-                    code_analysis_llm.model = model.id
-                    logger.info(
-                        f"Set default model '{model.id}' for code analysis service"
-                    )
-            else:
-                code_analysis_llm.model = llm_service.model
-
-            code_analysis_service = CodeAnalysisService(llm_service=code_analysis_llm)
         except Exception as e:
             click.echo(f"\u26a0\ufe0f Code analysis tool not available: {e!s}")
             code_analysis_service = None

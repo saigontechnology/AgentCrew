@@ -400,48 +400,29 @@ class ServiceManager:
     def initialize_auxiliary_service(
         self, primary: BaseLLMService, provider_override: str | None = None
     ) -> BaseLLMService:
-        """Create a model-aware auxiliary client without interactive reasoning defaults.
-
-        Same-provider/no overrides retain the actual runtime selection. A different
-        provider uses its registered default, never the primary provider's model ID.
-        Raw runtime models retain recorded service-family routing when available.
-        """
+        """Create a fresh lightweight background client without interactive defaults."""
+        from AgentCrew.modules.llm.auxiliary_model_selection import (
+            resolve_auxiliary_model,
+        )
         from AgentCrew.modules.llm.reasoning_selection import apply_reasoning_to_service
 
-        registry = ModelRegistry.get_instance()
-        model = registry.get_model(f"{primary.provider_name}/{primary.model}")
-        if provider_override == "copilot_response":
-            if (
-                model is None
-                or model.provider != "github_copilot"
-                or model.resolved_service_name() != "copilot_response"
-            ):
-                models = [
-                    item
-                    for item in registry.get_models_by_provider("github_copilot")
-                    if item.resolved_service_name() == "copilot_response"
-                ]
-                if not models:
-                    raise ValueError(
-                        "Auxiliary service family has no registered models"
-                    )
-                model = next((item for item in models if item.default), models[0])
-        elif provider_override and provider_override != primary.provider_name:
-            models = registry.get_models_by_provider(provider_override)
-            if not models:
-                raise ValueError("Auxiliary provider has no registered models")
-            model = next((item for item in models if item.default), models[0])
-        if model is not None:
-            service = self.initialize_standalone_service_for_model(model)
-            service.provider_name = model.provider
-            service.model = model.id
-        else:
-            service = self.initialize_standalone_service(
-                getattr(primary, "_service_family", None) or primary.provider_name
-            )
-            service.provider_name = primary.provider_name
-            service.model = primary.model
+        model = resolve_auxiliary_model(
+            ModelRegistry.get_instance(),
+            provider_override or primary.provider_name,
+            primary_provider=primary.provider_name,
+        )
+        service = None
         try:
+            if model is not None:
+                service = self.initialize_standalone_service_for_model(model)
+                service.provider_name = model.provider
+                service.model = model.id
+            else:
+                service = self.initialize_standalone_service(
+                    getattr(primary, "_service_family", None) or primary.provider_name
+                )
+                service.provider_name = primary.provider_name
+                service.model = primary.model
             apply_reasoning_to_service(service, "none", explicit=False)
         except Exception:
             self.close_service(service)

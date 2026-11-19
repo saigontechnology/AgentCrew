@@ -15,7 +15,11 @@ sys.path.insert(0, str(ROOT))
 
 from AgentCrew.modules.chat.message.commands.utility_commands import UtilityCommands
 from AgentCrew.modules.events import AppEvents
-from AgentCrew.modules.llm.model_registry import ModelRegistry
+from AgentCrew.modules.llm.auxiliary_model_selection import (
+    AUXILIARY_MODEL_PREFERENCES,
+    resolve_auxiliary_model,
+)
+from AgentCrew.modules.llm.model_registry import PROVIDER_MODEL_MODULES, ModelRegistry
 from AgentCrew.modules.llm.model_selection import RuntimeModelInput
 from AgentCrew.modules.llm.service_manager import ServiceManager
 from AgentCrew.modules.llm.types import Model
@@ -72,6 +76,11 @@ class FakeRegistry:
             for provider, model_id, family, default in MATRIX
         }
 
+        for provider, (module, variable) in PROVIDER_MODEL_MODULES.items():
+            for model in getattr(importlib.import_module(module), variable):
+                if f"{provider}/{model.id}" in AUXILIARY_MODEL_PREFERENCES.values():
+                    self.models[f"{provider}/{model.id}"] = model
+
     def get_model(self, key):
         return self.models.get(key)
 
@@ -92,7 +101,8 @@ def routing(monkeypatch):
     manager._closed_services = set()
     manager.service_factories = {
         family: (lambda provider=provider, family=family: FakeService(provider, family))
-        for provider, _id, family, _default in MATRIX
+        for model in registry.models.values()
+        for provider, family in [(model.provider, model.resolved_service_name())]
     }
     monkeypatch.setattr(ModelRegistry, "_instance", registry)
     monkeypatch.setattr(ModelRegistry, "get_instance", lambda: registry)
@@ -120,8 +130,9 @@ def test_model_service_matrix_preserves_auth_selection_and_isolation(
     )
     identity = manager.describe_service(auxiliary)
     assert auxiliary is not main
-    assert identity["provider"] == provider and identity["model"] == model_id
-    assert identity["service_family"] == family
+    expected = resolve_auxiliary_model(registry, provider, primary_provider=provider)
+    assert identity["provider"] == provider and identity["model"] == expected.id
+    assert identity["service_family"] == expected.resolved_service_name()
     assert auxiliary.auth_marker == main.auth_marker
     assert main.reasoning_effort == "high"
     assert auxiliary.thinking[-1] in ("none", "0")
@@ -132,12 +143,12 @@ def test_model_service_matrix_preserves_auth_selection_and_isolation(
     "override",
     ["openai", "opencode_go", "github_copilot", "commandcode", "claude", "google"],
 )
-def test_different_provider_uses_registered_default_not_main_id(routing, override):
+def test_different_provider_uses_lightweight_not_main_id(routing, override):
     manager, registry = routing
     main = primary(manager, registry)
     result = manager.initialize_auxiliary_service(main, override)
-    expected = next(
-        model for model in registry.get_models_by_provider(override) if model.default
+    expected = resolve_auxiliary_model(
+        registry, override, primary_provider=main.provider_name
     )
     assert (result.provider_name, result.model, result._service_family) == (
         expected.provider,
@@ -154,7 +165,7 @@ def test_legacy_copilot_responses_override_is_model_aware(routing):
     )
     assert (result.provider_name, result.model, result._service_family) == (
         "github_copilot",
-        "responses",
+        "gpt-5.4-nano",
         "copilot_response",
     )
     repeated = manager.initialize_auxiliary_service(result, "copilot_response")
@@ -163,13 +174,16 @@ def test_legacy_copilot_responses_override_is_model_aware(routing):
 
 def test_raw_runtime_model_retains_recorded_family(routing):
     manager, _registry = routing
-    main = manager.initialize_standalone_service("openai_response")
+    manager.service_factories["custom_responses"] = lambda: FakeService(
+        "custom", "custom_responses"
+    )
+    main = manager.initialize_standalone_service("custom_responses")
     main.model = "raw-unregistered"
     result = manager.initialize_auxiliary_service(main)
     assert (result.provider_name, result.model, result._service_family) == (
-        "openai",
+        "custom",
         "raw-unregistered",
-        "openai_response",
+        "custom_responses",
     )
 
 
@@ -201,7 +215,7 @@ def test_stats_snapshot_codex_primary_and_memory(routing):
     assert report == (
         "LLM-backed service roles (instantiated local services):\n"
         "  Primary/current chat: provider=openai_codex | service=openai_codex (FakeService) | model=openai_codex/gpt-6.1-sol\n"
-        "  Memory extraction: provider=openai_codex | service=openai_codex (FakeService) | model=openai_codex/gpt-6.1-sol\n"
+        "  Memory extraction: provider=openai_codex | service=openai_codex (FakeService) | model=openai_codex/gpt-5.4-mini\n"
         "  Tool-result summary: not configured"
     )
     assert "same as primary" not in report
@@ -227,8 +241,10 @@ def test_stats_cross_provider_separate_summary_disabled_and_shared_roles(routing
         row["role"]: row
         for row in manager.describe_service_roles(services, primary=main)
     }
-    assert rows["Memory extraction"]["qualified_model"] == "claude/haiku"
-    assert rows["Tool-result summary"]["qualified_model"] == "google/flash"
+    assert rows["Memory extraction"]["qualified_model"] == "claude/claude-haiku-4-5"
+    assert (
+        rows["Tool-result summary"]["qualified_model"] == "google/gemini-3.5-flash-lite"
+    )
     assert rows["Code analysis"]["status"] == "same as primary"
     disabled = UtilityCommands._format_llm_services(
         {"memory": None, "llm_service_status": {"Tool-result summary": "disabled"}},
@@ -273,20 +289,15 @@ def test_stats_no_local_chat_does_not_misidentify_startup_as_current(routing):
     )
 
 
-@pytest.mark.parametrize(
-    "need_memory,override,summary_enabled",
-    [(True, None, True), (True, "claude", True), (False, None, False)],
-)
-def test_setup_calls_shared_auxiliary_resolver(
-    monkeypatch, tmp_path, routing, need_memory, override, summary_enabled
-):
+@pytest.fixture
+def configured_setup(monkeypatch, tmp_path, routing):
     from AgentCrew import setup
     from AgentCrew.modules.agents.manager import AgentManager
 
     manager, _registry = routing
     resolve = Mock(wraps=manager.initialize_auxiliary_service)
     monkeypatch.setattr(manager, "initialize_auxiliary_service", resolve)
-    settings = {"global_settings": {"tool_result_summary_enabled": summary_enabled}}
+    settings = {"global_settings": {"tool_result_summary_enabled": True}}
     monkeypatch.setattr(
         setup,
         "GlobalConfig",
@@ -347,23 +358,95 @@ def test_setup_calls_shared_auxiliary_resolver(
     monkeypatch.setattr(AgentManager, "get_instance", lambda: SimpleNamespace())
     instance = setup.ApplicationSetup.__new__(setup.ApplicationSetup)
     instance._standalone_llm_services = []
+    return instance, manager, resolve, settings
+
+
+@pytest.mark.parametrize(
+    "need_memory,override,summary_enabled",
+    [(True, None, True), (True, "claude", True), (False, None, False)],
+)
+@pytest.mark.parametrize("own_llms", [False, True])
+def test_setup_calls_shared_auxiliary_resolver(
+    configured_setup, need_memory, override, summary_enabled, own_llms
+):
+    instance, manager, resolve, settings = configured_setup
+    settings["global_settings"]["tool_result_summary_enabled"] = summary_enabled
     services = instance.setup_services(
         RuntimeModelInput("openai_codex", True, "gpt-6.1-sol", None),
         memory_llm=override,
         need_memory=need_memory,
+        application_owned_llms=own_llms,
     )
-    assert resolve.call_count == int(need_memory) + int(summary_enabled)
+    assert resolve.call_count == int(need_memory) + int(summary_enabled) + 1
     for call in resolve.call_args_list:
         assert call.args == (services["llm"], override)
     if need_memory:
-        expected = "claude/haiku" if override else "openai_codex/gpt-6.1-sol"
+        expected = AUXILIARY_MODEL_PREFERENCES[override or "openai_codex"]
         assert (
             manager.describe_service(services["memory"].llm_service)["qualified_model"]
             == expected
         )
-    else:
+    clients = [services["code_analysis"].llm_service]
+    if need_memory:
+        clients.append(services["memory"].llm_service)
+    if summary_enabled:
+        clients.append(services["tool_result_summary"].llm_service)
+    assert len({id(client) for client in clients}) == len(clients)
+    assert all(client is not services["llm"] for client in clients)
+    assert instance._standalone_llm_services == (
+        [services["llm"], services["code_analysis"].llm_service] if own_llms else []
+    )
+    if not need_memory:
         assert services["llm_service_status"]["Memory extraction"] == "disabled"
         assert services["llm_service_status"]["Tool-result summary"] == "disabled"
+
+
+@pytest.mark.parametrize("role", ["memory", "summary", "code_analysis"])
+def test_setup_closes_unclaimed_client_on_role_constructor_failure(
+    configured_setup, monkeypatch, role
+):
+    instance, manager, _resolve, _settings = configured_setup
+    created = []
+    initialize = manager.initialize_auxiliary_service
+
+    def record(*args):
+        client = initialize(*args)
+        created.append(client)
+        return client
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("role setup failed")
+
+    monkeypatch.setattr(manager, "initialize_auxiliary_service", record)
+    module_name, attribute = {
+        "memory": ("AgentCrew.modules.memory.sqlite_service", "SQLiteMemoryService"),
+        "summary": (
+            "AgentCrew.modules.agents.tool_result_summary",
+            "ToolResultSummaryService",
+        ),
+        "code_analysis": ("AgentCrew.modules.code_analysis", "CodeAnalysisService"),
+    }[role]
+    monkeypatch.setattr(sys.modules[module_name], attribute, fail)
+    runtime = RuntimeModelInput("openai_codex", True, "gpt-6.1-sol", None)
+    if role == "memory":
+        with pytest.raises(RuntimeError, match="role setup failed"):
+            instance.setup_services(runtime, application_owned_llms=True)
+        assert len(created) == 1 and created[0].closed
+    else:
+        services = instance.setup_services(runtime, application_owned_llms=True)
+        failed_index = 1 if role == "summary" else 2
+        assert len(created) == 3
+        assert [client.closed for client in created] == [
+            index == failed_index for index in range(3)
+        ]
+        assert created[0] not in instance._standalone_llm_services
+        assert created[1] not in instance._standalone_llm_services
+        if role == "code_analysis":
+            assert services["code_analysis"] is None
+            assert created[2] not in instance._standalone_llm_services
+        else:
+            assert services["tool_result_summary"] is None
+            assert created[2] in instance._standalone_llm_services
 
 
 def test_memory_and_summary_constructors_do_not_replace_selected_model(
@@ -458,11 +541,17 @@ def test_registered_nested_model_ids_remain_visible(routing):
 
 def test_provider_without_explicit_default_uses_first_registered_model(routing):
     manager, registry = routing
-    models = registry.get_models_by_provider("commandcode")
-    for model in models:
-        model.default = False
-    result = manager.initialize_auxiliary_service(
-        primary(manager, registry), "commandcode"
-    )
+    models = [
+        Model(
+            id="vendor/first",
+            provider="custom",
+            name="First",
+            description="",
+            capabilities=[],
+        )
+    ]
+    registry.models["custom/vendor/first"] = models[0]
+    manager.service_factories["custom"] = lambda: FakeService("custom", "custom")
+    result = manager.initialize_auxiliary_service(primary(manager, registry), "custom")
     assert result.model == models[0].id
     assert result._service_family == models[0].resolved_service_name()

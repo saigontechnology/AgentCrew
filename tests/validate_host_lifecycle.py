@@ -193,12 +193,16 @@ def setup_ownership():
 
 
 def _setup_ownership_case(interactive, fail_startup):
+    from AgentCrew.modules.llm.auxiliary_model_selection import (
+        AUXILIARY_MODEL_PREFERENCES,
+    )
     from AgentCrew.modules.llm.model_selection import (
         ModelSelection,
         ModelSelectionSource,
         RuntimeModelInput,
     )
     from AgentCrew.modules.llm.service_manager import ServiceManager
+    from AgentCrew.modules.llm.types import Model
 
     primary = LoopProvider("primary")
     memory = LoopProvider("memory")
@@ -219,7 +223,18 @@ def _setup_ownership_case(interactive, fail_startup):
     config.read.return_value = {"auto_context_shrink": True}
     registry = Mock()
     registry.get_current_model.return_value = None
-    registry.get_model.return_value = None
+    background_model = Model(
+        id=AUXILIARY_MODEL_PREFERENCES["openai"].split("/", 1)[1],
+        provider="openai",
+        name="Lightweight",
+        description="",
+        capabilities=[],
+        service_name="openai_response",
+    )
+    registry.get_model.return_value = background_model
+    registry.get_models_by_provider.return_value = [background_model]
+    for client in (memory, summary, analysis):
+        client.set_think = Mock(return_value=True)
     agents = SimpleNamespace(
         agents={},
         close_all_remote_agents=AsyncMock(),
@@ -239,6 +254,11 @@ def _setup_ownership_case(interactive, fail_startup):
     if fail_startup:
         clipboard.side_effect = ValueError("startup after owned client creation")
     stubs = {
+        "AgentCrew.modules.memory.engine_selection": stub_module(
+            "AgentCrew.modules.memory.engine_selection",
+            resolve_memory_engine=lambda _settings: "chromadb",
+            require_chromadb=lambda: None,
+        ),
         "AgentCrew.modules.memory.chroma_service": stub_module(
             "AgentCrew.modules.memory.chroma_service", ChromaMemoryService=Mock()
         ),

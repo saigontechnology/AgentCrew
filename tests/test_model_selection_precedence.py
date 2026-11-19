@@ -27,6 +27,7 @@ from AgentCrew.modules.chat.message.commands.model_commands import ModelCommands
 from AgentCrew.modules.config import ConfigManagement
 from AgentCrew.modules.config.agents_config import AgentsConfig, _reload_model_selection
 from AgentCrew.modules.config.global_config import GlobalConfig
+from AgentCrew.modules.llm.auxiliary_model_selection import AUXILIARY_MODEL_PREFERENCES
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.model_selection import (
     ModelSelection,
@@ -141,6 +142,15 @@ def _runtime(
 class _FakeRegistry:
     def __init__(self, models, last_used_model=None, last_used_provider=None):
         self.models = {f"{m.provider}/{m.id}": m for m in models}
+        for provider in ("openai", "claude"):
+            key = AUXILIARY_MODEL_PREFERENCES[provider]
+            self.models[key] = Model(
+                id=key.split("/", 1)[1],
+                provider=provider,
+                name="Lightweight",
+                description="",
+                capabilities=["tool_use"],
+            )
         self.current_model = None
         self.last_used_model = last_used_model
         self.last_used_provider = last_used_provider
@@ -163,6 +173,8 @@ class _FakeRegistry:
 
 
 class _FakeLlmManager:
+    initialize_auxiliary_service = ServiceManager.initialize_auxiliary_service
+
     def __init__(self, registry):
         self.registry = registry
         self.services = {}
@@ -194,7 +206,7 @@ class _FakeLlmManager:
         return _StubLLM(provider_name=name)
 
     def initialize_standalone_service_for_model(self, model):
-        return _StubLLM(model=model.id, provider_name=model.provider)
+        return self.initialize_standalone_service(model.resolved_service_name())
 
     def clone_service(self, service):
         model_id = f"{service.provider_name}/{service.model}"
@@ -312,6 +324,15 @@ def _install_fake_modules(monkeypatch, fake_modules):
 
 
 def _install_memory_service(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "AgentCrew.modules.memory.engine_selection",
+        SimpleNamespace(
+            resolve_memory_engine=lambda _settings: "chromadb",
+            require_chromadb=lambda: None,
+        ),
+    )
+
     class _MemoryService:
         def __init__(self, llm_service):
             self.llm_service = llm_service
@@ -688,6 +709,10 @@ class TestSetupServicesPrecedence:
         assert summary_llm is not memory_llm
         assert summary_llm.provider_name == memory_llm.provider_name
         assert summary_llm.model == memory_llm.model
+        assert (
+            f"{summary_llm.provider_name}/{summary_llm.model}"
+            == AUXILIARY_MODEL_PREFERENCES["claude"]
+        )
         assert services["tool_result_summary"].close()
 
     def test_summary_is_provisioned_when_both_settings_enabled(
@@ -1260,7 +1285,7 @@ def _install_route_fakes(monkeypatch, mode):
     elif mode == "job":
         import AgentCrew.modules.agents as agents_module
 
-        async def _fake_run_agent_loop(agent, history):
+        async def _fake_run_agent_loop(agent, history, *, scope_id=None):
             return "ok", None
 
         monkeypatch.setattr(agents_module, "run_agent_loop", _fake_run_agent_loop)
@@ -1293,6 +1318,7 @@ def _run_mode(monkeypatch, mode, provider, model_id):
         one_turn_process=False,
         agents={"a": None},
         select_agent=lambda name: True,
+        select_agent_async=AsyncMock(return_value=True),
         register_agent=lambda agent: None,
         get_local_agent=lambda name: LocalAgent(name, "Coder", llm_service, {}, []),
     )

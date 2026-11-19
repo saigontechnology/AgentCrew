@@ -982,7 +982,7 @@ def _install_route_fakes(monkeypatch, mode):
     elif mode == "job":
         import AgentCrew.modules.agents as agents_module
 
-        async def _fake_run_agent_loop(agent, history):
+        async def _fake_run_agent_loop(agent, history, *, scope_id=None):
             return "ok", None
 
         monkeypatch.setattr(agents_module, "run_agent_loop", _fake_run_agent_loop)
@@ -1017,6 +1017,7 @@ def _run_mode(monkeypatch, mode, provider, model_id, reason_effort):
         one_turn_process=False,
         agents={"a": None},
         select_agent=lambda name: True,
+        select_agent_async=AsyncMock(return_value=True),
         register_agent=lambda agent: None,
         get_local_agent=lambda name: LocalAgent(name, "Coder", llm_service, {}, []),
     )
