@@ -180,6 +180,7 @@ class GuiCommandCompleter:
             "/think",
             "/usage",
             "/stats",
+            "/memopad stats",
             "/consolidate",
             "/unconsolidate",
             "/jump",

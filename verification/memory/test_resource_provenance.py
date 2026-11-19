@@ -474,7 +474,7 @@ def test_v1_upgrade_canonical_preservation_readonly_and_cascades(
         assert (
             connection.execute("PRAGMA user_version").fetchone()[0]
             == SCHEMA_VERSION
-            == 2
+            == 3
         )
         assert (
             connection.execute("SELECT count(*) FROM memory_resource").fetchone()[0]

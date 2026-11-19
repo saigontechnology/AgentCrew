@@ -379,6 +379,28 @@ class UtilityCommands:
             lines.append(f"  {row['role']}: {identity}{suffix}")
         return "\n".join(lines)
 
+    def handle_memopad(self, user_input: str) -> CommandResult:
+        """Inspect local database-wide collection counts without querying the LLM."""
+        from AgentCrew.modules.memory.memopad import format_memopad_stats
+
+        event = AppEvents.SYSTEM_MESSAGE
+        if user_input.lower().split() != ["/memopad", "stats"]:
+            message = "Usage: /memopad stats (local database-wide aggregates only)"
+        else:
+            service = getattr(self.message_handler, "memory_service", None)
+            try:
+                if service is None:
+                    raise NotImplementedError("Memory service is not available.")
+                message = format_memopad_stats(service.get_memopad_stats())
+            except NotImplementedError as exc:
+                message = str(exc)
+                event = AppEvents.ERROR
+            except Exception:
+                message = "Could not read memopad statistics. No data was changed."
+                event = AppEvents.ERROR
+        self.message_handler.bus.emit_sync(event, message=message)
+        return CommandResult(handled=True, clear_flag=True)
+
     def handle_stats(self, user_input: str) -> CommandResult:
         """Handle /stats: instantiated LLM identities, token usage and cost.
 

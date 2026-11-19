@@ -17,13 +17,22 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import xmltodict
 from loguru import logger
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 
 from AgentCrew.modules.prompts.constants import (
     FIRST_TURN_INSTRUCTIONS,
     MERGE_INSTRUCTIONS,
     PRE_ANALYZE_PROMPT,
 )
+
+from .memopad import MemopadCandidate, parse_memopad_candidates
 
 if TYPE_CHECKING:
     from AgentCrew.modules.llm.base import BaseLLMService
@@ -114,6 +123,7 @@ class BuiltMemoryRecord:
     document: str
     header: str | None
     timestamp: float
+    memopad_candidates: tuple[MemopadCandidate, ...] = ()
 
 
 def build_consolidation_query(memory_data: dict[str, Any]) -> str:
@@ -202,6 +212,12 @@ class MemoryExtraction(MinimalMemoryExtraction):
     entities: list[ExtractionEntity] = Field(default_factory=list, max_length=24)
     domains: list[MemoryName] = Field(default_factory=list, max_length=8)
     resources: list[ExtractionResource] = Field(default_factory=list, max_length=32)
+    memopad: list[MemopadCandidate] = Field(default_factory=list, max_length=8)
+
+    @field_validator("memopad", mode="before")
+    @classmethod
+    def validate_memopad(cls, value: Any) -> list[MemopadCandidate]:
+        return parse_memopad_candidates(value)
 
 
 class ExtractionValidationError(ValueError):
@@ -481,6 +497,7 @@ class MemoryRecordBuilder:
         failure = None
         exception_class = "none"
         entity_updates: tuple[str, ...] = ()
+        memopad_candidates: tuple[MemopadCandidate, ...] = ()
         if self.llm_service:
             for attempt in range(1, EXTRACTION_RETRIES + 1):
                 category = ExtractionFailure.PROVIDER_ERROR
@@ -555,6 +572,11 @@ class MemoryRecordBuilder:
                     category = ExtractionFailure.SCHEMA_VALIDATION_FAILED
                     payload = parse_extraction(analyzed_text, minimal=minimal)
                     memory_data = _extracted_memory(payload, captured)
+                    memopad_candidates = (
+                        tuple(payload.memopad)
+                        if isinstance(payload, MemoryExtraction)
+                        else ()
+                    )
                     entity_updates = (
                         tuple(
                             entity.name
@@ -623,6 +645,7 @@ class MemoryRecordBuilder:
             )
         except Exception as exc:
             failure = ExtractionFailure.RESOURCE_ENFORCEMENT_FAILED
+            memopad_candidates = ()
             exception_class = type(exc).__name__
             _extraction_diagnostic(
                 self.llm_service,
@@ -659,4 +682,5 @@ class MemoryRecordBuilder:
             document=conversation_document,
             header=memory_header,
             timestamp=timestamp,
+            memopad_candidates=memopad_candidates,
         )

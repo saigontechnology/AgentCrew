@@ -1,8 +1,4 @@
-"""SQLite/FTS5 memory service: the Phase 5 standalone write path (MEM-502).
-
-Not wired into setup composition; the user-visible default backend remains
-Chroma until the blocked Phase 6 cutover is approved.
-"""
+"""Default SQLite/FTS5 memory backend, including derived memopad collection."""
 
 from __future__ import annotations
 
@@ -69,9 +65,28 @@ class SQLiteMemoryPersistence:
             cwd=operation_data.get("cwd"),
             header=built.header,
         )
-        return self._repository.persist_turn(
+        memory_id = self._repository.persist_turn(
             memory_record, operation_data["operation_id"]
         )
+        try:
+            candidates = getattr(built, "memopad_candidates", ())
+            if candidates:
+                from .project_identity import resolve_project_identity
+
+                project = resolve_project_identity(
+                    operation_data.get("cwd") or os.getcwd()
+                )
+                self._repository.collect_memopad(
+                    memory_id,
+                    operation_data["agent_name"],
+                    project,
+                    list(candidates),
+                )
+        except Exception:
+            logger.warning(
+                "Memopad projection failed (non-fatal; canonical memory stored)"
+            )
+        return memory_id
 
     def consolidation_candidates(
         self,
@@ -160,6 +175,12 @@ class SQLiteMemoryService(BaseMemoryService):
         if self._worker.queue_store(operation_data):
             return [operation_id]
         return []
+
+    def get_memopad_stats(
+        self, agent_name: str | None = None, project_key: str | None = None
+    ) -> dict[str, Any]:
+        """Local read-only inspection, never part of retrieval or context injection."""
+        return self._repository.memopad_stats(agent_name, project_key)
 
     def clear_conversation_context(self):
         self._worker.current_conversation_context = {}

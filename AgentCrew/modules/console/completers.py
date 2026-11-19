@@ -363,6 +363,10 @@ class ChatCompleter(Completer):
             ("/think", "Show or set thinking budget (usage: /think [budget])"),
             ("/usage", "Show current provider usage limits"),
             (
+                "/memopad stats",
+                "Read-only memopad collection counts (SQLite only; no injection)",
+            ),
+            (
                 "/stats",
                 "Show LLM service models and conversation token/cost statistics (usage: /stats)",
             ),

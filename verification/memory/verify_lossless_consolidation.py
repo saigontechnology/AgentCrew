@@ -419,7 +419,7 @@ def checks_lossless_supersession_and_visibility():
                             "SELECT version FROM schema_version"
                         ).fetchone()[0]
                         == SCHEMA_VERSION
-                        == 2,
+                        == 3,
                         "Schema version changed",
                     )
                 h.repo.check_integrity()
@@ -1389,7 +1389,7 @@ def checks_freeze_and_schema_contract():
         == phase4.FROZEN_FILE_HASHES["verification/memory/benchmark.py"],
         "Relocated benchmark freeze mismatch",
     )
-    require(SCHEMA_VERSION == 2, "Schema version changed")
+    require(SCHEMA_VERSION == 3, "Unexpected schema version")
 
 
 def main():

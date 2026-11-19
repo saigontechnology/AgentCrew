@@ -54,6 +54,7 @@ class CommandHandler:
                 "/think",
                 "/usage",
                 "/stats",
+                "/memopad",
                 "/toggle_transfer",
                 "/agent_mode",
                 "/file",

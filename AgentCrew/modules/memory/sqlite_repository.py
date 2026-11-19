@@ -12,8 +12,11 @@ from contextlib import closing, contextmanager, nullcontext
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, time
 from pathlib import Path
+from typing import Any
 
 from . import provenance
+from .memopad import MemopadCandidate, parse_memopad_candidates
+from .project_identity import ProjectIdentity
 from .record_parser import checksum, derive_memory_units, normalize_text
 from .resources import query_resource_uris
 from .types import (
@@ -29,7 +32,46 @@ from .types import (
     RetrievalUnit,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+MEMOPAD_SCHEMA = (
+    """CREATE TABLE memopad (
+        id TEXT PRIMARY KEY, agent_name TEXT NOT NULL,
+        project_key TEXT NOT NULL, project_name TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('decision','lesson','constraint','correction',
+            'workaround','unresolved','verified_fact','project_preference')),
+        title TEXT NOT NULL, statement TEXT NOT NULL, subject_key TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('candidate','active','superseded','rejected','stale')),
+        confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+        importance REAL NOT NULL CHECK(importance BETWEEN 0 AND 1),
+        created_at REAL NOT NULL, updated_at REAL NOT NULL,
+        valid_from REAL, valid_to REAL,
+        superseded_by TEXT REFERENCES memopad(id) ON DELETE SET NULL,
+        support_count INTEGER NOT NULL DEFAULT 0 CHECK(support_count >= 0),
+        CHECK(valid_from IS NULL OR valid_to IS NULL OR valid_from <= valid_to)
+    )""",
+    "CREATE INDEX memopad_scope ON memopad(agent_name,project_key,status,kind)",
+    """CREATE TABLE memopad_evidence (
+        item_id TEXT NOT NULL REFERENCES memopad(id) ON DELETE CASCADE,
+        memory_id TEXT NOT NULL REFERENCES memory_record(id) ON DELETE CASCADE,
+        memory_checksum TEXT NOT NULL, unit_id TEXT, unit_checksum TEXT,
+        created_at REAL NOT NULL, PRIMARY KEY(item_id,memory_id),
+        CHECK((unit_id IS NULL) = (unit_checksum IS NULL))
+    )""",
+    "CREATE INDEX memopad_evidence_source ON memopad_evidence(memory_id)",
+    """CREATE TRIGGER memopad_support_insert AFTER INSERT ON memopad_evidence BEGIN
+        UPDATE memopad SET support_count=support_count+1 WHERE id=new.item_id;
+    END""",
+    """CREATE TRIGGER memopad_support_delete AFTER DELETE ON memopad_evidence BEGIN
+        UPDATE memopad SET support_count=support_count-1,
+            updated_at=CAST(strftime('%s','now') AS REAL)
+            WHERE id=old.item_id;
+        DELETE FROM memopad WHERE id=old.item_id AND support_count=0;
+    END""",
+    """CREATE TRIGGER memopad_source_deleted AFTER UPDATE OF status ON memory_record
+        WHEN new.status='deleted' BEGIN
+        DELETE FROM memopad_evidence WHERE memory_id=new.id;
+    END""",
+)
 RESOURCE_SCHEMA = (
     """CREATE TABLE memory_resource (
         memory_id TEXT NOT NULL REFERENCES memory_record(id) ON DELETE CASCADE,
@@ -119,7 +161,7 @@ SCHEMA_V1 = (
         VALUES(new.rowid,new.title,new.important,new.body,new.identifiers);
     END""",
 )
-SCHEMA = (*SCHEMA_V1, *RESOURCE_SCHEMA)
+SCHEMA = (*SCHEMA_V1, *RESOURCE_SCHEMA, *MEMOPAD_SCHEMA)
 RECORD_COLUMNS = (
     "id",
     "agent_name",
@@ -154,8 +196,7 @@ class SQLiteMemoryRepository:
 
     No live conversation state or connection is stored on this object. A search
     obtains all candidate sources and conflict markers within one read snapshot.
-    Write methods support explicit setup and offline migration. They are not
-    wired into automatic production memory storage.
+    Write methods support queued production memory storage and offline migration.
     """
 
     def __init__(
@@ -212,6 +253,12 @@ class SQLiteMemoryRepository:
                         )
                     connection.execute("UPDATE schema_version SET version=2")
                     connection.execute("PRAGMA user_version=2")
+                if connection.execute("PRAGMA user_version").fetchone()[0] == 2:
+                    self._validate_schema(connection, version=2)
+                    for statement in MEMOPAD_SCHEMA:
+                        connection.execute(statement)
+                    connection.execute("UPDATE schema_version SET version=3")
+                    connection.execute("PRAGMA user_version=3")
                 self._validate_schema(connection)
             with closing(self._connect(write=True)) as connection:
                 if connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
@@ -300,6 +347,58 @@ class SQLiteMemoryRepository:
                     "resource_entity",
                 }
             )
+        if version >= 3:
+            required.update(
+                {
+                    "memopad",
+                    "memopad_scope",
+                    "memopad_evidence",
+                    "memopad_evidence_source",
+                    "memopad_support_insert",
+                    "memopad_support_delete",
+                    "memopad_source_deleted",
+                }
+            )
+            for table, expected in (
+                (
+                    "memopad",
+                    {
+                        "id",
+                        "agent_name",
+                        "project_key",
+                        "project_name",
+                        "kind",
+                        "title",
+                        "statement",
+                        "subject_key",
+                        "status",
+                        "confidence",
+                        "importance",
+                        "created_at",
+                        "updated_at",
+                        "valid_from",
+                        "valid_to",
+                        "superseded_by",
+                        "support_count",
+                    },
+                ),
+                (
+                    "memopad_evidence",
+                    {
+                        "item_id",
+                        "memory_id",
+                        "memory_checksum",
+                        "unit_id",
+                        "unit_checksum",
+                        "created_at",
+                    },
+                ),
+            ):
+                actual = {
+                    row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+                }
+                if actual != expected:
+                    raise SQLiteMemoryError("Incomplete memopad schema")
         if not required <= objects:
             raise SQLiteMemoryError("Unrecognized or incomplete SQLite memory schema")
         versions = [
@@ -339,6 +438,134 @@ class SQLiteMemoryRepository:
                 }
                 if actual != expected:
                     raise SQLiteMemoryError("Incomplete resource projection schema")
+
+    def collect_memopad(
+        self,
+        memory_id: str,
+        agent_name: str,
+        project: ProjectIdentity,
+        candidates: list[MemopadCandidate],
+    ) -> int:
+        """Publish bounded proposals after canonical commit in a separate transaction.
+
+        Unit IDs/checksums are historical snapshots, intentionally not foreign keys:
+        cumulative writes rebuild retrieval units. The canonical memory FK remains
+        live, including preserved consolidation sources, and cascades on forgetting.
+        No model-provided source attribution is trusted: all items are candidates.
+        """
+        candidates = parse_memopad_candidates(candidates)
+        if not candidates:
+            return 0
+        with self._transaction(write=True) as connection:
+            memory = connection.execute(
+                "SELECT document_checksum,status FROM memory_record WHERE id=? AND agent_name=?",
+                (memory_id, agent_name),
+            ).fetchone()
+            if memory is None or memory["status"] != "active":
+                raise SQLiteMemoryError("Memopad source is not an active owned memory")
+            units = connection.execute(
+                "SELECT id,checksum,text FROM retrieval_unit WHERE memory_id=? ORDER BY ordinal,id",
+                (memory_id,),
+            ).fetchall()
+            timestamp = datetime.now(UTC).timestamp()
+            for candidate in candidates:
+                subject = normalize_text(candidate.subject_key)
+                statement = " ".join(candidate.statement.split())
+                item_id = checksum(
+                    json.dumps(
+                        [agent_name, project.key, candidate.kind, subject, statement],
+                        ensure_ascii=False,
+                    )
+                )
+                importance = (
+                    0.7
+                    if candidate.kind in {"decision", "constraint", "correction"}
+                    else 0.5
+                )
+                connection.execute(
+                    """INSERT INTO memopad (
+                        id,agent_name,project_key,project_name,kind,title,statement,
+                        subject_key,status,confidence,importance,created_at,updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,'candidate',0.35,?,?,?)
+                    ON CONFLICT(id) DO UPDATE SET project_name=excluded.project_name,
+                        updated_at=excluded.updated_at""",
+                    (
+                        item_id,
+                        agent_name,
+                        project.key,
+                        project.name,
+                        candidate.kind,
+                        candidate.title.strip(),
+                        candidate.statement.strip(),
+                        subject,
+                        importance,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                matches = [
+                    unit
+                    for unit in units
+                    if " ".join(unit["text"].split()) == statement
+                ]
+                unit = matches[0] if len(matches) == 1 else None
+                connection.execute(
+                    """INSERT INTO memopad_evidence (
+                        item_id,memory_id,memory_checksum,unit_id,unit_checksum,created_at
+                    ) VALUES (?,?,?,?,?,?) ON CONFLICT(item_id,memory_id) DO UPDATE SET
+                        memory_checksum=excluded.memory_checksum,
+                        unit_id=excluded.unit_id,unit_checksum=excluded.unit_checksum""",
+                    (
+                        item_id,
+                        memory_id,
+                        memory["document_checksum"],
+                        unit["id"] if unit else None,
+                        unit["checksum"] if unit else None,
+                        timestamp,
+                    ),
+                )
+        return len(candidates)
+
+    def memopad_stats(
+        self, agent_name: str | None = None, project_key: str | None = None
+    ) -> dict[str, Any]:
+        """Read one consistent aggregate snapshot; never return item statements."""
+        clauses, parameters = [], []
+        for field, value in (("agent_name", agent_name), ("project_key", project_key)):
+            if value is not None:
+                clauses.append(f"m.{field}=?")
+                parameters.append(value)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._transaction() as connection:
+            row = connection.execute(
+                """SELECT count(*) AS total,coalesce(avg(confidence),0) AS mean_confidence,
+                    coalesce(sum(support_count>1),0) AS corroborated,
+                    coalesce(sum(NOT EXISTS(SELECT 1 FROM memopad_evidence e WHERE e.item_id=m.id)),0) AS orphans
+                    FROM memopad m"""
+                + where,
+                parameters,
+            ).fetchone()
+            stats = dict(row)
+            stats["source_memories"] = connection.execute(
+                "SELECT count(DISTINCT e.memory_id) FROM memopad_evidence e JOIN memopad m ON m.id=e.item_id"
+                + where,
+                parameters,
+            ).fetchone()[0]
+            for label, column in (
+                ("status", "status"),
+                ("kind", "kind"),
+                ("project", "project_key"),
+                ("agent", "agent_name"),
+            ):
+                stats[label] = dict(
+                    connection.execute(
+                        f"SELECT m.{column},count(*) FROM memopad m"
+                        + where
+                        + f" GROUP BY m.{column} ORDER BY m.{column}",
+                        parameters,
+                    ).fetchall()
+                )
+        return stats
 
     def upsert_record(self, record: MemoryRecord) -> ParsedMemory:
         """Atomically replace derived indexes without rewriting canonical input."""

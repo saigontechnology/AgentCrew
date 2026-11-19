@@ -22,7 +22,10 @@ from AgentCrew.modules.memory.retrieval import (
     _query_parts,
     _words,
 )
-from AgentCrew.modules.memory.sqlite_repository import SQLiteMemoryRepository
+from AgentCrew.modules.memory.sqlite_repository import (
+    SCHEMA_VERSION,
+    SQLiteMemoryRepository,
+)
 from AgentCrew.modules.memory.types import CandidateSource, MemoryQuery, MemoryRecord
 from verification.memory.benchmark import query_from_case
 from verification.memory.verify_exact_lookup import PlanRepository, populate
@@ -71,10 +74,13 @@ def reference_fixture(path, name):
     with sqlite3.connect(path) as source, sqlite3.connect(target) as destination:
         source.backup(destination)
         require(
-            source.execute("PRAGMA user_version").fetchone()[0] == 2,
-            "Current fixture is not schema 2",
+            source.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION,
+            "Current fixture has an unexpected schema version",
         )
         destination.execute("PRAGMA foreign_keys=ON")
+        destination.execute("DROP TRIGGER memopad_source_deleted")
+        destination.execute("DROP TABLE memopad_evidence")
+        destination.execute("DROP TABLE memopad")
         destination.execute("DROP TABLE memory_resource_entity")
         destination.execute("DROP TABLE memory_resource")
         destination.execute("UPDATE schema_version SET version=1")

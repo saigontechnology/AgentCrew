@@ -54,6 +54,14 @@ class BaseMemoryService(ABC):
             list of memory IDs created
         """
 
+    def get_memopad_stats(
+        self, agent_name: str | None = None, project_key: str | None = None
+    ) -> dict[str, Any]:
+        """Optional backend capability; collection is SQLite-only for now."""
+        raise NotImplementedError(
+            "Memopad collection/statistics require the SQLite memory backend."
+        )
+
     @abstractmethod
     def clear_conversation_context(self):
         pass
