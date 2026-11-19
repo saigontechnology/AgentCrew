@@ -23,7 +23,7 @@ class FireworksService(CustomLLMService):
             base_url="https://api.fireworks.ai/inference/v1",
             provider_name="fireworks",
         )
-        self.model = "accounts/fireworks/models/deepseek-v4-pro"
+        self.model = "accounts/fireworks/models/deepseek-v4p1-flash-1017"
         self._is_thinking = False
         logger.info("Initialized Fireworks AI Service")
 

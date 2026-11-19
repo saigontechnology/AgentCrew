@@ -29,7 +29,7 @@ class OpenAICodexService(OpenAIResponseService):
             base_url=CODEX_BASE_URL,
         )
         self._provider_name = "openai_codex"
-        self.model = "gpt-5.4"
+        self.model = "gpt-6.1-sol"
 
         # Match Codex CLI's header behavior:
         # Authorization: Bearer <token> done by the client via api_key

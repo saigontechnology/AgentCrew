@@ -4,7 +4,7 @@ This module only imports `Model` — no heavy service dependencies.
 Loaded independently of the custom_llm service package.
 """
 
-from AgentCrew.modules.llm.types import Model, SampleParam
+from AgentCrew.modules.llm.types import Model
 
 GITHUB_COPILOT_MODELS = [
     # ── Anthropic ──────────────────────────────────────────────────────
@@ -100,16 +100,6 @@ GITHUB_COPILOT_MODELS = [
         output_token_price_1m=0.0,
     ),
     Model(
-        id="claude-opus-5",
-        provider="github_copilot",
-        service_name="github_copilot",
-        name="Claude Opus 5",
-        description="",
-        capabilities=["tool_use", "stream"],
-        input_token_price_1m=0.0,
-        output_token_price_1m=0.0,
-    ),
-    Model(
         id="claude-opus-5.5",
         provider="github_copilot",
         service_name="github_copilot",
@@ -120,77 +110,8 @@ GITHUB_COPILOT_MODELS = [
         output_token_price_1m=0.0,
     ),
     # ── Google Gemini ──────────────────────────────────────────────────
-    Model(
-        id="gemini-2.5-pro",
-        provider="github_copilot",
-        service_name="github_copilot",
-        name="Gemini 2.5 Pro",
-        description="",
-        capabilities=["tool_use", "vision", "stream"],
-        default=False,
-        input_token_price_1m=0.0,
-        output_token_price_1m=0.0,
-    ),
-    Model(
-        id="gemini-3-flash",
-        provider="github_copilot",
-        service_name="github_copilot",
-        name="Gemini 3 Flash",
-        description="",
-        capabilities=["tool_use", "vision", "stream"],
-        default=False,
-        input_token_price_1m=0.0,
-        force_sample_params=SampleParam(temperature=1.0),
-        output_token_price_1m=0.0,
-    ),
-    Model(
-        id="gemini-3.1-pro",
-        provider="github_copilot",
-        service_name="github_copilot",
-        name="Gemini 3.1 Pro",
-        description="",
-        capabilities=["tool_use", "vision", "stream"],
-        default=False,
-        input_token_price_1m=0.0,
-        force_sample_params=SampleParam(temperature=1.0),
-        output_token_price_1m=0.0,
-    ),
-    Model(
-        id="gemini-3.5-flash",
-        provider="github_copilot",
-        service_name="github_copilot",
-        name="Gemini 3.5 Flash",
-        description="",
-        capabilities=["tool_use", "vision", "stream"],
-        default=False,
-        input_token_price_1m=0.0,
-        force_sample_params=SampleParam(temperature=1.0),
-        output_token_price_1m=0.0,
-    ),
     # ── Microsoft ──────────────────────────────────────────────────────
-    Model(
-        id="mai-code-1-flash",
-        provider="github_copilot",
-        service_name="github_copilot",
-        name="MAI-Code-1-Flash",
-        description="Continuously improving model from Microsoft — performance and behavior may evolve over time.",
-        capabilities=["tool_use", "vision", "stream"],
-        default=False,
-        input_token_price_1m=0.0,
-        output_token_price_1m=0.0,
-    ),
     # ── Moonshot AI ────────────────────────────────────────────────────
-    Model(
-        id="kimi-k2.7-code",
-        provider="github_copilot",
-        service_name="github_copilot",
-        name="Kimi-K2.7-Code",
-        description="Moonshot AI coding-focused model.",
-        capabilities=["tool_use", "vision", "stream", "thinking", "structured_output"],
-        default=False,
-        input_token_price_1m=0.0,
-        output_token_price_1m=0.0,
-    ),
     # ── OpenAI (Chat Completions) ──────────────────────────────────────
     Model(
         id="gpt-4o",
@@ -233,18 +154,6 @@ GITHUB_COPILOT_MODELS = [
         service_name="copilot_response",
         name="GPT-5.6 Sol",
         description="Frontier model for complex professional work",
-        capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
-        default_reasoning="high",
-        max_context_token=272_000,
-        input_token_price_1m=0.0,
-        output_token_price_1m=0.0,
-    ),
-    Model(
-        id="gpt-5.6-terra",
-        provider="github_copilot",
-        service_name="copilot_response",
-        name="GPT-5.6 Terra",
-        description="GPT-5.6 model that balances intelligence and cost",
         capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
         default_reasoning="high",
         max_context_token=272_000,
@@ -302,6 +211,7 @@ GITHUB_COPILOT_MODELS = [
         capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
         input_token_price_1m=0.0,
         output_token_price_1m=0.0,
+        default=True,
     ),
     Model(
         id="gpt-6.1-terra",
@@ -314,16 +224,4 @@ GITHUB_COPILOT_MODELS = [
         output_token_price_1m=0.0,
     ),
     # ── Fine-tuned ─────────────────────────────────────────────────────
-    Model(
-        id="raptor-mini-tertiary",
-        provider="github_copilot",
-        service_name="github_copilot",
-        name="Raptor mini",
-        description="Fine-tuned GPT-5 mini",
-        capabilities=["tool_use", "vision", "stream", "structured_output"],
-        default=True,
-        max_context_token=264_000,
-        input_token_price_1m=0.0,
-        output_token_price_1m=0.0,
-    ),
 ]

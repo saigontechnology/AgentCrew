@@ -24,16 +24,25 @@ class AnthropicService(BaseLLMService):
         if not api_key:
             logger.error("ANTHROPIC_API_KEY not found in environment variables")
         self.client = AsyncAnthropic(api_key=api_key, base_url=base_url)
-        self.model = "claude-3-7-sonnet-latest"
-        # self.model = "claude-3-5-haiku-latest"
+        self.model = "claude-sonnet-5-5"
         self.tools = []  # Initialize empty tools list
         self.tool_handlers = {}  # Map tool names to handler functions
         self.thinking_enabled = False
         self.thinking_budget = 0
+        self.reasoning_effort = "high"
         self.caching_blocks = 0
         self._provider_name = provider_name
         self.system_prompt = "You are a helful assistant"
         logger.info("Initialized Anthropic Service")
+
+    @staticmethod
+    def _uses_adaptive_thinking(model_id: str) -> bool:
+        return model_id in {
+            "claude-fable-5-2",
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+        }
 
     async def close(self):
         await self.client.close()
@@ -69,7 +78,9 @@ class AnthropicService(BaseLLMService):
 
         async with self.client.messages.stream(
             model=model_id or self.model,
-            thinking={"type": "disabled"},
+            thinking={"type": "adaptive"}
+            if self._uses_adaptive_thinking(model_id or self.model)
+            else {"type": "disabled"},
             max_tokens=3000,
             system=self.system_prompt,
             messages=(
@@ -398,7 +409,13 @@ class AnthropicService(BaseLLMService):
             ],
         )
 
-        content_block = message.content[0]
+        if self._uses_adaptive_thinking(self.model):
+            text_blocks = [b.text for b in message.content if isinstance(b, TextBlock)]
+            if not text_blocks:
+                raise TypeError("Unexpected response type: message has no TextBlock")
+            content_block = TextBlock(type="text", text="".join(text_blocks))
+        else:
+            content_block = message.content[0]
         if not isinstance(content_block, TextBlock):
             raise TypeError(
                 "Unexpected response type: message content is not a TextBlock"
@@ -446,6 +463,24 @@ class AnthropicService(BaseLLMService):
         Returns:
             bool: True if thinking mode is supported and successfully set, False otherwise.
         """
+        if self._uses_adaptive_thinking(self.model):
+            if str(budget_tokens) in {"low", "medium", "high", "xhigh", "max"}:
+                self.reasoning_effort = str(budget_tokens)
+            else:
+                try:
+                    budget = int(budget_tokens)
+                except (TypeError, ValueError):
+                    return False
+                if budget < 0:
+                    return False
+                self.reasoning_effort = (
+                    "low" if budget <= 4096 else "medium" if budget <= 16384 else "high"
+                )
+            self.thinking_enabled = str(budget_tokens) != "0"
+            self.thinking_budget = 0
+            logger.info(f"Adaptive thinking effort set to {self.reasoning_effort}.")
+            return True
+
         budget_tokens = int(budget_tokens)
         if budget_tokens == 0:
             self.thinking_enabled = False
@@ -483,7 +518,11 @@ class AnthropicService(BaseLLMService):
         }
 
         # Add thinking configuration if enabled
-        if self.thinking_enabled:
+        if self._uses_adaptive_thinking(self.model):
+            stream_params["thinking"] = {"type": "adaptive"}
+            stream_params["output_config"] = {"effort": self.reasoning_effort}
+            stream_params.pop("temperature", None)
+        elif self.thinking_enabled:
             stream_params["thinking"] = {
                 "type": "enabled",
                 "budget_tokens": self.thinking_budget,

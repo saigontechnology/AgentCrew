@@ -23,7 +23,7 @@ class TogetherAIService(BaseLLMService):
             logger.error("TOGETHER_API_KEY not found in environment variables")
         self.base_url = os.getenv("TOGETHER_BASE_URL")
         self.client = AsyncTogether(api_key=self.api_key)
-        self.model = "deepseek-ai/DeepSeek-V4-Flash-0731"
+        self.model = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
         self.tools = []
         self.tool_handlers = {}
         self._provider_name = "together"

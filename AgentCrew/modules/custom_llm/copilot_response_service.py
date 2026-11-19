@@ -32,7 +32,7 @@ class GithubCopilotResponseService(OpenAIResponseService):
             "Editor-Version": "Neovim/0.9.0",
         }
 
-        self.model = "gpt-5.4"
+        self.model = "gpt-6.1-sol"
         self.current_input_tokens = 0
         self.current_output_tokens = 0
         self._is_thinking = False

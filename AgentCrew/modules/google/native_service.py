@@ -161,8 +161,20 @@ class GoogleAINativeService(BaseLLMService):
         output_tokens = 0
         cached_tokens = 0
 
+        selected_model = model_id or self.model
+        thinking_config = (
+            types.ThinkingConfig(thinking_level="low")
+            if selected_model
+            in {
+                "gemini-3.8-flash",
+                "gemini-4-carbon",
+                "gemini-4-argon",
+                "gemini-4-hydrogen",
+            }
+            else types.ThinkingConfig(thinking_budget=0)
+        )
         stream_generator = await self.client.aio.models.generate_content_stream(
-            model=model_id or self.model,
+            model=selected_model,
             contents=self._convert_internal_format(prompt)
             if isinstance(prompt, list)
             else prompt,
@@ -170,7 +182,7 @@ class GoogleAINativeService(BaseLLMService):
                 max_output_tokens=3000,
                 temperature=temperature,
                 system_instruction=self.system_prompt,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                thinking_config=thinking_config,
             ),
         )
         async for chunk in stream_generator:
