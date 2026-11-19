@@ -314,6 +314,9 @@ def register(service_instance=None, agent=None):
         service_instance,
         agent,
     )
+    if not hasattr(service_instance, "crawl"):
+        # Keenable has search and fetch but no crawl
+        return
     register_tool(
         get_web_crawl_tool_definition,
         get_web_crawl_tool_handler,

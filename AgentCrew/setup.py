@@ -292,6 +292,7 @@ class ApplicationSetup:
             "FIREWORKS_API_KEY",
             "REFUSELESS_API_KEY",
             "TAVILY_API_KEY",
+            "KEENABLE_API_KEY",
             "VOYAGE_API_KEY",
             "ELEVENLABS_API_KEY",
             "CURSOR_API_KEY",
@@ -560,9 +561,14 @@ class ApplicationSetup:
         clipboard_service = ClipboardService()
 
         try:
-            from AgentCrew.modules.web_search import TavilySearchService
+            if os.getenv("WEB_SEARCH_PROVIDER", "").strip().lower() == "keenable":
+                from AgentCrew.modules.web_search import KeenableSearchService
 
-            search_service = TavilySearchService()
+                search_service = KeenableSearchService()
+            else:
+                from AgentCrew.modules.web_search import TavilySearchService
+
+                search_service = TavilySearchService()
         except ValueError as e:
             click.echo(
                 f"\u26a0\ufe0f Web search tools not available: {e!s}\n"
