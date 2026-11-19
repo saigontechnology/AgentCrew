@@ -17,8 +17,9 @@ inference calls were made; account eligibility and quotas still apply.
 | GitHub Copilot | `gpt-6.1-sol` | Same ID in existing `copilot_response` service family |
 | OpenAI API | `gpt-6.2-sol` | Existing `openai_response` service family |
 
-Copilot's originally proposed `gpt-5.6-terra` default retired on November 16.
-The user selected existing `gpt-6.1-sol` instead. Google retains
+Copilot uses existing `gpt-6.1-sol`, as selected by the user. The previous
+`gpt-5.6-terra` entry is retained pending resolution of conflicting lifecycle
+observations, rather than treated as a confirmed retirement. Google retains
 `gemini-3.6-flash`; OpenCode Go retains `kimi-k2.5`, with the existing `kimi-k2.6`
 service fallback. Providers that previously relied on list ordering rather than
 an explicit default keep that convention, except Codex and the user-approved
@@ -80,6 +81,18 @@ rewritten: switch retired selections to their replacements explicitly.
   unsupported; that separate addition is deferred rather than modifying the
   shared OpenAI-compatible contract.
 
+### Bounded review corrections
+
+Every auxiliary preference must resolve to a registered model, including aliases
+whose preference key is a service family rather than the catalog provider.
+Together now selects `together/MiniMaxAI/MiniMax-M3.1-Flash`; Codex selects
+`openai_codex/gpt-6-luna` instead of its nonexistent `gpt-6.1-luna` spelling.
+
+Onboarding uses the `_service_family` identity assigned by `ServiceManager`:
+Copilot Responses and Codex select `gpt-6.1-sol`, while the GitHub chat-completions
+family retains `claude-sonnet-4.6`. Provider identity alone no longer places a chat
+model on the Copilot Responses service. Unrelated onboarding choices are unchanged.
+
 ## Lifecycle evidence and source conflicts
 
 - Anthropic Opus 4.1 is retired; Sonnet 4.5 is deprecated and retires November 30.
@@ -97,9 +110,17 @@ rewritten: switch retired selections to their replacements explicitly.
   Ready/serverless status, context, image/function support, and rates for Kimi
   K3.1 Pro, MiniMax M3.1 Flash, and Ember-1. Older `app.fireworks.ai` pages did not
   expose readable metadata; the primary public cards resolved that uncertainty.
-- Copilot's retirement table additionally confirms `claude-opus-5` and
-  `gpt-5.6-terra` retired November 16. Opus 4.8 and Sonnet 4.6 are retained because
-  documented annual-plan exceptions mean their retirement is not universal.
+- Copilot lifecycle observations conflict for `claude-opus-5` and `gpt-5.6-terra`.
+  Architect's review of the canonical supported-model page found both listed as
+  GA, with neither in its retirement history. An older/alternate indexed path
+  showed November 16 retirements; a fresh correction-stage fetch of the canonical
+  URL also returned those retirement rows. These public-document observations are
+  unresolved, not evidence of consistent current availability or confirmed
+  universal retirement. Under the conservative removal policy and explicit
+  review decision, both pre-refresh definitions and service families are retained.
+  Account, plan, and client availability still require confirmation. Opus 4.8 and
+  Sonnet 4.6 remain retained because documented annual-plan exceptions mean their
+  retirement is not universal.
 - No DeepInfra models are removed merely because newer models supersede them.
   xAI and Refuseless are unchanged.
 
@@ -157,13 +178,15 @@ No-network checks live under `verification/llm/`, not the deprecated `tests/`
 folder. They cover catalog uniqueness and provider identity, defaults, retired
 entries, known service families, fallback/default agreement, effective contexts,
 subscription pricing, registry selection, raw/custom fallback preservation, and
-Claude/Google request parameters. Ruff and syntax/import checks apply to all
+Claude/Google request parameters. Review coverage also verifies every auxiliary
+preference (including service-family aliases), onboarding endpoint-family safety,
+and the retained Copilot definitions. Ruff and syntax/import checks apply to all
 changed Python files. Full application integration and paid-provider inference
 are not claimed.
 
 ## Exact catalog changes
 
-**36 additions; 40 removals.** Already-cataloged models promoted to defaults are not counted as additions.
+**36 additions; 38 removals.** Already-cataloged models promoted to defaults are not counted as additions.
 
 ### claude
 
@@ -289,14 +312,17 @@ Removed:
 
 ### github_copilot
 
-Removed:
+Retained after review, not counted as additions:
 
 - `claude-opus-5`
+- `gpt-5.6-terra`
+
+Removed:
+
 - `gemini-2.5-pro`
 - `gemini-3-flash`
 - `gemini-3.1-pro`
 - `gemini-3.5-flash`
-- `gpt-5.6-terra`
 - `kimi-k2.7-code`
 - `mai-code-1-flash`
 - `raptor-mini-tertiary`

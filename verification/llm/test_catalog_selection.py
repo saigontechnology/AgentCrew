@@ -12,6 +12,7 @@ from AgentCrew.modules.llm.model_selection import (
     resolve_model_selection,
 )
 from AgentCrew.modules.llm.service_manager import ServiceManager
+from AgentCrew.modules.onboarding.service import OnboardingService
 
 
 @pytest.fixture
@@ -83,3 +84,56 @@ def test_cloning_unknown_raw_model_preserves_provider_and_id(registry):
     clone = manager.clone_service(original)
     manager.initialize_standalone_service.assert_called_once_with("private-provider")
     assert clone.model == "namespace/private-id"
+
+
+@pytest.mark.parametrize(
+    "provider,family,expected_model",
+    [
+        ("github_copilot", "copilot_response", "gpt-6.1-sol"),
+        ("openai_codex", "openai_codex", "gpt-6.1-sol"),
+        ("github_copilot", "github_copilot", "claude-sonnet-4.6"),
+    ],
+)
+def test_onboarding_model_matches_service_manager_endpoint_family(
+    registry, provider, family, expected_model
+):
+    manager = object.__new__(ServiceManager)
+    manager.services = {}
+    manager.custom_provider_details = {}
+    manager.service_factories = {
+        family: lambda: SimpleNamespace(provider_name=provider, model="previous-model")
+    }
+    if family == "github_copilot":
+        service = manager.get_service(family, provider)
+    else:
+        service = manager.get_service_for_provider(provider)
+    assert service._service_family == family
+    assert service.provider_name == provider
+
+    OnboardingService(service, agents_config=SimpleNamespace())
+
+    assert service.model == expected_model
+    registry.get_models_by_provider(provider)
+    model = registry.get_model(f"{provider}/{service.model}")
+    assert model is not None
+    assert model.resolved_service_name() == family
+
+
+@pytest.mark.parametrize(
+    "provider,expected_model",
+    [
+        ("google", "gemini-3.1-pro-preview"),
+        ("commandcode", "zai-org/GLM-5.2"),
+        ("claude", "claude-sonnet-4-6"),
+        ("openai", "gpt-5.5"),
+        ("deepinfra", "zai-org/GLM-5.2"),
+        ("together", "zai-org/GLM-5.2"),
+        ("opencode_go", "kimi-k2.7-code"),
+        ("github_copilot", "previous-model"),
+        ("private-provider", "previous-model"),
+    ],
+)
+def test_onboarding_preserves_unrelated_provider_choices(provider, expected_model):
+    service = SimpleNamespace(provider_name=provider, model="previous-model")
+    OnboardingService(service, agents_config=SimpleNamespace())
+    assert service.model == expected_model

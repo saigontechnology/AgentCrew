@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from AgentCrew.modules.llm.auxiliary_model_selection import (
+    AUXILIARY_MODEL_PREFERENCES,
+    resolve_auxiliary_model,
+)
 from AgentCrew.modules.llm.model_registry import PROVIDER_MODEL_MODULES, ModelRegistry
 from AgentCrew.modules.llm.types import Model
 
@@ -117,6 +121,57 @@ def registry(monkeypatch):
     monkeypatch.setattr(ModelRegistry, "_initialize_models", lambda self: None)
     monkeypatch.setattr(ModelRegistry, "_instance", None)
     return ModelRegistry.get_instance()
+
+
+@pytest.mark.parametrize("preference,qualified_id", AUXILIARY_MODEL_PREFERENCES.items())
+def test_all_auxiliary_preferences_resolve_to_registered_models(
+    registry, preference, qualified_id
+):
+    target_provider = qualified_id.split("/", 1)[0]
+    model = resolve_auxiliary_model(
+        registry, preference, primary_provider=target_provider
+    )
+    assert model is registry.get_model(qualified_id)
+    assert model.provider == target_provider
+    assert registry.get_current_model() is None
+
+
+@pytest.mark.parametrize(
+    "model_id,family,name,capabilities,context,reasoning",
+    [
+        (
+            "claude-opus-5",
+            "github_copilot",
+            "Claude Opus 5",
+            ["tool_use", "stream"],
+            80_000,
+            None,
+        ),
+        (
+            "gpt-5.6-terra",
+            "copilot_response",
+            "GPT-5.6 Terra",
+            ["tool_use", "thinking", "vision", "stream", "structured_output"],
+            272_000,
+            "high",
+        ),
+    ],
+)
+def test_copilot_entries_with_conflicting_lifecycle_evidence_are_retained(
+    registry, model_id, family, name, capabilities, context, reasoning
+):
+    registry.get_models_by_provider("github_copilot")
+    qualified_id = f"github_copilot/{model_id}"
+    assert registry.set_current_model(qualified_id)
+    model = registry.get_model(qualified_id)
+    assert model.resolved_service_name() == family
+    assert model.name == name
+    assert model.capabilities == capabilities
+    assert model.max_context_token == context
+    assert model.default_reasoning == reasoning
+    assert not model.default
+    assert model.input_token_price_1m == model.output_token_price_1m == 0.0
+    assert ("github_copilot", model_id) not in REMOVED_MODELS
 
 
 @pytest.mark.parametrize("provider,model_id", DEFAULTS.items())
@@ -267,12 +322,10 @@ REMOVED_MODELS = [
     ("fireworks", "accounts/fireworks/models/muse-glimmer-30b"),
     ("fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"),
     ("fireworks", "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b"),
-    ("github_copilot", "claude-opus-5"),
     ("github_copilot", "gemini-2.5-pro"),
     ("github_copilot", "gemini-3-flash"),
     ("github_copilot", "gemini-3.1-pro"),
     ("github_copilot", "gemini-3.5-flash"),
-    ("github_copilot", "gpt-5.6-terra"),
     ("github_copilot", "kimi-k2.7-code"),
     ("github_copilot", "mai-code-1-flash"),
     ("github_copilot", "raptor-mini-tertiary"),

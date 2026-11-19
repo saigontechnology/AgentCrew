@@ -247,6 +247,7 @@ class OnboardingService:
         self.services = services or {}
         self.console = Console()
         if self.llm_service:
+            service_family = getattr(self.llm_service, "_service_family", None)
             if self.llm_service.provider_name == "google":
                 self.llm_service.model = "gemini-3.1-pro-preview"
             elif self.llm_service.provider_name == "commandcode":
@@ -257,13 +258,10 @@ class OnboardingService:
                 self.llm_service.model = "gpt-5.5"
             elif self.llm_service.provider_name == "deepinfra":
                 self.llm_service.model = "zai-org/GLM-5.2"
-            elif self.llm_service.provider_name == "github_copilot":
+            elif service_family == "github_copilot":
                 self.llm_service.model = "claude-sonnet-4.6"
-            elif (
-                self.llm_service.provider_name == "copilot_response"
-                or self.llm_service.provider_name == "openai_codex"
-            ):
-                self.llm_service.model = "gpt-5.5"
+            elif service_family in {"copilot_response", "openai_codex"}:
+                self.llm_service.model = "gpt-6.1-sol"
             elif self.llm_service.provider_name == "together":
                 self.llm_service.model = "zai-org/GLM-5.2"
             elif self.llm_service.provider_name == "opencode_go":
