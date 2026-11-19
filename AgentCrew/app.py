@@ -534,6 +534,7 @@ class AgentCrewApplication:
                     try:
                         if (
                             not isinstance(current_agent, LocalAgent)
+                            or self.agent_manager is None
                             or not current_agent.llm
                         ):
                             raise ValueError(f"Agent '{agent}' not found")
@@ -648,13 +649,16 @@ class AgentCrewApplication:
                             from dataclasses import asdict
 
                             def write_token_usage():
-                                token_usage_path = os.path.expanduser(token_usage_file)
-                                os.makedirs(
-                                    os.path.dirname(token_usage_path) or ".",
-                                    exist_ok=True,
-                                )
-                                with open(token_usage_path, "w") as f:
-                                    json.dump(asdict(token_usage), f, indent=2)
+                                if token_usage_file:
+                                    token_usage_path = os.path.expanduser(
+                                        token_usage_file
+                                    )
+                                    os.makedirs(
+                                        os.path.dirname(token_usage_path) or ".",
+                                        exist_ok=True,
+                                    )
+                                    with open(token_usage_path, "w") as f:
+                                        json.dump(asdict(token_usage), f, indent=2)
 
                             await asyncio.to_thread(write_token_usage)
 

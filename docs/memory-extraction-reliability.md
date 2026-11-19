@@ -103,6 +103,7 @@ separately from their unchanged historical gates:
 
 ```python
 from verification.memory import verify_phase4, verify_lossless_consolidation
+
 for module, excluded in (
     (verify_phase4, "checks_policy_freeze"),
     (verify_lossless_consolidation, "checks_freeze_and_schema_contract"),

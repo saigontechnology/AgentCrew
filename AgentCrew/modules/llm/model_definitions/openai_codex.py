@@ -7,6 +7,28 @@ from AgentCrew.modules.llm.types import Model
 
 OPENAI_CODEX_MODELS = [
     Model(
+        id="gpt-6.2-sol",
+        provider="openai_codex",
+        name="GPT-6.2 Sol (ChatGPT)",
+        description="GPT-6.2 Sol via ChatGPT subscription OAuth",
+        capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
+        default_reasoning="high",
+        max_context_token=272_000,
+        input_token_price_1m=0.0,
+        output_token_price_1m=0.0,
+    ),
+    Model(
+        id="gpt-6.2-astra",
+        provider="openai_codex",
+        name="GPT-6.2 Astra (ChatGPT)",
+        description="GPT-6.2 Astra via ChatGPT subscription OAuth",
+        capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
+        default_reasoning="high",
+        max_context_token=272_000,
+        input_token_price_1m=0.0,
+        output_token_price_1m=0.0,
+    ),
+    Model(
         id="gpt-5.6-sol",
         provider="openai_codex",
         name="GPT-5.6 Sol (ChatGPT)",

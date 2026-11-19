@@ -260,6 +260,8 @@ NEW_MODELS = [
     ("openai", "gpt-6.1-terra"),
     ("openai", "gpt-6.2-astra"),
     ("openai", "gpt-6.2-sol"),
+    ("openai_codex", "gpt-6.2-sol"),
+    ("openai_codex", "gpt-6.2-astra"),
     ("google", "gemini-3.8-flash"),
     ("google", "gemini-4-argon"),
     ("google", "gemini-4-carbon"),
@@ -339,6 +341,30 @@ def test_new_models_register_and_select_without_provider_initialization(
     registry.get_models_by_provider(provider)
     assert registry.set_current_model(f"{provider}/{model_id}")
     assert registry.get_current_model().provider == provider
+
+
+@pytest.mark.parametrize("model_id", ["gpt-6.2-sol", "gpt-6.2-astra"])
+def test_codex_gpt62_subscription_metadata(registry, model_id):
+    registry.get_models_by_provider("openai_codex")
+    qualified_id = f"openai_codex/{model_id}"
+    model = registry.get_model(qualified_id)
+    assert model is catalog_model("openai_codex", model_id)
+    assert model.resolved_service_name() == "openai_codex"
+    assert set(model.capabilities) == {
+        "tool_use",
+        "thinking",
+        "vision",
+        "stream",
+        "structured_output",
+    }
+    assert model.max_context_token == 272_000
+    assert model.default_reasoning == "high"
+    assert model.input_token_price_1m == 0.0
+    assert model.output_token_price_1m == 0.0
+    assert model.cached_token_price_1m == 0.0
+    assert not model.default
+    assert registry.set_current_model(qualified_id)
+    assert registry.get_current_model() is model
 
 
 @pytest.mark.parametrize("provider,model_id", REMOVED_MODELS)
