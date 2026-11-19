@@ -5,7 +5,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from threading import Lock, Thread
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlsplit
 
 from loguru import logger
 from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider, TokenStorage
@@ -204,7 +204,7 @@ class OAuthCallbackServer:
         iss: str | None = None,
     ):
         """
-        Thread-safe method to set the callback result.
+        Atomically store the first callback containing a code or OAuth error.
 
         Args:
             code: Authorization code from OAuth provider
@@ -213,6 +213,8 @@ class OAuthCallbackServer:
             iss: Issuer parameter (RFC 9207) from the authorization response
         """
         with self.result_lock:
+            if self.result or not (code or error):
+                return
             self.result = {"code": code, "state": state, "iss": iss, "error": error}
             logger.info(
                 f"OAuth callback result set: error={error}, has_code={code is not None}, has_iss={iss is not None}"
@@ -250,7 +252,10 @@ class OAuthCallbackServer:
 
             def do_GET(self):
                 """Handle GET request from OAuth callback."""
-                parsed_url = urlparse(self.path)
+                parsed_url = urlsplit(self.path)
+                if parsed_url.path != "/callback":
+                    self.send_error(404)
+                    return
                 params = parse_qs(parsed_url.query)
 
                 code = params.get("code", [None])[0]

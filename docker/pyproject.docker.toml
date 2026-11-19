@@ -1,6 +1,6 @@
 [project]
 name = "agentcrew-ai"
-version = "0.23.2"
+version = "0.24.0"
 requires-python = ">=3.12"
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -25,13 +25,11 @@ dependencies = [
   "pyperclip==1.11.0",
   "tavily-python==0.8.0",
   "pillow==12.3.0",
-  "chromadb==1.5.9",
   "openai==3.3.1",
   "mcp==2.1.1",
   "google-genai==2.20.0",
   "markdown==3.10.3",
   "tree-sitter-language-pack==1.15.8",
-  "voyageai==0.5.0",
   "numpy==1.26.4; python_version < '3.13' and sys_platform == 'darwin'",
   "pywin32; sys_platform == 'win32'",
   "pyobjc; sys_platform == 'darwin'",
@@ -52,6 +50,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+chromadb = ["chromadb==1.5.9", "voyageai==0.5.0"]
 cpu = [
   "torch==2.11.0",
   "torchvision==0.26.0",
@@ -95,6 +94,15 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
+
+[tool.ruff.lint]
+ignore = ["BLE001"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["N999"]
+"tests/yt-dlp_test.py" = ["N999"]
+"tests/*" = ["DTZ005", "DTZ006", "DTZ002", "DTZ007"]
+
 [project.urls]
 "Homepage" = "https://github.com/saigontechnology/AgentCrew"
 "Bug Tracker" = "https://github.com/saigontechnology/AgentCrew/issues"
@@ -112,6 +120,10 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["./"]
+include = ["AgentCrew*"]
+
+[tool.setuptools.package-data]
+"AgentCrew.modules.a2a" = ["web/*"]
 
 [dependency-groups]
 dev = [
