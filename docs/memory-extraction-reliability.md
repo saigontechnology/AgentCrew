@@ -3,8 +3,8 @@
 ## Phase 1: privacy-safe diagnostics
 
 Implemented in an isolated branch based on `31138f71f5adfc9dee8fd446fa7fb75309d007cc`.
-Structured JSON extraction, corrective retries, auxiliary routing corrections and
-`/stats` role reporting are subsequent slices, not implemented by this milestone.
+The sections below record successive implementation milestones; the final
+integration section covers all three phases and `/stats` service-role reporting.
 The reported runtime uses `openai_codex/gpt-6.1-sol`; a routing mismatch has **not**
 been demonstrated as the cause of that incident.
 
@@ -130,6 +130,10 @@ tree is not run.
 
 Logging reference: [Loguru binding and structured fields](https://loguru.readthedocs.io/en/stable/api/logger.html#loguru._logger.Logger.bind).
 
+The XML-specific failure categories above describe the Phase 1 boundary; normal
+extraction now uses the JSON categories below. Their original names are retained,
+not repurposed to mislabel JSON failures.
+
 ## Phase 2: structured extraction
 
 Normal extraction now uses provider-neutral JSON-only prompting followed by
@@ -141,11 +145,12 @@ can validate either prompted or future native JSON without changing persistence.
 The full payload requires `head`, `flow` (`intent`, `exploration`, `outcome`) and
 `notes`. Optional `insights`, `entities` (`name`, `desc`), `domains` and `resources`
 default to empty lists. Unknown keys, coercions, duplicate JSON keys, non-finite
-constants and XML-illegal characters fail validation. JSON Markdown fences with
+constants, blank entity/reference names or relations, and XML-illegal characters fail validation. JSON Markdown fences with
 LF/CRLF are accepted, but arbitrary surrounding prose is not repaired. All
 semantic text is serialized by `xmltodict`, never unescaped XML interpolation.
 Date is assigned by the application. Legacy XML parsing remains available to
-consolidation and existing-record readers, but is not the new extraction contract.
+consolidation and existing-record readers, but is not the new extraction contract. Header projections
+are taken from the serialized canonical XML, preserving empty-header/null semantics.
 
 Resource proposals contain only bounded IDs `r1` through `r32`, display names and
 entity references; a URI field is forbidden. The application maps IDs back to
@@ -204,3 +209,213 @@ previous-memory preservation and bounded fallback. Retrieval/consolidation
 regressions are rerun at final integration.
 
 Validation reference: [Pydantic models, strict validation and forbidden extras](https://docs.pydantic.dev/latest/concepts/models/#extra-data).
+
+## Phase 3: auxiliary routing and service-role visibility
+
+`ServiceManager.initialize_auxiliary_service(primary, provider_override)` is the
+shared setup path for memory extraction and tool-result summarization:
+
+- No override or a same-provider override retains the **actual runtime service's
+  selected model**, resolving its registered `service_name`, implementation and
+  authentication family. It does not consult an unrelated current-model pointer.
+- A different provider uses its registered default. If a provider catalog has no
+  explicit default, it uses the first registered model, matching the existing
+  service-manager convention. An empty catalog fails rather than copying an
+  incompatible primary model ID.
+- The existing `copilot_response` CLI alias selects only registered GitHub
+  Copilot Responses models, retaining the current compatible selection when
+  applicable. Qualified model overrides were not added to the provider-only CLI.
+- Unregistered runtime model IDs retain the recorded implementation family when
+  available. Standalone and cached factory creation now record that family on the
+  client; diagnostics do not infer the actual family from arbitrary class checks.
+- Auxiliary clients deliberately request no interactive reasoning default
+  (`none`, or the provider adapter's disabled budget). They do not apply the
+  selected chat model's potentially expensive default reasoning setting, and do
+  not mutate the primary client. Provider `process_message()` reasoning behavior
+  remains unchanged.
+- Chroma memory and tool-summary constructors no longer silently overwrite the
+  chosen model with hard-coded cheap models. SQLite already retained its injected
+  client. Existing code-analysis model-selection policy is outside this routing
+  fix and remains unchanged; `/stats` reports its instantiated client as-is.
+
+This routing correction is separate from the reported Codex extraction incident.
+Neither the earlier model-selection speculation nor the newly found constructor
+rewrites demonstrate what caused that historical fallback.
+
+The existing `/stats` handler now prepends stable role rows for primary/current
+chat, memory extraction and tool-result summary. It additionally reports a
+separate primary setup client when it differs from the current agent, and code
+analysis when instantiated. Each active row has provider, implementation family,
+concrete service class and qualified model ID. `same as primary` means **the same
+client object**, not just two separate clients using the same model.
+
+Role introspection and identity redaction are centralized in
+`ServiceManager.describe_service_roles()` and `describe_service()`; extraction
+diagnostics use that same identity helper. No introspection creates clients,
+initializes the registry, reads credentials, inspects configuration dictionaries,
+or traverses arbitrary service graphs. Recorded factory families are preferred;
+registered family metadata and concrete class remain available otherwise. Unknown
+or unsafe identity values are explicitly `unknown`. To avoid treating relative
+file paths as model IDs, hierarchical IDs containing `/` are shown only when
+registered. Ordinary unregistered single-token model IDs remain visible.
+
+Examples of identity-only output (the classes are illustrative):
+
+```text
+Primary/current chat: provider=openai_codex | service=openai_codex (OpenAICodexService) | model=openai_codex/gpt-6.1-sol
+Memory extraction: provider=openai_codex | service=openai_codex (OpenAICodexService) | model=openai_codex/gpt-6.1-sol
+Tool-result summary: disabled
+```
+
+Disabled memory and explicitly disabled summaries show `disabled`. Missing or
+failed-to-initialize clients show `not configured`; a memory wrapper without an
+extractor is not mislabeled as disabled memory. External/remote/SDK-backed agents
+without a local chat LLM show no configured **local** chat service, not the
+startup model masquerading as the current agent. Existing per-agent token/cost,
+context occupancy and current-conversation totals remain unchanged. These are
+instantiated-client identities, not a claim that all auxiliary clients follow
+later `/model` switches automatically, or that token accounting now includes
+auxiliary usage that was previously outside the conversation ledger.
+
+Console and GUI still use the same command processor and event output. The
+existing GUI whitelist now forwards `/stats` to that processor, and both existing
+completers/shared help advertise it. No competing command implementation or new
+UI surface was created. `GUIDE_WORKFLOWS.md` and `--memory-llm` help explain the
+updated behavior. Keys, OAuth tokens, account IDs, URLs, paths, resource locators,
+prompts and file contents are never part of the identity descriptor.
+
+### Continuation entity safety
+
+The structured entity schema additionally accepts `update_existing` (strict bool,
+default false). Only an explicit update proposal with a unique normalized name in
+**both** previous memory and current entities can combine those entity fields;
+prior spelling, fields and explicit links are retained, and distinct description
+text is appended rather than overwritten. A matching name alone does **not**
+authorize identity merging. Duplicate names in either input remain ambiguous,
+including identical duplicates. The flag is application-side proposal metadata,
+never a new XML tag or database field. Unknown/ambiguous targets are not combined.
+If a collision would invalidate an old explicit link, the existing authority
+invariant uses deterministic fallback, preserves the old entity/link and retains
+bounded current-turn evidence in notes, with the new resource left unlinked.
+
+This prevents repeated known-entity updates from destroying old links while
+avoiding automatic inference that two same-name people/resources are identical.
+Models must still ground their semantic assertions in evidence; local schema
+validation cannot prove real-world identity or factual truth.
+
+## Final integration validation
+
+All new tests use fictional data/fake services and make **zero remote LLM calls**.
+No deprecated `tests/` suite, real CV, private memory or sealed evaluation corpus
+was used. No dependency/lock file, benchmark provenance pin or historical freeze
+hash was changed.
+
+**152 focused tests passed**, including all 51 resource-provenance cases, privacy
+logging, JSON/schema contracts, explicit update/ambiguity protection, mixed
+provider/service-family routing, setup integration, `/stats` snapshots and GUI
+forwarding. The routing matrix covers Codex, OpenAI chat/Responses, OpenCode
+chat/Anthropic, Copilot chat/Responses, CommandCode chat/Anthropic, Claude and
+Google. OpenAI chat is covered with fake registered metadata because the current
+built-in OpenAI catalog lists Responses-family models; its chat factory remains
+supported. Tests also cover raw-family retention, defaults/absent defaults, the
+legacy Copilot alias, disabled roles, distinct tool summaries, stale startup vs
+current agent, safe hierarchical model IDs and duplicate-free completion/help.
+
+Commands were run from the isolated worktree using the existing environment:
+
+```bash
+PYTHON=../AgentCrew/.venv/bin/python
+uv run --no-project --no-config --offline --python "$PYTHON" python -m pytest -q \
+  verification/memory/test_extraction_reliability.py \
+  verification/memory/test_structured_extraction.py \
+  verification/memory/test_resource_provenance.py \
+  verification/memory/test_auxiliary_services_stats.py
+```
+
+The following standalone scripts passed (each invoked with that same
+`uv run --no-project --no-config --offline --python "$PYTHON" python` prefix):
+
+- `verification/memory/verify_tool_evidence.py`
+- `verification/memory/verify_exact_lookup.py` — 151 candidate/result comparisons
+- `verification/memory/verify_fts_payload.py` — 140 candidate/coordinator,
+  120 entity and 298 prior-coordinator comparisons; concurrent snapshot checks;
+  frozen reference commits/hashes unchanged; zero remote calls
+- `verification/memory/verify_grounded_reconstruction.py`
+- `verification/memory/verify_startup_migration.py`
+- `verification/memory/verify_migration_operator.py` — 25 fictional records
+  verified, 32 review drafts, 5 recovered entries skipped and 20 inserted
+- `verification/memory/verify_phase2.py`
+- `verification/memory/verify_phase5.py` (also rerun after entity continuation changes)
+- `verification/memory/verify_phase6.py`
+- `verification/memory/verify_semantic_candidates.py`
+
+The migration operator initially needed its ignored `verification/memory/local/`
+output directory created in the fresh worktree; its rerun passed. This is test
+scratch data, not an application migration or a private source.
+
+Historical gates remain failures, confirmed against the tracked-file base
+snapshot at `31138f71f5adfc9dee8fd446fa7fb75309d007cc` as well:
+
+| Script | Unchanged failure |
+| --- | --- |
+| `verify_phase1.py` | `Prototype import loaded optional/runtime services` |
+| `verify_phase4.py` | `Retrieval-critical file changed: scripts/benchmark_memory_retrieval.py` |
+| `verify_lossless_consolidation.py` | `Slice 4 introduced freeze drift` |
+
+The historical Phase 4 **10 behavioral checks** and consolidation **12 behavioral
+checks** passed separately without changing/exempting their gates:
+
+```bash
+uv run --no-project --no-config --offline --python "$PYTHON" python - <<'PY'
+from verification.memory import verify_phase4, verify_lossless_consolidation
+for module, excluded in (
+    (verify_phase4, "checks_policy_freeze"),
+    (verify_lossless_consolidation, "checks_freeze_and_schema_contract"),
+):
+    for name, check in vars(module).items():
+        if name.startswith("checks_") and name != excluded:
+            check()
+            print("PASS", name)
+PY
+```
+
+Ruff lint (`uvx ruff check --statistics`) and formatting checks
+(`uvx ruff format --check`) pass over all **18 changed Python files**. Syntax
+checks pass for all 18, and all **13 changed production modules** import without
+instantiating services. `git diff --check` passes. Relevant Pyright analysis on
+those 13 modules reports **39 errors on both base and feature, zero new
+diagnostics** (comparison includes path, message, severity and rule, ignoring
+shifted line numbers). The configured worktree-local `.venv` is absent; all
+execution and analysis used the original checkout's explicit Python interpreter.
+Production changes were reread directly, including completion/help entries to
+ensure no duplicate `/stats` entry was introduced.
+
+### Performance and residual risks
+
+- Normal extraction still makes exactly one request; only failures use corrective
+  retries. No additional resource-capture request, queue, thread, per-access DB
+  write, file hash, recursive scan, polling or content-copy pipeline was added.
+  Existing memory/tool-summary workers and queue behavior are unchanged.
+- Local schema generation/validation, escaping and deterministic prior-field
+  retention add CPU work; accumulated session XML may grow. Production-scale
+  extraction latency, large-corpus resource search and real-provider success
+  rates were not measured. Retrieval/SQLite projection code is unchanged, and
+  existing fictional equivalence harnesses pass; their timings are not a new
+  production performance guarantee.
+- Retaining the actual selected model instead of silent cheap substitutions can
+  increase auxiliary cost/latency. Reasoning defaults are deliberately disabled,
+  but the existing 5-second tool-summary request timeout can still expire for
+  slow models. Its fail-open queue/cache behavior and timeout were not changed.
+- Confirmed token exhaustion is distinguished when the Responses guard exposes
+  `max_output_tokens`. Other text-only provider interfaces do not consistently
+  expose finish reasons yet; incomplete JSON alone is not labeled truncation.
+- JSON-only prompting plus local validation is portable, not native constrained
+  generation. Incorrect/malformed/oversized responses can still exhaust retries
+  and fall back. The historical incident needs new diagnostic observations to
+  establish its actual cause; no live provider/CV test was performed.
+- Consolidation retains its existing XML contract and invariants, independently
+  verified by the behavioral harness; this slice changes normal turn extraction.
+- Exact resource URIs can still contain credential-bearing query parameters in
+  canonical memory/LLM input. They are never included in the new diagnostics or
+  `/stats`; URI redaction/retention policy and retrospective cleanup are separate.
+- Existing provenance capture-surface/session-store limitations remain unchanged.

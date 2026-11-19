@@ -4,7 +4,7 @@ import asyncio
 import os
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -39,29 +39,83 @@ class ServiceManager:
         initializes the singleton, reads configuration, or creates a client.
         """
 
-        def safe_identity(value: object) -> str:
+        def safe_identity(value: object, *, allow_slash: bool = False) -> str:
             if (
                 isinstance(value, str)
                 and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,199}", value)
                 and ".." not in value
+                and (allow_slash or "/" not in value)
             ):
                 return value
             return "unknown"
 
         provider = safe_identity(getattr(service, "provider_name", None))
-        model_id = safe_identity(getattr(service, "model", None))
+        raw_model = getattr(service, "model", None)
+        candidate = safe_identity(raw_model, allow_slash=True)
         service_class = safe_identity(type(service).__name__) if service else "none"
         registry = ModelRegistry._instance
-        model = registry.get_model(f"{provider}/{model_id}") if registry else None
+        model = registry.get_model(f"{provider}/{candidate}") if registry else None
+        model_id = candidate if model else safe_identity(raw_model)
         return {
             "provider": provider,
             "model": model_id,
             "qualified_model": f"{provider}/{model_id}",
-            "service_family": safe_identity(model.resolved_service_name())
-            if model
-            else "unknown",
+            "service_family": safe_identity(
+                getattr(service, "_service_family", None)
+                or (model.resolved_service_name() if model else None)
+            ),
             "service_class": service_class,
         }
+
+    @classmethod
+    def describe_service_roles(
+        cls,
+        services: dict[str, Any],
+        *,
+        primary: BaseLLMService | None,
+        memory: Any = None,
+    ) -> list[dict[str, str]]:
+        """Describe active roles without creating services or traversing configuration."""
+        current = primary
+        memory = memory if memory is not None else services.get("memory")
+        statuses = services.get("llm_service_status", {})
+        roles = [
+            ("Primary/current chat", current, "not configured"),
+            (
+                "Memory extraction",
+                getattr(memory, "llm_service", None),
+                "disabled"
+                if memory is None and "memory" in services
+                else "not configured",
+            ),
+            (
+                "Tool-result summary",
+                getattr(services.get("tool_result_summary"), "llm_service", None),
+                "not configured",
+            ),
+        ]
+        startup = services.get("llm")
+        if startup is not None and startup is not current:
+            roles.append(("Primary setup", startup, "not configured"))
+        analysis = getattr(services.get("code_analysis"), "llm_service", None)
+        if analysis is not None:
+            roles.append(("Code analysis", analysis, "not configured"))
+        rows = []
+        for role, service, absent in roles:
+            status = "active" if service is not None else absent
+            configured = statuses.get(role) if isinstance(statuses, dict) else None
+            if service is None and configured in ("disabled", "not configured"):
+                status = configured
+            if (
+                service is not None
+                and service is current
+                and role != "Primary/current chat"
+            ):
+                status = "same as primary"
+            rows.append(
+                {"role": role, "status": status, **cls.describe_service(service)}
+            )
+        return rows
 
     def __init__(self):
         """Initialize the service manager with empty service instances."""
@@ -293,6 +347,12 @@ class ServiceManager:
             )
 
     def initialize_standalone_service(self, service_name: str) -> BaseLLMService:
+        """Create an uncached client and retain its actual implementation family."""
+        service = self._initialize_standalone_service(service_name)
+        service._service_family = service_name
+        return service
+
+    def _initialize_standalone_service(self, service_name: str) -> BaseLLMService:
         """
         Initializes and returns a new service instance for the specified service name.
         This does not cache the service instance in self.services.
@@ -336,6 +396,57 @@ class ServiceManager:
     def initialize_standalone_service_for_model(self, model: Model) -> BaseLLMService:
         """Initialize a standalone service for the given model."""
         return self.initialize_standalone_service(model.resolved_service_name())
+
+    def initialize_auxiliary_service(
+        self, primary: BaseLLMService, provider_override: str | None = None
+    ) -> BaseLLMService:
+        """Create a model-aware auxiliary client without interactive reasoning defaults.
+
+        Same-provider/no overrides retain the actual runtime selection. A different
+        provider uses its registered default, never the primary provider's model ID.
+        Raw runtime models retain recorded service-family routing when available.
+        """
+        from AgentCrew.modules.llm.reasoning_selection import apply_reasoning_to_service
+
+        registry = ModelRegistry.get_instance()
+        model = registry.get_model(f"{primary.provider_name}/{primary.model}")
+        if provider_override == "copilot_response":
+            if (
+                model is None
+                or model.provider != "github_copilot"
+                or model.resolved_service_name() != "copilot_response"
+            ):
+                models = [
+                    item
+                    for item in registry.get_models_by_provider("github_copilot")
+                    if item.resolved_service_name() == "copilot_response"
+                ]
+                if not models:
+                    raise ValueError(
+                        "Auxiliary service family has no registered models"
+                    )
+                model = next((item for item in models if item.default), models[0])
+        elif provider_override and provider_override != primary.provider_name:
+            models = registry.get_models_by_provider(provider_override)
+            if not models:
+                raise ValueError("Auxiliary provider has no registered models")
+            model = next((item for item in models if item.default), models[0])
+        if model is not None:
+            service = self.initialize_standalone_service_for_model(model)
+            service.provider_name = model.provider
+            service.model = model.id
+        else:
+            service = self.initialize_standalone_service(
+                getattr(primary, "_service_family", None) or primary.provider_name
+            )
+            service.provider_name = primary.provider_name
+            service.model = primary.model
+        try:
+            apply_reasoning_to_service(service, "none", explicit=False)
+        except Exception:
+            self.close_service(service)
+            raise
+        return service
 
     def get_service(
         self, service_name: str, provider_name: str | None = None
@@ -396,6 +507,7 @@ class ServiceManager:
                 )
 
         if service_instance:
+            service_instance._service_family = service_name
             self.services[service_name] = service_instance
             return service_instance
         else:

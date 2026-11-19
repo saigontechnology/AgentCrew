@@ -86,7 +86,7 @@ def common_options(func):
             ]
         ),
         default=None,
-        help="LLM Model use for analyzing and processing memory",
+        help="Auxiliary provider for memory and tool summaries. Same provider keeps the runtime model; a different provider uses its registered default.",
     )
     @click.option(
         "--memory-path", default=None, help="Path to the memory database location"
@@ -485,16 +485,9 @@ class ApplicationSetup:
             )
             from AgentCrew.modules.memory.engine_selection import resolve_memory_engine
 
-            memory_provider = memory_llm or provider
-            memory_llm_svc = llm_manager.initialize_standalone_service(memory_provider)
-
-            if runtime.model_id:
-                model = registry.get_model(f"{provider}/{runtime.model_id}")
-                if model:
-                    memory_llm_svc.model = model.id
-                    logger.info(f"Set default model '{model.id}' for memory service")
-            else:
-                memory_llm_svc.model = llm_service.model
+            memory_llm_svc = llm_manager.initialize_auxiliary_service(
+                llm_service, memory_llm
+            )
 
             memory_engine = resolve_memory_engine(global_settings)
             if memory_engine == "sqlite":
@@ -538,16 +531,9 @@ class ApplicationSetup:
             )
 
             try:
-                summary_provider = memory_llm or provider
-                summary_llm = llm_manager.initialize_standalone_service(
-                    summary_provider
+                summary_llm = llm_manager.initialize_auxiliary_service(
+                    llm_service, memory_llm
                 )
-                if runtime.model_id:
-                    model = registry.get_model(f"{provider}/{runtime.model_id}")
-                    if model:
-                        summary_llm.model = model.id
-                else:
-                    summary_llm.model = llm_service.model
                 tool_result_summary_service = ToolResultSummaryService(
                     summary_llm, context_service
                 )
@@ -687,6 +673,16 @@ class ApplicationSetup:
             "llm": llm_service,
             "memory": memory_service,
             "tool_result_summary": tool_result_summary_service,
+            "llm_service_status": {
+                "Memory extraction": "active" if need_memory else "disabled",
+                "Tool-result summary": (
+                    "disabled"
+                    if not (context_shrink_enabled and tool_result_summary_enabled)
+                    else "active"
+                    if tool_result_summary_service is not None
+                    else "not configured"
+                ),
+            },
             "clipboard": clipboard_service,
             "code_analysis": code_analysis_service,
             "web_search": search_service,

@@ -53,6 +53,7 @@ class CommandHandler:
                 "/model",
                 "/think",
                 "/usage",
+                "/stats",
                 "/toggle_transfer",
                 "/agent_mode",
                 "/file",

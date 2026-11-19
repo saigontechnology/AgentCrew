@@ -82,6 +82,8 @@ class AsyncIterator:
 class BaseLLMService(ABC):
     """Base interface for LLM services."""
 
+    _service_family: str | None = None
+
     @property
     def provider_name(self) -> str:
         """Get the provider name for this service."""

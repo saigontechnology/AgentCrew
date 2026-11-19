@@ -63,6 +63,7 @@ Every command available inside the chat interface, with when and why to use it.
 | `/model [model_id]`      | The current model is too slow, too expensive, or not capable enough | With no arguments, lists all available models grouped by provider. With an ID, switches the AI model mid-session without restarting.                                                                                                                                         |
 | `/think <budget\|level>` | The task requires multi-step reasoning, math, or deep analysis      | Enables extended reasoning mode. The value depends on your provider: **Anthropic** uses token budgets (`1024`, `4096`, `0` to disable); **OpenAI / Gemini** use levels like `low`, `medium`, `high`, `none` to disable. Shows current setting when called without arguments. |
 | `/usage`                 | You want to check API usage limits or remaining quota               | Shows current provider usage limits, daily counts, and account credit balance when supported.                                                                                                                                                                            |
+| `/stats` | You want to see which instantiated service uses which LLM/model and review conversation costs | Shows current chat, memory extraction, tool-result summary and other instantiated local LLM roles, followed by existing per-agent and conversation token/cost statistics. Available through the shared console/GUI handler. |
 
 ### File operations
 

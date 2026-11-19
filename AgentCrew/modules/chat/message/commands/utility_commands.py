@@ -360,17 +360,48 @@ class UtilityCommands:
         lines.append(f"  Cost: {cls._format_cost(totals.cost)}")
         return "\n".join(lines)
 
-    def handle_stats(self, user_input: str) -> CommandResult:
-        """Handle the /stats command: per-agent token usage and cost.
+    @staticmethod
+    def _format_llm_services(services: dict, primary=None, memory=None) -> str:
+        from AgentCrew.modules.llm.service_manager import ServiceManager
 
-        Reports cumulative per-agent token/cost usage for the active
+        lines = ["LLM-backed service roles (instantiated local services):"]
+        for row in ServiceManager.describe_service_roles(
+            services, primary=primary, memory=memory
+        ):
+            if row["status"] in ("disabled", "not configured"):
+                lines.append(f"  {row['role']}: {row['status']}")
+                continue
+            identity = (
+                f"provider={row['provider']} | service={row['service_family']} "
+                f"({row['service_class']}) | model={row['qualified_model']}"
+            )
+            suffix = " | same as primary" if row["status"] == "same as primary" else ""
+            lines.append(f"  {row['role']}: {identity}{suffix}")
+        return "\n".join(lines)
+
+    def handle_stats(self, user_input: str) -> CommandResult:
+        """Handle /stats: instantiated LLM identities, token usage and cost.
+
+        Reports service roles and cumulative per-agent token/cost usage for the active
         conversation, per-local-agent context-window occupancy/remaining, and
         the aggregate current-conversation total.
         """
         agent_manager = self.message_handler.agent_manager
         agents = getattr(agent_manager, "agents", None) or {}
         current_agent_name = getattr(self.message_handler.agent, "name", "")
-        message = self._format_stats_message(agents, current_agent_name)
+        services = (
+            getattr(self.message_handler.agent, "services", None)
+            or getattr(agent_manager, "cursor_services", None)
+            or {}
+        )
+        llm_status = self._format_llm_services(
+            services,
+            primary=getattr(self.message_handler.agent, "llm", None),
+            memory=getattr(self.message_handler, "memory_service", None),
+        )
+        message = (
+            llm_status + "\n\n" + self._format_stats_message(agents, current_agent_name)
+        )
         self.message_handler.bus.emit_sync(AppEvents.SYSTEM_MESSAGE, message=message)
         return CommandResult(handled=True, clear_flag=True)
 

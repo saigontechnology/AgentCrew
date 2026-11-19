@@ -364,7 +364,7 @@ class ChatCompleter(Completer):
             ("/usage", "Show current provider usage limits"),
             (
                 "/stats",
-                "Show per-agent token usage and cost for the current conversation (usage: /stats)",
+                "Show LLM service models and conversation token/cost statistics (usage: /stats)",
             ),
             (
                 "/consolidate",

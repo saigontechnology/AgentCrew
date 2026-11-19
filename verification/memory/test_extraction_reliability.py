@@ -212,6 +212,7 @@ def test_identity_uses_registry_without_initialization(monkeypatch):
         SECRET,
         "https://user:secret@host/model",
         "/home/private/model",
+        "docs/private-file",
         "../private",
         "model\nPRIVATE",
         "x" * 201,

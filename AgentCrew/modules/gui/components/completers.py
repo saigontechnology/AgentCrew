@@ -179,6 +179,7 @@ class GuiCommandCompleter:
             "/debug",
             "/think",
             "/usage",
+            "/stats",
             "/consolidate",
             "/unconsolidate",
             "/jump",

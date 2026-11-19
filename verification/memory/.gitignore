@@ -30,4 +30,5 @@
 !test_resource_provenance.py
 !test_extraction_reliability.py
 !test_structured_extraction.py
+!test_auxiliary_services_stats.py
 !benchmark_resource_provenance.py
