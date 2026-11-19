@@ -265,7 +265,7 @@ Examples of identity-only output (the classes are illustrative):
 
 ```text
 Primary/current chat: provider=openai_codex | service=openai_codex (OpenAICodexService) | model=openai_codex/gpt-6.1-sol
-Memory extraction: provider=openai_codex | service=openai_codex (OpenAICodexService) | model=openai_codex/gpt-6.1-sol
+Memory extraction: provider=openai_codex | service=openai_codex (OpenAICodexService) | model=openai_codex/gpt-5.4-mini
 Tool-result summary: disabled
 ```
 
@@ -282,8 +282,8 @@ auxiliary usage that was previously outside the conversation ledger.
 Console and GUI still use the same command processor and event output. The
 existing GUI whitelist now forwards `/stats` to that processor, and both existing
 completers/shared help advertise it. No competing command implementation or new
-UI surface was created. `GUIDE_WORKFLOWS.md` and `--memory-llm` help explain the
-updated behavior. Keys, OAuth tokens, account IDs, URLs, paths, resource locators,
+UI surface was created. This guide and `--memory-llm` help explain lightweight
+model selection. Keys, OAuth tokens, account IDs, URLs, paths, resource locators,
 prompts and file contents are never part of the identity descriptor.
 
 ### Continuation entity safety
@@ -306,6 +306,12 @@ Models must still ground their semantic assertions in evidence; local schema
 validation cannot prove real-world identity or factual truth.
 
 ## Final integration validation
+
+**Centralized lightweight-selection follow-up (2026-11-19):** the focused
+`test_auxiliary_model_selection.py` and `test_auxiliary_services_stats.py` checks
+under `verification/memory/` passed (**126 tests**). The evidence below records
+the earlier memory-reliability milestone, not validation totals or suite scope
+for the later lightweight-selection slice.
 
 All new tests use fictional data/fake services and make **zero remote LLM calls**.
 No deprecated `tests/` suite, real CV, private memory or sealed evaluation corpus
