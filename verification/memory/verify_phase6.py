@@ -269,16 +269,42 @@ def checks_sqlite_chain_chromadb_free() -> None:
     sentinel = sys.modules.get("chromadb")
     sys.modules["chromadb"] = None
     try:
-        with tempfile.TemporaryDirectory(prefix="phase6-free-") as tmp:
-            base = Path(tmp)
-            db = base / "memory_db" / "agent_memory.sqlite3"
-            work = base / "memory_db" / "migration-work"
-            result = engine_selection.ensure_sqlite_store(db, base / "no-chroma", work)
-            require(result == db, "Fresh start must return the configured db path")
-            require(
-                not db.exists(),
-                "Fresh start must not create the db before service init",
-            )
+        for interactive in (False, True):
+            with tempfile.TemporaryDirectory(prefix="phase6-free-") as tmp:
+                root = Path(tmp) / "new-home" / ".AgentCrew" / "memorydb"
+                db = root / "agent_memory.sqlite3"
+                work = root / "migration-work"
+                require(not root.parent.exists(), "Nested memory root must be absent")
+                result = engine_selection.ensure_sqlite_store(
+                    db, root, work, interactive=interactive
+                )
+                require(result == db, "Fresh start must return the configured db path")
+                require(root.is_dir(), "Fresh start must prepare the memory directory")
+                require(
+                    not db.exists(),
+                    "Fresh start must not create the db before service init",
+                )
+                require(
+                    not any(root.iterdir()),
+                    "Fresh start must create only the directory, not store artifacts",
+                )
+                if os.name == "posix":
+                    require(
+                        root.stat().st_mode & 0o777 == 0o700,
+                        "New memory directory must have private permissions",
+                    )
+                service = SQLiteMemoryService(db_path=result, llm_service=None)
+                try:
+                    require(db.is_file(), "Service init must create the SQLite db")
+                    SQLiteMemoryRepository(
+                        db, read_only=True
+                    ).check_read_only_integrity()
+                finally:
+                    service.shutdown()
+                require(
+                    not service._worker.get_queue_status()["worker_alive"],
+                    "Fresh-start service must shut down its worker cleanly",
+                )
         try:
             engine_selection.require_chromadb()
             raise AssertionError("Blocked chromadb must fail the requirement")
@@ -297,6 +323,80 @@ def checks_sqlite_chain_chromadb_free() -> None:
         else:
             sys.modules["chromadb"] = sentinel
     print("PASS checks_sqlite_chain_chromadb_free")
+
+
+def checks_memory_directory_permissions_preserved() -> None:
+    with tempfile.TemporaryDirectory(prefix="phase6-existing-root-") as tmp:
+        root = Path(tmp) / "memorydb"
+        root.mkdir(mode=0o750)
+        before = root.stat().st_mode
+        db = root / "agent_memory.sqlite3"
+        engine_selection.ensure_sqlite_store(db, root, root / "migration-work")
+        require(root.stat().st_mode == before, "Existing directory mode was changed")
+        require(not db.exists(), "Directory preparation must not create the database")
+    print("PASS checks_memory_directory_permissions_preserved")
+
+
+def checks_memory_directory_preparation_failures() -> None:
+    for failure in (
+        "parent_file",
+        "ancestor_file",
+        "permission_denied",
+        "path_permission_denied",
+    ):
+        with tempfile.TemporaryDirectory(prefix="phase6-invalid-root-") as tmp:
+            blocker = Path(tmp) / "blocked"
+            root = blocker / "memorydb" if failure == "ancestor_file" else blocker
+            db = root / "agent_memory.sqlite3"
+            if failure in {"parent_file", "ancestor_file"}:
+                blocker.write_text("fictional file, not a directory", encoding="utf-8")
+            denied = PermissionError("fictional permission denied")
+            with contextlib.ExitStack() as stack:
+                repository_init = stack.enter_context(
+                    patch.object(
+                        SQLiteMemoryRepository,
+                        "__init__",
+                        side_effect=AssertionError(
+                            "SQLite initialization was attempted"
+                        ),
+                    )
+                )
+                if failure in {"permission_denied", "path_permission_denied"}:
+                    method = "mkdir" if failure == "permission_denied" else "is_symlink"
+                    stack.enter_context(patch.object(Path, method, side_effect=denied))
+                try:
+                    result = engine_selection.ensure_sqlite_store(
+                        db, root, root / "migration-work"
+                    )
+                    SQLiteMemoryService(db_path=result, llm_service=None)
+                    raise AssertionError("Unusable memory directory must abort startup")
+                except engine_selection.MemoryEngineError as error:
+                    require(
+                        str(root) in str(error), "Error must name the memory directory"
+                    )
+                    require(
+                        "MEMORYDB_PATH" in str(error)
+                        and "permission" in str(error).lower(),
+                        "Error must explain how to fix the memory directory configuration",
+                    )
+                    require(
+                        isinstance(error.__cause__, OSError),
+                        "Directory preparation must preserve the original OS error",
+                    )
+                    if failure in {"permission_denied", "path_permission_denied"}:
+                        require(
+                            error.__cause__ is denied, "Permission cause was replaced"
+                        )
+                repository_init.assert_not_called()
+            if failure in {"parent_file", "ancestor_file"}:
+                require(
+                    blocker.read_text(encoding="utf-8")
+                    == "fictional file, not a directory",
+                    "Directory preparation modified the blocking file",
+                )
+            else:
+                require(not root.exists(), "Failed preparation created the memory root")
+    print("PASS checks_memory_directory_preparation_failures")
 
 
 def checks_verified_migrator() -> None:
@@ -654,6 +754,8 @@ def main() -> int:
     checks_memory_paths_fallback()
     checks_selection_wiring()
     checks_sqlite_chain_chromadb_free()
+    checks_memory_directory_permissions_preserved()
+    checks_memory_directory_preparation_failures()
     checks_verified_migrator()
     checks_fail_fast_without_chromadb()
     checks_migration_failure_abort()

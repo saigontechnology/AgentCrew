@@ -438,8 +438,17 @@ def ensure_startup_sqlite_store(
     find_executable: Callable | None = None,
     backup_root: Path | None = None,
 ) -> Path:
-    plan = MigrationPlan(_path(source), _path(destination), _path(work))
-    backups = _path(backup_root or Path.home() / ".AgentCrew")
+    try:
+        plan = MigrationPlan(_path(source), _path(destination), _path(work))
+        backups = _path(backup_root or Path.home() / ".AgentCrew")
+        plan.destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        directory = Path(destination).expanduser().absolute().parent
+        raise MemoryEngineError(
+            f"Unable to prepare memory directory '{directory}'. "
+            "Check that MEMORYDB_PATH points to a directory and that you have "
+            "permission to create and access it."
+        ) from exc
     marker = plan.source / SKIP_NAME
     if marker.exists() or marker.is_symlink():
         _skip(plan)
