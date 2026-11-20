@@ -8,6 +8,7 @@ from typing import Any
 from loguru import logger
 
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.agents.tool_loop_guard import ToolLoopRound
 from AgentCrew.modules.config.global_config import GlobalConfig
 from AgentCrew.modules.events import AppEvents, EventBus
 from AgentCrew.modules.events.hooks import CancelOperation
@@ -397,10 +398,28 @@ class ToolManager:
             agent_name=self.message_handler.agent.name,
         )
 
-    async def execute_tools_batch(self, tool_uses: list[dict[str, Any]]):
+    async def execute_tools_batch(
+        self,
+        tool_uses: list[dict[str, Any]],
+        tool_round: ToolLoopRound | None = None,
+    ):
         parallel_buffer = []
 
-        for tool_use in tool_uses:
+        for index, tool_use in enumerate(tool_uses):
+            error = tool_round.errors[index] if tool_round else None
+            if error:
+                if parallel_buffer:
+                    await self._execute_parallel_batch(parallel_buffer)
+                    parallel_buffer = []
+                self._record_tool_result(
+                    ToolResult(
+                        tool_use=tool_use,
+                        result=error,
+                        is_error=True,
+                        was_executed=False,
+                    )
+                )
+                continue
             if is_sequential_tool(tool_use["name"]):
                 if parallel_buffer:
                     await self._execute_parallel_batch(parallel_buffer)
@@ -411,6 +430,8 @@ class ToolManager:
 
         if parallel_buffer:
             await self._execute_parallel_batch(parallel_buffer)
+        if tool_round:
+            tool_round.raise_if_terminal()
 
     async def _execute_parallel_batch(self, tool_uses: list[dict[str, Any]]):
         approved = []

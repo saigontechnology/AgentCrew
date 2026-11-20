@@ -26,6 +26,7 @@ from AgentCrew.modules.acp.tools.context import (
     _current_acp_session,
 )
 from AgentCrew.modules.acp.turn_executor import TurnExecutor
+from AgentCrew.modules.agents.tool_loop_guard import ToolLoopError
 from AgentCrew.modules.llm.token_usage import TokenUsage
 
 
@@ -687,7 +688,10 @@ class AgentCrewAcpAgent(Agent):
                         stop_reason="cancelled",
                     )
                 except Exception as e:
-                    logger.exception("ACP prompt failed")
+                    if isinstance(e, ToolLoopError):
+                        logger.error("ACP prompt failed: {}", e)
+                    else:
+                        logger.exception("ACP prompt failed")
                     await self._client_comm.send_agent_message(
                         session_id, f"AgentCrew ACP error: {e}"
                     )

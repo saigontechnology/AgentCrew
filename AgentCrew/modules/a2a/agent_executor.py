@@ -29,8 +29,14 @@ from loguru import logger
 
 from AgentCrew.modules.agents import LocalAgent
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.agents.tool_loop_guard import (
+    ToolLoopError,
+    ToolLoopGuard,
+    ToolLoopRound,
+)
 from AgentCrew.modules.llm.token_usage import TokenUsage
 
+from .adapters import convert_agent_response_to_a2a_message
 from .exceptions import TaskCanceledException
 from .session_store import AgentCrewSessionStore, _owner_key
 
@@ -157,7 +163,13 @@ class AgentCrewA2AExecutor(AgentExecutor):
             logger.info(f"Task {task_id} asyncio task cancelled externally")
             raise
         except Exception as e:
-            logger.exception(f"Task {task_id} failed: {e}")
+            if isinstance(e, ToolLoopError):
+                logger.error("Task {} failed: {}", task_id, e)
+                await self.session_store.clear_pending_tools(
+                    task_id, _owner_key(context.call_context), self._agent_namespace
+                )
+            else:
+                logger.exception(f"Task {task_id} failed: {e}")
             if not cancel_event.is_set():
                 await event_queue.enqueue_event(
                     TaskStatusUpdateEvent(
@@ -166,6 +178,11 @@ class AgentCrewA2AExecutor(AgentExecutor):
                         status=TaskStatus(
                             state=TaskState.TASK_STATE_FAILED,
                             timestamp=self._now_timestamp(),
+                            message=(
+                                convert_agent_response_to_a2a_message(str(e))
+                                if isinstance(e, ToolLoopError)
+                                else None
+                            ),
                         ),
                     )
                 )
@@ -291,7 +308,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
         context_id: str,
         history: list[dict[str, Any]],
         answer_state: AnswerArtifactState,
+        tool_loop_guard: ToolLoopGuard | None = None,
     ) -> tuple[str, TokenUsage] | None:
+        tool_loop_guard = tool_loop_guard or ToolLoopGuard()
         agent = self.agent
         artifacts: list[Any] = []
         token_usage = TokenUsage()
@@ -310,6 +329,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 token_usage,
                 retried_count,
                 answer_state,
+                tool_loop_guard,
             )
         except TaskCanceledException:
             logger.info(f"Task {task_id} canceled during processing")
@@ -317,7 +337,13 @@ class AgentCrewA2AExecutor(AgentExecutor):
             logger.info(f"Task {task_id} asyncio task cancelled externally")
             raise
         except Exception as e:
-            logger.exception(f"Task {task_id} failed: {e}")
+            if isinstance(e, ToolLoopError):
+                logger.error("Task {} failed: {}", task_id, e)
+                await self.session_store.clear_pending_tools(
+                    task_id, _owner_key(context.call_context), self._agent_namespace
+                )
+            else:
+                logger.exception(f"Task {task_id} failed: {e}")
             if not cancel_event.is_set():
                 await event_queue.enqueue_event(
                     TaskStatusUpdateEvent(
@@ -326,6 +352,11 @@ class AgentCrewA2AExecutor(AgentExecutor):
                         status=TaskStatus(
                             state=TaskState.TASK_STATE_FAILED,
                             timestamp=self._now_timestamp(),
+                            message=(
+                                convert_agent_response_to_a2a_message(str(e))
+                                if isinstance(e, ToolLoopError)
+                                else None
+                            ),
                         ),
                     )
                 )
@@ -342,7 +373,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
         token_usage: TokenUsage,
         retried_count: list[int],
         answer_state: AnswerArtifactState,
+        tool_loop_guard: ToolLoopGuard | None = None,
     ) -> tuple[str, TokenUsage]:
+        tool_loop_guard = tool_loop_guard or ToolLoopGuard()
         cancel_event = await self._get_cancel_event(task_id)
         owner = _owner_key(context.call_context)
         current_response = ""
@@ -484,10 +517,15 @@ class AgentCrewA2AExecutor(AgentExecutor):
                         )
                     )
 
+                tool_round = tool_loop_guard.check_round(tool_uses)
                 assistant_message = stream.format_assistant_message(
                     current_response,
                     thinking=thinking_data,
-                    tool_uses=[t for t in tool_uses if t.get("name", "") != "transfer"],
+                    tool_uses=[
+                        t
+                        for index, t in enumerate(tool_uses)
+                        if t.get("name", "") != "transfer" or tool_round.errors[index]
+                    ],
                 )
                 if assistant_message:
                     await self.session_store.append_history(
@@ -503,6 +541,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                     history,
                     event_queue,
                     owner,
+                    tool_round,
                 )
 
                 if result == ToolCallResult.INPUT_REQUIRED:
@@ -526,6 +565,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                     token_usage,
                     retried_count,
                     next_answer_state,
+                    tool_loop_guard,
                 )
 
             # Finalize — mark last chunk
@@ -585,6 +625,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                         token_usage,
                         retried_count,
                         answer_state,
+                        tool_loop_guard,
                     )
             raise
         finally:
@@ -599,6 +640,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         history: list[dict[str, Any]],
         event_queue: EventQueue,
         owner: str,
+        tool_round: ToolLoopRound | None = None,
     ) -> str:
         """Execute tool calls - compatibility wrapper for tests."""
         tool_executor = self._get_tool_executor()
@@ -611,6 +653,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
             event_queue,
             owner,
             self._get_cancel_event,
+            tool_round,
         )
 
     async def _execute_single_tool(
@@ -734,6 +777,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
 
         answer_state = self._build_answer_state(context, task_id)
 
+        tool_loop_guard = ToolLoopGuard()
         if remaining_tools:
             result = await self._execute_tool_calls(
                 self.agent,
@@ -743,6 +787,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 history,
                 event_queue,
                 owner,
+                tool_loop_guard.check_round(remaining_tools),
             )
             if result == ToolCallResult.INPUT_REQUIRED:
                 return
@@ -754,6 +799,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
             context_id,
             history,
             answer_state,
+            tool_loop_guard,
         )
         if result and result[0].strip():
             await self.session_store.clear_pending_tools(

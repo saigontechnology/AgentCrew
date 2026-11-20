@@ -8,6 +8,7 @@ from loguru import logger
 
 from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.agents.local_agent import LocalAgent
+from AgentCrew.modules.agents.tool_loop_guard import ToolLoopGuard
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.llm.token_usage import TokenUsage
 from AgentCrew.modules.tools.parallel_executor import (
@@ -63,6 +64,7 @@ async def _run_agent_loop(
     progress_callback: ProgressCallback | None = None,
     first_response_timeout: float = FIRST_RESPONSE_TIMEOUT_SECONDS,
     empty_response_retries: int = 0,
+    tool_loop_guard: ToolLoopGuard | None = None,
 ) -> tuple[str, TokenUsage]:
     """Run a full agent loop, returning the final response and merged usage.
 
@@ -78,6 +80,7 @@ async def _run_agent_loop(
         first_response_timeout: Seconds to wait for the first item of each stream.
         empty_response_retries: Consecutive empty responses already retried.
     """
+    tool_loop_guard = tool_loop_guard or ToolLoopGuard()
     current_response = ""
     thinking_content = ""
     thinking_signature = ""
@@ -156,6 +159,7 @@ async def _run_agent_loop(
                 progress_callback=progress_callback,
                 first_response_timeout=first_response_timeout,
                 empty_response_retries=empty_response_retries + 1,
+                tool_loop_guard=tool_loop_guard,
             )
         return current_response, token_usage
 
@@ -164,13 +168,14 @@ async def _run_agent_loop(
     )
     append_assistant_message(assistant_message)
 
+    tool_round = tool_loop_guard.check_round(tool_uses)
     parallel_buffer: list[dict[str, Any]] = []
 
-    for tool_use in tool_uses:
+    for index, tool_use in enumerate(tool_uses):
         if progress_callback is not None:
             await progress_callback("tool", tool_use["name"])
         # --- Validate each tool exactly once before dispatch --------------
-        error_text = agent.validate_tool_use(tool_use)
+        error_text = tool_round.errors[index] or agent.validate_tool_use(tool_use)
         if error_text is not None:
             # Flush buffered valid tools first to preserve order
             if parallel_buffer:
@@ -273,6 +278,7 @@ async def _run_agent_loop(
             if msg:
                 history.append(msg)
 
+    tool_round.raise_if_terminal()
     return await _run_agent_loop(
         agent,
         history,
@@ -280,6 +286,7 @@ async def _run_agent_loop(
         request_usage_callback=request_usage_callback,
         progress_callback=progress_callback,
         first_response_timeout=first_response_timeout,
+        tool_loop_guard=tool_loop_guard,
     )
 
 
@@ -307,6 +314,7 @@ async def run_agent_loop(
             request_usage_callback=request_usage_callback,
             progress_callback=progress_callback,
             first_response_timeout=first_response_timeout,
+            tool_loop_guard=ToolLoopGuard(),
         )
     finally:
         reset_inference_scope(token)

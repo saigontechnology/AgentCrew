@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.agents.tool_loop_guard import ToolLoopRound
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.tools.parallel_executor import (
     ToolResult,
@@ -56,6 +57,7 @@ class ToolExecutor:
         event_queue: EventQueue,
         owner: str,
         cancel_event_getter: Any,
+        tool_round: ToolLoopRound | None = None,
     ) -> str:
         """Execute tool calls with sequential/parallel ordering."""
         cancel_event = await cancel_event_getter(task_id)
@@ -66,6 +68,22 @@ class ToolExecutor:
                 from AgentCrew.modules.a2a.exceptions import TaskCanceledException
 
                 raise TaskCanceledException(f"Task {task_id} was canceled")
+
+            error = tool_round.errors[i] if tool_round else None
+            if error:
+                if parallel_buffer:
+                    await self.flush_parallel(
+                        agent, task_id, context_id, parallel_buffer, history, owner
+                    )
+                    parallel_buffer = []
+                message = agent.format_message(
+                    MessageType.ToolResult,
+                    {"tool_use": tool_use, "tool_result": error, "is_error": True},
+                )
+                if message:
+                    await self._session_store.append_history(context_id, message, owner)
+                    history.append(message)
+                continue
 
             tool_name = tool_use.get("name")
             if not tool_name:
@@ -108,6 +126,8 @@ class ToolExecutor:
                 owner,
             )
 
+        if tool_round:
+            tool_round.raise_if_terminal()
         return ToolCallResult.CONTINUE
 
     async def execute_single_tool(

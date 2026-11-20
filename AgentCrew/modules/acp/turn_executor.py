@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from AgentCrew.modules.acp.session_state import AcpSessionState
 from AgentCrew.modules.acp.tools.permission_broker import AcpPermissionBroker
 from AgentCrew.modules.agents.base import MessageType
+from AgentCrew.modules.agents.tool_loop_guard import ToolLoopGuard, ToolLoopRound
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.tools.parallel_executor import (
     execute_tools_in_parallel,
@@ -28,7 +29,14 @@ class TurnExecutor:
         self._client_comm = client_comm
         self._tool_manager = tool_manager
 
-    async def run_turn(self, session_id: str, state: AcpSessionState, conn: Any):
+    async def run_turn(
+        self,
+        session_id: str,
+        state: AcpSessionState,
+        conn: Any,
+        tool_loop_guard: ToolLoopGuard | None = None,
+    ):
+        tool_loop_guard = tool_loop_guard or ToolLoopGuard()
         if state.permission_broker is None and conn is not None:
             state.permission_broker = AcpPermissionBroker(
                 conn=conn,
@@ -38,7 +46,9 @@ class TurnExecutor:
         await self._tool_manager.ensure_tools_for_session(session_id, state)
 
         retried_count = 0
-        await self._run_turn_with_retry(session_id, state, conn, agent, retried_count)
+        await self._run_turn_with_retry(
+            session_id, state, conn, agent, retried_count, tool_loop_guard
+        )
         await self._send_usage_update(session_id, state, agent)
 
     async def _run_turn_with_retry(
@@ -48,6 +58,7 @@ class TurnExecutor:
         conn: Any,
         agent: LocalAgent,
         retried_count: int,
+        tool_loop_guard: ToolLoopGuard,
     ):
         current_response = ""
         thinking_content = ""
@@ -103,9 +114,12 @@ class TurnExecutor:
                 state.token_usage = state.token_usage.merge(token_usage)
 
             if tool_uses:
-                await self.execute_tools(session_id, state, agent, tool_uses)
+                tool_round = tool_loop_guard.check_round(tool_uses)
+                await self.execute_tools(
+                    session_id, state, agent, tool_uses, tool_round
+                )
                 if not state.cancelled and state.pending_ask_tool is None:
-                    await self.run_turn(session_id, state, conn)
+                    await self.run_turn(session_id, state, conn, tool_loop_guard)
                 return
 
             user_message = agent.extract_last_user_message_for_memory(state.history)
@@ -137,7 +151,12 @@ class TurnExecutor:
                         agent.input_tokens_usage = max_token
                         retried_count += 1
                         return await self._run_turn_with_retry(
-                            session_id, state, conn, agent, retried_count
+                            session_id,
+                            state,
+                            conn,
+                            agent,
+                            retried_count,
+                            tool_loop_guard,
                         )
                 elif (
                     isinstance(e, APIError)
@@ -146,7 +165,7 @@ class TurnExecutor:
                 ):
                     retried_count += 1
                     return await self._run_turn_with_retry(
-                        session_id, state, conn, agent, retried_count
+                        session_id, state, conn, agent, retried_count, tool_loop_guard
                     )
 
             raise
@@ -183,6 +202,7 @@ class TurnExecutor:
         state: AcpSessionState,
         agent: LocalAgent,
         tool_uses: list[dict[str, Any]],
+        tool_round: ToolLoopRound | None = None,
     ):
         parallel_buffer: list[dict[str, Any]] = []
         started_tool_ids: set[str] = set()
@@ -214,12 +234,14 @@ class TurnExecutor:
                 )
             parallel_buffer = []
 
-        for tool_use in tool_uses:
+        for index, tool_use in enumerate(tool_uses):
             if state.cancelled:
                 return
 
             # --- Pre-permission/pre-start input validation ----------------
-            error_text = agent.validate_tool_use(tool_use)
+            error_text = (
+                tool_round.errors[index] if tool_round else None
+            ) or agent.validate_tool_use(tool_use)
             if error_text is not None:
                 # Flush any buffered valid tools first to preserve
                 # generated tool-call/result order.
@@ -295,6 +317,8 @@ class TurnExecutor:
                     parallel_buffer.append(tool_use)
 
         await flush_parallel()
+        if tool_round:
+            tool_round.raise_if_terminal()
 
     async def handle_ask_tool(
         self,

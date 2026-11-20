@@ -188,7 +188,7 @@ class TemporaryYoloApprovalTests(unittest.IsolatedAsyncioTestCase):
         handler.voice_service = None
         followup_modes = []
 
-        async def run_stream(session, token_usage, retry_count):
+        async def run_stream(session, token_usage, retry_count, tool_loop_guard=None):
             if session.session_id == 1:
                 manager._request_yolo_mode.set(True)
                 await MessageHandler.get_assistant_response(handler, token_usage)

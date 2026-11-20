@@ -13,6 +13,7 @@ from loguru import logger
 from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.agents.message_metadata import redact_message_for_debug
+from AgentCrew.modules.agents.tool_loop_guard import ToolLoopError, ToolLoopGuard
 from AgentCrew.modules.chat.history import ChatHistoryManager
 from AgentCrew.modules.chat.stream_session import StreamSession
 from AgentCrew.modules.events import AppEvents, EventBus, HookRegistry
@@ -392,6 +393,7 @@ class MessageHandler:
         session: StreamSession,
         prior_token_usage: TokenUsage | None = None,
         _empty_response_retry_count: int = 0,
+        tool_loop_guard: ToolLoopGuard | None = None,
     ) -> tuple[str | None, TokenUsage]:
         """
         Stream the assistant's response and return the response and token usage.
@@ -399,6 +401,7 @@ class MessageHandler:
         Returns:
             Tuple of (assistant_response, token_usage)
         """
+        tool_loop_guard = tool_loop_guard or ToolLoopGuard()
         assistant_response = ""
         tool_uses = []
         tool_uses_without_transfer = []
@@ -592,8 +595,11 @@ class MessageHandler:
             # Handle tool use if needed
             if not has_stop_interupted and tool_uses and len(tool_uses) > 0:
                 # Format assistant message with the response and tool uses
+                tool_round = tool_loop_guard.check_round(tool_uses)
                 tool_uses_without_transfer = [
-                    t for t in tool_uses if t["name"] != "transfer"
+                    t
+                    for index, t in enumerate(tool_uses)
+                    if t["name"] != "transfer" or tool_round.errors[index]
                 ]
                 # only append message if there are tool uses other than transfer
                 if len(tool_uses_without_transfer) > 0:
@@ -617,7 +623,7 @@ class MessageHandler:
                 self._yolo_mode_check()
 
                 # Process each tool use
-                await self.tool_manager.execute_tools_batch(tool_uses)
+                await self.tool_manager.execute_tools_batch(tool_uses, tool_round)
 
                 if token_usage:
                     await self.bus.emit(
@@ -626,7 +632,9 @@ class MessageHandler:
                         output_tokens=token_usage.output_tokens,
                         cached_tokens=token_usage.cached_tokens,
                     )
-                return await self._run_stream_response(session, token_usage)
+                return await self._run_stream_response(
+                    session, token_usage, tool_loop_guard=tool_loop_guard
+                )
 
             # prevent stream drop with bounded retry limit
             if assistant_response.strip() == "":
@@ -642,7 +650,10 @@ class MessageHandler:
                     f"Empty assistant response (attempt {_empty_response_retry_count + 1}), retrying..."
                 )
                 return await self._run_stream_response(
-                    session, token_usage, _empty_response_retry_count + 1
+                    session,
+                    token_usage,
+                    _empty_response_retry_count + 1,
+                    tool_loop_guard=tool_loop_guard,
                 )
 
             final_assistant_message = response_stream.format_assistant_message(
@@ -686,7 +697,9 @@ class MessageHandler:
                     }
                 )
                 self.agent_manager.defered_transfer = ""
-                return await self._run_stream_response(session, token_usage)
+                return await self._run_stream_response(
+                    session, token_usage, tool_loop_guard=tool_loop_guard
+                )
 
             session.finalize("completed")
             return assistant_response, token_usage
@@ -780,6 +793,11 @@ class MessageHandler:
             return assistant_response, token_usage
         except GeneratorExit:
             return assistant_response, token_usage
+        except ToolLoopError as error:
+            self._finalize_current_turn(token_usage, store_memory=False)
+            session.finalize("failed")
+            await self.bus.emit(AppEvents.ERROR, message=str(error))
+            return None, token_usage
         except Exception as e:
             from openai import APIError
 
@@ -798,10 +816,14 @@ class MessageHandler:
                 if isinstance(self.agent, LocalAgent):
                     max_token = ModelRegistry.get_model_limit(self.agent.get_model())
                     self.agent.input_tokens_usage = max_token
-                    return await self._run_stream_response(session, token_usage)
+                    return await self._run_stream_response(
+                        session, token_usage, tool_loop_guard=tool_loop_guard
+                    )
             # retry if internal server error from provider
             if isinstance(e, APIError) and str(e) == "Internal server error":
-                return await self._run_stream_response(session, token_usage)
+                return await self._run_stream_response(
+                    session, token_usage, tool_loop_guard=tool_loop_guard
+                )
             if self.current_user_input:
                 self.conversation_manager.store_conversation_turn(
                     self.current_user_input, self.current_user_input_idx
@@ -874,7 +896,10 @@ class MessageHandler:
             session = self._create_stream_session()
             task = loop.create_task(
                 self._run_stream_response(
-                    session, token_usage, _empty_response_retry_count
+                    session,
+                    token_usage,
+                    _empty_response_retry_count,
+                    tool_loop_guard=ToolLoopGuard(),
                 )
             )
             session.bind(loop, task)
