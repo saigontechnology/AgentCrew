@@ -13,7 +13,11 @@ from loguru import logger
 from AgentCrew.modules.agents import AgentManager
 from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.agents.message_metadata import redact_message_for_debug
-from AgentCrew.modules.agents.tool_loop_guard import ToolLoopError, ToolLoopGuard
+from AgentCrew.modules.agents.tool_loop_guard import (
+    ToolLoopError,
+    ToolLoopGuard,
+    pending_recovery_message,
+)
 from AgentCrew.modules.chat.history import ChatHistoryManager
 from AgentCrew.modules.chat.stream_session import StreamSession
 from AgentCrew.modules.events import AppEvents, EventBus, HookRegistry
@@ -595,7 +599,9 @@ class MessageHandler:
             # Handle tool use if needed
             if not has_stop_interupted and tool_uses and len(tool_uses) > 0:
                 # Format assistant message with the response and tool uses
-                tool_round = tool_loop_guard.check_round(tool_uses)
+                tool_uses, tool_round = tool_loop_guard.check_round(
+                    tool_uses
+                ).omit_blocked_calls(tool_uses)
                 tool_uses_without_transfer = [
                     t
                     for index, t in enumerate(tool_uses)
@@ -608,12 +614,14 @@ class MessageHandler:
                         thinking=thinking_data,
                         tool_uses=tool_uses_without_transfer,
                     )
+                    tool_round.mark_assistant_message(assistant_message)
                     self._messages_append(assistant_message)
                 # ignore if message is empty
-                elif assistant_response.strip():
+                elif assistant_response.strip() or tool_round.needs_recovery:
                     assistant_message = response_stream.format_assistant_message(
                         assistant_response, thinking=thinking_data
                     )
+                    tool_round.mark_assistant_message(assistant_message)
                     self._messages_append(assistant_message)
                 await self.bus.emit(
                     AppEvents.ASSISTANT_MESSAGE_ADDED,
@@ -624,6 +632,8 @@ class MessageHandler:
 
                 # Process each tool use
                 await self.tool_manager.execute_tools_batch(tool_uses, tool_round)
+                if recovery := pending_recovery_message(self.streamline_messages):
+                    self._messages_append(recovery)
 
                 if token_usage:
                     await self.bus.emit(

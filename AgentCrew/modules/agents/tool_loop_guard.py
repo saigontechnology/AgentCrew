@@ -9,15 +9,45 @@ from typing import Any
 
 from loguru import logger
 
+from .message_metadata import is_tool_loop_recovery, mark_tool_loop_recovery
+
 MAX_CONSECUTIVE_TOOL_EXECUTIONS = 2
 MAX_TOOL_ROUNDS = 50
 
 REPEAT_WARNING = (
     "Tool loop protection: this exact tool call has already been requested "
-    "2 times in consecutive model rounds. It was not executed again. "
+    "twice. The repeated call was removed from the assistant message and was not "
+    "executed again. "
     "Reuse the previous result, change the tool or arguments, or finish the task "
     "without repeating this call."
 )
+
+
+def pending_recovery_message(history: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return recovery context once all retained calls have results.
+
+    The assistant marker survives ask/input-required pauses and persistence.
+    A marked user message closes that recovery round without mutating history.
+    """
+    for index in range(len(history) - 1, -1, -1):
+        message = history[index]
+        if not is_tool_loop_recovery(message):
+            continue
+        if message.get("role") != "assistant":
+            return None
+        pending_ids = {call["id"] for call in message.get("tool_calls", [])}
+        for following in history[index + 1 :]:
+            if following.get("role") == "tool":
+                pending_ids.discard(following.get("tool_call_id"))
+        if pending_ids:
+            return None
+        recovery = {
+            "role": "user",
+            "content": [{"type": "text", "text": REPEAT_WARNING}],
+        }
+        mark_tool_loop_recovery(recovery)
+        return recovery
+    return None
 
 
 class ToolLoopError(RuntimeError):
@@ -88,6 +118,28 @@ class ToolLoopRound:
 
     errors: tuple[str | None, ...]
     terminal_error: str | None = None
+    needs_recovery: bool = False
+
+    def omit_blocked_calls(
+        self, tool_uses: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], ToolLoopRound]:
+        """Remove recovery-blocked calls while keeping terminal batches paired."""
+        retained = [
+            (tool, error)
+            for tool, error in zip(tool_uses, self.errors, strict=True)
+            if error != REPEAT_WARNING
+        ]
+        return [tool for tool, _ in retained], ToolLoopRound(
+            tuple(error for _, error in retained),
+            self.terminal_error,
+            self.needs_recovery
+            or any(error == REPEAT_WARNING for error in self.errors),
+        )
+
+    def mark_assistant_message(self, message: dict[str, Any] | None) -> None:
+        """Persist a pending recovery round before its retained tools execute."""
+        if self.needs_recovery and message is not None:
+            mark_tool_loop_recovery(message)
 
     def raise_if_terminal(self) -> None:
         if self.terminal_error:

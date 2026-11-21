@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from AgentCrew.modules.agents.message_metadata import is_tool_loop_recovery
 from AgentCrew.modules.agents.tool_loop_guard import (
     MAX_TOOL_ROUNDS,
     REPEAT_WARNING,
@@ -161,6 +162,8 @@ class Harness:
         self.mode = mode
         self.batches = batches
         self.requests = 0
+        self.request_histories = []
+        self.progress = AsyncMock()
         self.hooks = MagicMock()
         self.hooks.run_before = AsyncMock(side_effect=lambda point, **kwargs: kwargs)
         self.hooks.run_after = AsyncMock(
@@ -175,7 +178,6 @@ class Harness:
         self.agent = LocalAgent("loop-test", "test", self.llm, {}, [])
         self.agent.validate_tool_use = MagicMock(return_value=None)
         self.agent.store_memory_if_available = MagicMock()
-        self.agent.extract_last_user_message_for_memory = MagicMock(return_value="user")
         self.agent.process_messages = self.process_messages
         self.history = [{"role": "user", "content": [{"type": "text", "text": "work"}]}]
         self.agent.history = self.history
@@ -213,7 +215,11 @@ class Harness:
 
     def process_messages(self, messages=None, callback=None):
         assert self.requests < 60, "stub model exceeded bounded round budget"
-        tools = copy.deepcopy(self.batches[min(self.requests, len(self.batches) - 1)])
+        self.request_histories.append(
+            copy.deepcopy(messages if messages is not None else self.history)
+        )
+        batch = self.batches[min(self.requests, len(self.batches) - 1)]
+        tools = [copy.deepcopy(tool) for tool in batch] if batch else []
         self.requests += 1
         for index, tool in enumerate(tools or []):
             tool["id"] = f"r{self.requests}-{index}"
@@ -260,7 +266,9 @@ class Harness:
         if self.mode == "jobs":
             from AgentCrew.modules.agents.agent_runner import run_agent_loop
 
-            operation = run_agent_loop(self.agent, self.history)
+            operation = run_agent_loop(
+                self.agent, self.history, progress_callback=self.progress
+            )
         elif self.mode == "acp":
             operation = self.executor.run_turn("session", self.state, None)
         elif self.mode == "a2a":
@@ -283,13 +291,76 @@ class Harness:
         return await asyncio.wait_for(operation, timeout=5)
 
     def assert_paired(self):
-        expected = []
-        actual = []
+        pending = []
         for message in self.history:
-            expected.extend(tool["id"] for tool in message.get("tool_calls", []))
+            if message["role"] != "tool":
+                assert not pending, "a user/assistant message interrupted tool results"
+            pending.extend(tool["id"] for tool in message.get("tool_calls", []))
             if message["role"] == "tool":
-                actual.append(message["tool_call_id"])
-        assert expected == actual
+                assert pending and message["tool_call_id"] == pending.pop(0)
+        assert not pending
+
+    def assert_recovery(self, count=1):
+        recovery = [
+            message
+            for message in self.history
+            if message["role"] == "user" and is_tool_loop_recovery(message)
+        ]
+        assert len(recovery) == count
+        assert all(
+            message["content"] == [{"type": "text", "text": REPEAT_WARNING}]
+            for message in recovery
+        )
+        assert all(
+            REPEAT_WARNING not in message["content"]
+            for message in self.history
+            if message["role"] == "tool"
+        )
+        return recovery
+
+    def assert_blocked_has_no_side_effects(self, blocked_ids):
+        validated = [
+            args.args[0]["id"] for args in self.agent.validate_tool_use.call_args_list
+        ]
+        assert blocked_ids.isdisjoint(validated)
+        for args in self.hooks.run_before.await_args_list:
+            assert args.kwargs.get("tool_use", {}).get("id") not in blocked_ids
+        if self.approval:
+            assert all(
+                args.args[0]["id"] not in blocked_ids
+                for args in self.approval.await_args_list
+            )
+        for history in [self.history, *self.request_histories]:
+            ids = {
+                tool["id"]
+                for message in history
+                for tool in message.get("tool_calls", [])
+            }
+            ids.update(message.get("tool_call_id") for message in history)
+            assert blocked_ids.isdisjoint(ids)
+        if self.mode == "chat":
+            from AgentCrew.modules.events import AppEvents
+
+            for args in self.handler.bus.emit.await_args_list:
+                if args.args[0] in {
+                    AppEvents.TOOL_USE,
+                    AppEvents.TOOL_CONFIRMATION_REQ,
+                }:
+                    tool = args.kwargs.get("tool_use", args.kwargs)
+                    assert tool.get("id") not in blocked_ids
+        elif self.mode == "acp":
+            for args in self.executor._client_comm.send_tool_started.await_args_list:
+                assert args.args[1]["id"] not in blocked_ids
+        elif self.mode == "a2a":
+            from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
+
+            for args in self.queue.enqueue_event.await_args_list:
+                event = args.args[0]
+                if isinstance(event, TaskArtifactUpdateEvent):
+                    assert all(
+                        blocked_id not in str(event.artifact)
+                        for blocked_id in blocked_ids
+                    )
 
 
 @pytest.mark.asyncio
@@ -308,7 +379,13 @@ async def test_repeating_model_recovers_or_terminates(mode, recover, monkeypatch
     tool_messages = [
         message for message in harness.history if message["role"] == "tool"
     ]
-    assert REPEAT_WARNING in tool_messages[2]["content"]
+    harness.assert_recovery()
+    harness.assert_blocked_has_no_side_effects({"r3-0"})
+    assert len(tool_messages) == (2 if recover else 3)
+    if mode == "jobs":
+        assert sum(
+            args.args[0] == "tool" for args in harness.progress.await_args_list
+        ) == (2 if recover else 3)
     harness.assert_paired()
     if recover:
         assert harness.history[-1]["content"][-1]["text"] == "Finished"
@@ -376,9 +453,13 @@ async def test_mixed_batch_keeps_order_and_blocks_before_side_effects(
         if message.get("tool_call_id", "").startswith("r3-")
     ]
     assert [message["tool_call_id"] for message in third_round] == [
-        f"r3-{index}" for index in range(4)
+        f"r3-{index}" for index in (0, 2, 3)
     ]
-    assert REPEAT_WARNING in third_round[1]["content"]
+    harness.assert_recovery()
+    harness.assert_blocked_has_no_side_effects({"r3-1"})
+    assert harness.history.index(harness.assert_recovery()[0]) > harness.history.index(
+        third_round[-1]
+    )
 
 
 @pytest.mark.asyncio
@@ -422,7 +503,10 @@ async def test_duplicate_batch_never_dispatches_more_than_twice(
     if harness.approval:
         assert harness.approval.await_count == 2
     harness.assert_paired()
-    assert REPEAT_WARNING in harness.history[-2]["content"]
+    harness.assert_recovery()
+    harness.assert_blocked_has_no_side_effects(
+        {f"r1-{index}" for index in range(2, duplicates)}
+    )
 
 
 @pytest.mark.asyncio
@@ -461,7 +545,8 @@ async def test_concurrent_jobs_share_agent_but_not_guard_state(monkeypatch):
     assert [result[0] for result in results] == ["Finished", "Finished"]
     assert harness.llm.execute_tool.await_count == 4
     for history in histories:
-        assert REPEAT_WARNING in history[-2]["content"]
+        assert history[-2]["role"] == "user"
+        assert history[-2]["content"][0]["text"] == REPEAT_WARNING
 
 
 @pytest.mark.asyncio
@@ -506,7 +591,7 @@ async def test_a2a_input_required_resume_preserves_remaining_calls_and_fresh_gua
     assert harness.llm.execute_tool.await_count == 4
     harness.assert_paired()
     if recover:
-        assert REPEAT_WARNING in harness.history[-2]["content"]
+        harness.assert_recovery()
     else:
         assert "terminated" in harness.history[-1]["content"]
     harness.store.clear_pending_tools.assert_awaited_once()
@@ -548,3 +633,187 @@ async def test_terminal_logging_never_dumps_raw_tool_arguments(mode, monkeypatch
         logger.remove(sink)
     assert messages
     assert all("sensitive-loop-marker" not in message for message in messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
+async def test_several_repeated_calls_produce_one_recovery_message(mode, monkeypatch):
+    repeated = [call("read_file"), call("browser_click")]
+    harness = Harness(mode, monkeypatch, [repeated, repeated, repeated, None])
+    await harness.run()
+    assert harness.llm.execute_tool.await_count == 4
+    assert harness.agent.validate_tool_use.call_count == 4
+    assert harness.hooks.run_before.await_count == 4
+    harness.assert_paired()
+    harness.assert_recovery()
+    harness.assert_blocked_has_no_side_effects({"r3-0", "r3-1"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
+async def test_recovery_can_change_arguments_and_continue(mode, monkeypatch):
+    harness = Harness(
+        mode, monkeypatch, [[call()]] * 3 + [[call(arguments={"new": 1})], None]
+    )
+    await harness.run()
+    assert harness.llm.execute_tool.await_count == 3
+    harness.assert_paired()
+    harness.assert_recovery()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
+async def test_memory_storage_uses_external_user_after_recovery(mode, monkeypatch):
+    harness = Harness(mode, monkeypatch, [[call()]] * 3 + [None])
+    if mode == "chat":
+        from AgentCrew.modules.chat.message.handler import MessageHandler
+
+        handler = harness.handler
+        handler._finalize_current_turn = MessageHandler._finalize_current_turn.__get__(
+            handler
+        )
+        handler.current_user_input = harness.history[0]
+        handler.current_user_input_idx = 0
+        handler.last_assisstant_response_idx = -1
+        handler.conversation_manager = MagicMock()
+        handler._turn_usage_ledger = {}
+        handler._turn_usage_committed = {}
+    await harness.run()
+    harness.agent.store_memory_if_available.assert_called_once()
+    assert harness.agent.store_memory_if_available.call_args.args[0] == "work"
+    assert harness.agent.extract_last_user_message_for_memory(harness.history) == "work"
+    extracted = harness.agent._memory_coordinator.extract_assistant_messages_for_memory(
+        harness.history
+    )
+    assert extracted == ["working", "working", "working", "Finished"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["acp", "a2a"])
+async def test_recovery_waits_for_ask_result_and_survives_resume(mode, monkeypatch):
+    ask = call("ask", {"questions": [{"question": "Which?", "guided_answers": ["A"]}]})
+    mixed = [call(), ask, call("other_parallel")] if mode == "a2a" else [call(), ask]
+    harness = Harness(mode, monkeypatch, [[call()], [call()], mixed])
+    await harness.run()
+    harness.assert_recovery(count=0)
+    assert harness.llm.execute_tool.await_count == 2
+    harness.batches = [None]
+    harness.requests = 0
+    if mode == "acp":
+        await harness.executor.resume_pending_ask("session", harness.state, "q0: A")
+        await harness.run()
+    else:
+        from AgentCrew.modules.a2a.adapters import convert_agent_response_to_a2a_message
+
+        saved = harness.store.save_pending_tools.await_args.args
+        assert [tool["name"] for tool in saved[2]] == ["other_parallel"]
+        harness.context.message = convert_agent_response_to_a2a_message("A")
+        await harness.executor._resume_from_input_required(
+            harness.context,
+            harness.queue,
+            "t",
+            "c",
+            harness.history,
+            {"ask_tool_use": saved[1], "remaining_tools": saved[2]},
+        )
+        assert harness.llm.execute_tool.await_count == 3
+        assert [
+            args.args[1] for args in harness.store.append_history.await_args_list
+        ] == harness.history[1:]
+    harness.assert_recovery()
+    harness.assert_paired()
+    harness.assert_blocked_has_no_side_effects({"r3-0"})
+
+
+def test_recovery_marker_is_internal_but_user_content_reaches_provider():
+    from AgentCrew.modules.agents.message_metadata import strip_internal_metadata
+    from AgentCrew.modules.agents.tool_loop_guard import pending_recovery_message
+
+    guard = ToolLoopGuard()
+    for _ in range(2):
+        guard.check_round([call()])
+    tools, decision = guard.check_round([call()]).omit_blocked_calls([call()])
+    assert tools == [] and decision.errors == ()
+    assistant = {"role": "assistant", "content": []}
+    decision.mark_assistant_message(assistant)
+    history = [assistant]
+    recovery = pending_recovery_message(history)
+    assert recovery is not None
+    history.append(recovery)
+    assert pending_recovery_message(history) is None
+    provider_messages = strip_internal_metadata(history)
+    assert all("_metadata" not in message for message in provider_messages)
+    assert provider_messages[-1]["role"] == "user"
+    assert provider_messages[-1]["content"][0]["text"] == REPEAT_WARNING
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
+async def test_textless_blocked_round_still_recovers(mode, monkeypatch):
+    harness = Harness(mode, monkeypatch, [[call()]] * 3 + [None])
+
+    async def textless_stream(stream):
+        stream.callback(stream.tools or [], TokenUsage(input_tokens=1))
+        yield ("" if stream.tools else "Finished", None, None)
+
+    monkeypatch.setattr(ModelStream, "__aiter__", textless_stream)
+    await harness.run()
+    assert harness.requests == 4
+    assert harness.llm.execute_tool.await_count == 2
+    harness.assert_recovery()
+    harness.assert_paired()
+
+
+def test_recovery_context_is_not_enhanced_as_a_new_external_task():
+    from AgentCrew.modules.agents.context_manager import AgentContextManager
+    from AgentCrew.modules.agents.message_metadata import mark_tool_loop_recovery
+
+    recovery = {"role": "user", "content": [{"type": "text", "text": REPEAT_WARNING}]}
+    mark_tool_loop_recovery(recovery)
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "work"}]},
+        recovery,
+    ]
+    original = copy.deepcopy(messages)
+    context = AgentContextManager(MagicMock())
+    context.build_adaptive_context = MagicMock()
+    context.enhance_messages(messages)
+    context.build_adaptive_context.assert_not_called()
+    assert messages == original
+
+
+@pytest.mark.asyncio
+async def test_chat_valid_transfer_preserves_recovery_across_agent_change(monkeypatch):
+    from AgentCrew.modules.agents.local_agent import LocalAgent
+
+    harness = Harness(
+        "chat", monkeypatch, [[call()], [call()], [call(), call("transfer")], None]
+    )
+    target = LocalAgent("target", "test", harness.llm, {}, [])
+    target.process_messages = harness.process_messages
+    target.store_memory_if_available = MagicMock()
+    harness.handler.agent_manager.get_current_agent = lambda: target
+    harness.handler.last_assisstant_response_idx = -1
+    await harness.run()
+    assert harness.handler.agent is target
+    assert harness.llm.execute_tool.await_count == 3
+    harness.assert_recovery()
+    harness.assert_paired()
+    harness.assert_blocked_has_no_side_effects({"r3-0"})
+    assert all(
+        tool["name"] != "transfer"
+        for message in harness.history
+        for tool in message.get("tool_calls", [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_repeated_transfer_is_omitted_before_dispatch(monkeypatch):
+    harness = Harness("chat", monkeypatch, [[call("transfer")]] * 3 + [None])
+    harness.handler.agent_manager.get_current_agent = lambda: harness.agent
+    harness.handler.last_assisstant_response_idx = -1
+    await harness.run()
+    assert harness.llm.execute_tool.await_count == 2
+    harness.assert_recovery()
+    harness.assert_paired()
+    harness.assert_blocked_has_no_side_effects({"r3-0"})

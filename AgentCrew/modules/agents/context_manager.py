@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from .message_metadata import get_context_usage
+from .message_metadata import get_context_usage, is_tool_loop_recovery
 
 if TYPE_CHECKING:
     from .local_agent import LocalAgent
@@ -174,6 +174,8 @@ You must analyze and plan out the steps then execute it with your available tool
         if last_user_index is None:
             return
         last_user_index = len(final_messages) - 1 - last_user_index
+        if is_tool_loop_recovery(final_messages[last_user_index]):
+            return
 
         adaptive_messages = self.build_adaptive_context()
         is_user_request = len(

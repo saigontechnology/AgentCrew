@@ -8,7 +8,10 @@ from loguru import logger
 
 from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.agents.local_agent import LocalAgent
-from AgentCrew.modules.agents.tool_loop_guard import ToolLoopGuard
+from AgentCrew.modules.agents.tool_loop_guard import (
+    ToolLoopGuard,
+    pending_recovery_message,
+)
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.llm.token_usage import TokenUsage
 from AgentCrew.modules.tools.parallel_executor import (
@@ -163,12 +166,15 @@ async def _run_agent_loop(
             )
         return current_response, token_usage
 
+    tool_uses, tool_round = tool_loop_guard.check_round(tool_uses).omit_blocked_calls(
+        tool_uses
+    )
     assistant_message = stream.format_assistant_message(
         current_response, thinking=thinking_data, tool_uses=tool_uses
     )
+    tool_round.mark_assistant_message(assistant_message)
     append_assistant_message(assistant_message)
 
-    tool_round = tool_loop_guard.check_round(tool_uses)
     parallel_buffer: list[dict[str, Any]] = []
 
     for index, tool_use in enumerate(tool_uses):
@@ -279,6 +285,8 @@ async def _run_agent_loop(
                 history.append(msg)
 
     tool_round.raise_if_terminal()
+    if recovery := pending_recovery_message(history):
+        history.append(recovery)
     return await _run_agent_loop(
         agent,
         history,

@@ -5,7 +5,11 @@ from typing import TYPE_CHECKING, Any
 from AgentCrew.modules.acp.session_state import AcpSessionState
 from AgentCrew.modules.acp.tools.permission_broker import AcpPermissionBroker
 from AgentCrew.modules.agents.base import MessageType
-from AgentCrew.modules.agents.tool_loop_guard import ToolLoopGuard, ToolLoopRound
+from AgentCrew.modules.agents.tool_loop_guard import (
+    ToolLoopGuard,
+    ToolLoopRound,
+    pending_recovery_message,
+)
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.tools.parallel_executor import (
     execute_tools_in_parallel,
@@ -102,23 +106,29 @@ class TurnExecutor:
                 (thinking_content, thinking_signature) if thinking_content else None
             )
 
+            has_tool_uses = bool(tool_uses)
+            tool_uses, tool_round = tool_loop_guard.check_round(
+                tool_uses
+            ).omit_blocked_calls(tool_uses)
             assistant_message = stream.format_assistant_message(
                 current_response,
                 thinking=thinking_data,
                 tool_uses=tool_uses,
             )
+            tool_round.mark_assistant_message(assistant_message)
             if assistant_message:
                 state.history.append(assistant_message)
 
             if token_usage:
                 state.token_usage = state.token_usage.merge(token_usage)
 
-            if tool_uses:
-                tool_round = tool_loop_guard.check_round(tool_uses)
+            if has_tool_uses:
                 await self.execute_tools(
                     session_id, state, agent, tool_uses, tool_round
                 )
                 if not state.cancelled and state.pending_ask_tool is None:
+                    if recovery := pending_recovery_message(state.history):
+                        state.history.append(recovery)
                     await self.run_turn(session_id, state, conn, tool_loop_guard)
                 return
 
@@ -429,6 +439,8 @@ class TurnExecutor:
             result,
         )
         state.pending_ask_tool = None
+        if recovery := pending_recovery_message(state.history):
+            state.history.append(recovery)
         return True
 
     async def append_tool_result(

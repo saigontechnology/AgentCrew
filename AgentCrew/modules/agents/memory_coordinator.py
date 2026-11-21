@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from .message_metadata import is_tool_loop_recovery
+
 if TYPE_CHECKING:
     from .cursor_agent import CursorAgent
     from .local_agent import LocalAgent
@@ -51,7 +53,11 @@ class AgentMemoryCoordinator:
         ``LocalAgent._extract_last_user_message_for_memory`` behavior.
         """
         for message in reversed(messages):
-            if not isinstance(message, dict) or message.get("role") != "user":
+            if (
+                not isinstance(message, dict)
+                or message.get("role") != "user"
+                or is_tool_loop_recovery(message)
+            ):
                 continue
             content = message.get("content", [])
             if isinstance(content, str):
@@ -125,7 +131,11 @@ class AgentMemoryCoordinator:
         ask_questions_by_id: dict[str, str] = {}
 
         for index, message in enumerate(messages):
-            if isinstance(message, dict) and message.get("role") == "user":
+            if (
+                isinstance(message, dict)
+                and message.get("role") == "user"
+                and not is_tool_loop_recovery(message)
+            ):
                 last_user_idx = index
 
         for message in messages[last_user_idx + 1 :]:
