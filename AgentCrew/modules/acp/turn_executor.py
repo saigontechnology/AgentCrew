@@ -80,10 +80,11 @@ class TurnExecutor:
                     token_usage = _token_usage
 
         tools_enabled = tool_loop_guard.start_request()
-        stream = agent.process_messages(
-            state.history, callback=process_result, tools_enabled=tools_enabled
-        )
+        stream = None
         try:
+            stream = agent.process_messages(
+                state.history, callback=process_result, tools_enabled=tools_enabled
+            )
             async for (
                 response_message,
                 chunk_text,
@@ -183,7 +184,8 @@ class TurnExecutor:
 
             raise
         finally:
-            await stream.aclose()
+            if stream is not None:
+                await stream.aclose()
 
     async def _send_usage_update(
         self,

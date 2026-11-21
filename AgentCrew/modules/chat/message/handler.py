@@ -702,7 +702,9 @@ class MessageHandler:
             )
             # ─────────────────────────────────────────────────────
 
-            if self.agent_manager.defered_transfer:
+            if not tool_loop_guard.tools_enabled:
+                self.agent_manager.defered_transfer = ""
+            elif self.agent_manager.defered_transfer:
                 self.agent.history.append(
                     {
                         "role": "user",

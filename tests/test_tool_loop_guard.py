@@ -988,6 +988,122 @@ async def test_final_text_at_round_50_does_not_trigger_fallback(mode, monkeypatc
     harness.assert_paired()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finalization", [False, True])
+@pytest.mark.parametrize("failure", ["runtime", "connection"])
+async def test_acp_stream_construction_failure_preserves_original_exception(
+    finalization, failure, monkeypatch
+):
+    batches = (
+        [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS + 1)] + [None]
+        if finalization
+        else [None]
+    )
+    harness = Harness("acp", monkeypatch, batches)
+    error = RuntimeError("ACP stream construction failed")
+    if failure == "connection":
+        import httpx
+        from openai import APIConnectionError
+
+        error = APIConnectionError(
+            message="ACP stream construction failed",
+            request=httpx.Request("POST", "https://stub.invalid"),
+        )
+    process_messages = harness.agent.process_messages
+    policies = []
+
+    def fail_construction(messages=None, callback=None, *, tools_enabled=True):
+        policies.append(tools_enabled)
+        if not finalization or not tools_enabled:
+            raise error
+        return process_messages(messages, callback, tools_enabled=tools_enabled)
+
+    harness.agent.process_messages = fail_construction
+    with pytest.raises(type(error)) as caught:
+        await harness.run()
+    assert caught.value is error
+    assert policies == (
+        [True] * (MAX_TOOL_ROUNDS + 1) + [False] if finalization else [True]
+    )
+    executions = MAX_TOOL_ROUNDS if finalization else 0
+    assert harness.requests == (MAX_TOOL_ROUNDS + 1 if finalization else 0)
+    assert harness.llm.execute_tool.await_count == executions
+    assert harness.agent.validate_tool_use.call_count == executions
+    assert harness.approval.await_count == executions
+    assert harness.hooks.run_before.await_count == executions
+    harness.agent.store_memory_if_available.assert_not_called()
+    harness.assert_paired()
+    if finalization:
+        harness.assert_blocked_has_no_side_effects({"r51-0"})
+        assert (
+            sum(is_tool_loop_finalization(message) for message in harness.history) == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_chat_budget_finalization_clears_deferred_transfer_without_follow_up(
+    monkeypatch,
+):
+    from AgentCrew.modules.events import AppEvents
+
+    harness = Harness(
+        "chat",
+        monkeypatch,
+        [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS + 1)] + [None],
+    )
+    harness.handler.agent_manager.defered_transfer = "Return to the coordinator"
+    response, usage = await harness.run()
+    assert response == "Finished"
+    assert usage.total_input_tokens == MAX_TOOL_ROUNDS + 2
+    assert harness.tool_policies == [True] * (MAX_TOOL_ROUNDS + 1) + [False]
+    assert harness.requests == MAX_TOOL_ROUNDS + 2
+    assert harness.session.status == "completed"
+    assert harness.session.finished.is_set()
+    assert harness.handler.agent_manager.defered_transfer == ""
+    assert harness.history[-1]["content"][0]["text"] == "Finished"
+    assert all(
+        "<Post_Transfer_Action_Reminder>" not in str(message["content"])
+        for message in harness.history
+    )
+    assert sum(is_tool_loop_finalization(message) for message in harness.history) == 1
+    assert not any(
+        args.args[0] == AppEvents.ERROR
+        for args in harness.handler.bus.emit.await_args_list
+    )
+    harness.assert_paired()
+    harness.assert_blocked_has_no_side_effects({"r51-0"})
+    harness.batches = [None]
+    harness.requests = 0
+    await harness.run()
+    assert harness.requests == 1
+    assert harness.tool_policies[-1] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_normal_final_response_still_runs_deferred_transfer_follow_up(
+    monkeypatch,
+):
+    harness = Harness("chat", monkeypatch, [None])
+    harness.handler.agent_manager.defered_transfer = "Return to the coordinator"
+    response, usage = await harness.run()
+    assert response == "Finished"
+    assert usage.total_input_tokens == 2
+    assert harness.requests == 2
+    assert harness.tool_policies == [True, True]
+    assert harness.session.status == "completed"
+    assert harness.handler.agent_manager.defered_transfer == ""
+    reminders = [
+        message
+        for message in harness.history
+        if "<Post_Transfer_Action_Reminder>" in str(message["content"])
+    ]
+    assert len(reminders) == 1
+    assert "Return to the coordinator" in reminders[0]["content"][0]["text"]
+    assert reminders[0] in harness.request_histories[-1]
+    assert not any(is_tool_loop_finalization(message) for message in harness.history)
+    harness.assert_paired()
+
+
 def test_exact_repeat_termination_takes_priority_at_budget_boundary():
     guard = ToolLoopGuard()
     for index in range(MAX_TOOL_ROUNDS - 3):
