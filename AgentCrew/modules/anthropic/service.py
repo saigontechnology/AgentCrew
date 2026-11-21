@@ -503,7 +503,7 @@ class AnthropicService(BaseLLMService):
         logger.info(f"Thinking mode enabled with budget of {budget_tokens} tokens.")
         return True
 
-    async def stream_assistant_response(self, messages):
+    async def stream_assistant_response(self, messages, *, tools_enabled: bool = True):
         """Stream the assistant's response with tool support."""
         # first cache for system prompt and tool
         if self.caching_blocks == 0:
@@ -532,8 +532,13 @@ class AnthropicService(BaseLLMService):
         #     stream_params["temperature"] = 0.7
 
         # Add tools if available
-        if self.tools and "tool_use" in ModelRegistry.get_model_capabilities(
-            f"{self._provider_name}/{self.model}"
+        if (
+            tools_enabled
+            and self.tools
+            and "tool_use"
+            in ModelRegistry.get_model_capabilities(
+                f"{self._provider_name}/{self.model}"
+            )
         ):
             stream_params["tools"] = self.tools
         return self.client.messages.stream(**stream_params)

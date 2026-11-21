@@ -79,7 +79,10 @@ class TurnExecutor:
                 else:
                     token_usage = _token_usage
 
-        stream = agent.process_messages(state.history, callback=process_result)
+        tools_enabled = tool_loop_guard.start_request()
+        stream = agent.process_messages(
+            state.history, callback=process_result, tools_enabled=tools_enabled
+        )
         try:
             async for (
                 response_message,
@@ -106,6 +109,9 @@ class TurnExecutor:
                 (thinking_content, thinking_signature) if thinking_content else None
             )
 
+            if token_usage:
+                state.token_usage = state.token_usage.merge(token_usage)
+            tool_loop_guard.validate_response(current_response, tool_uses)
             has_tool_uses = bool(tool_uses)
             tool_uses, tool_round = tool_loop_guard.check_round(
                 tool_uses
@@ -119,15 +125,12 @@ class TurnExecutor:
             if assistant_message:
                 state.history.append(assistant_message)
 
-            if token_usage:
-                state.token_usage = state.token_usage.merge(token_usage)
-
             if has_tool_uses:
                 await self.execute_tools(
                     session_id, state, agent, tool_uses, tool_round
                 )
                 if not state.cancelled and state.pending_ask_tool is None:
-                    if recovery := pending_recovery_message(state.history):
+                    if recovery := tool_round.recovery_message(state.history):
                         state.history.append(recovery)
                     await self.run_turn(session_id, state, conn, tool_loop_guard)
                 return
@@ -143,7 +146,7 @@ class TurnExecutor:
         except Exception as e:
             from openai import APIError
 
-            if isinstance(e, APIError):
+            if tool_loop_guard.tools_enabled and isinstance(e, APIError):
                 if (
                     e.code == "model_max_prompt_tokens_exceeded"
                     or e.code == "context_length_exceeded"
@@ -179,6 +182,8 @@ class TurnExecutor:
                     )
 
             raise
+        finally:
+            await stream.aclose()
 
     async def _send_usage_update(
         self,

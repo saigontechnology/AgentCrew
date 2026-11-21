@@ -16,7 +16,6 @@ from AgentCrew.modules.agents.message_metadata import redact_message_for_debug
 from AgentCrew.modules.agents.tool_loop_guard import (
     ToolLoopError,
     ToolLoopGuard,
-    pending_recovery_message,
 )
 from AgentCrew.modules.chat.history import ChatHistoryManager
 from AgentCrew.modules.chat.stream_session import StreamSession
@@ -447,7 +446,10 @@ class MessageHandler:
             if session.cancel_requested:
                 raise asyncio.CancelledError
             session.begin_segment()
-            response_stream = request_agent.process_messages(callback=process_result)
+            tools_enabled = tool_loop_guard.start_request()
+            response_stream = request_agent.process_messages(
+                callback=process_result, tools_enabled=tools_enabled
+            )
             self.stream_generator = response_stream
             stream_iter = response_stream.__aiter__()
 
@@ -591,6 +593,8 @@ class MessageHandler:
                 )
                 end_thinking = True
 
+            tool_loop_guard.validate_response(assistant_response, tool_uses)
+
             # Add thinking content as a separate message if available
             thinking_data = (
                 (thinking_content, thinking_signature) if thinking_content else None
@@ -617,7 +621,11 @@ class MessageHandler:
                     tool_round.mark_assistant_message(assistant_message)
                     self._messages_append(assistant_message)
                 # ignore if message is empty
-                elif assistant_response.strip() or tool_round.needs_recovery:
+                elif (
+                    assistant_response.strip()
+                    or tool_round.needs_recovery
+                    or tool_round.finalization_required
+                ):
                     assistant_message = response_stream.format_assistant_message(
                         assistant_response, thinking=thinking_data
                     )
@@ -632,7 +640,7 @@ class MessageHandler:
 
                 # Process each tool use
                 await self.tool_manager.execute_tools_batch(tool_uses, tool_round)
-                if recovery := pending_recovery_message(self.streamline_messages):
+                if recovery := tool_round.recovery_message(self.streamline_messages):
                     self._messages_append(recovery)
 
                 if token_usage:
@@ -811,14 +819,18 @@ class MessageHandler:
         except Exception as e:
             from openai import APIError
 
-            if isinstance(e, APIError) and (
-                e.code == "model_max_prompt_tokens_exceeded"
-                or e.code == "context_length_exceeded"
-                or e.message.find("This endpoint's maximum context length is") >= 0
-                or e.message.find(
-                    "Your input exceeds the context window of this model."
+            if (
+                tool_loop_guard.tools_enabled
+                and isinstance(e, APIError)
+                and (
+                    e.code == "model_max_prompt_tokens_exceeded"
+                    or e.code == "context_length_exceeded"
+                    or e.message.find("This endpoint's maximum context length is") >= 0
+                    or e.message.find(
+                        "Your input exceeds the context window of this model."
+                    )
+                    >= 0
                 )
-                >= 0
             ):
                 from AgentCrew.modules.agents import LocalAgent
                 from AgentCrew.modules.llm.model_registry import ModelRegistry
@@ -830,7 +842,11 @@ class MessageHandler:
                         session, token_usage, tool_loop_guard=tool_loop_guard
                     )
             # retry if internal server error from provider
-            if isinstance(e, APIError) and str(e) == "Internal server error":
+            if (
+                tool_loop_guard.tools_enabled
+                and isinstance(e, APIError)
+                and str(e) == "Internal server error"
+            ):
                 return await self._run_stream_response(
                     session, token_usage, tool_loop_guard=tool_loop_guard
                 )
@@ -875,7 +891,15 @@ class MessageHandler:
             )
             if not session.finished.is_set():
                 session.finalize("failed")
-            return None, TokenUsage()
+            return (
+                None,
+                token_usage if not tool_loop_guard.tools_enabled else TokenUsage(),
+            )
+        finally:
+            if response_stream is not None and not tool_loop_guard.tools_enabled:
+                await response_stream.aclose()
+                if self.stream_generator is response_stream:
+                    self.stream_generator = None
 
     async def get_assistant_response(
         self,

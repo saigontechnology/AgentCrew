@@ -395,6 +395,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
         # Per-turn chunk accumulator: token chunks are buffered and flushed
         # every 100ms as one batch event, so the SDK task-store persistence
         # runs once per batch instead of once per token.
+        tools_enabled = tool_loop_guard.start_request()
         buffer = _TurnChunkBuffer(event_queue, task_id, context_id, answer_state)
         flush_task = asyncio.create_task(buffer.flush_loop())
         working_emitted = False
@@ -420,8 +421,11 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 else:
                     raise
 
-        stream = agent.process_messages(history, callback=process_result)
+        stream = None
         try:
+            stream = agent.process_messages(
+                history, callback=process_result, tools_enabled=tools_enabled
+            )
             async for (
                 response_message,
                 chunk_text,
@@ -494,6 +498,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
             await buffer.flush()
             await stop_flush_task()
 
+            tool_loop_guard.validate_response(current_response, tool_uses)
             thinking_data = (
                 (thinking_content, thinking_signature) if thinking_content else None
             )
@@ -512,7 +517,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
                     artifact_id=tool_artifact_id,
                     tool_uses=tool_uses,
                 )
-                if tool_artifact:
+                if tool_artifact and tool_uses:
                     await event_queue.enqueue_event(
                         TaskArtifactUpdateEvent(
                             task_id=task_id,
@@ -550,7 +555,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
 
                 if result == ToolCallResult.INPUT_REQUIRED:
                     return "", token_usage
-                if recovery := pending_recovery_message(history):
+                if recovery := tool_round.recovery_message(history):
                     await self.session_store.append_history(context_id, recovery, owner)
                     history.append(recovery)
 
@@ -597,7 +602,8 @@ class AgentCrewA2AExecutor(AgentExecutor):
             from openai import APIError
 
             if (
-                isinstance(e, APIError)
+                tool_loop_guard.tools_enabled
+                and isinstance(e, APIError)
                 and (
                     hasattr(e, "code")
                     and e.code
@@ -637,6 +643,8 @@ class AgentCrewA2AExecutor(AgentExecutor):
             raise
         finally:
             await stop_flush_task(suppress_errors=True)
+            if stream is not None:
+                await stream.aclose()
 
     async def _execute_tool_calls(
         self,

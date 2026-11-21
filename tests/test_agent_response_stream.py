@@ -62,6 +62,7 @@ class _ResponsesStubLLM:
 
     def __init__(self, chunk_lists: list[list[SimpleNamespace]]):
         self._chunk_lists = [list(chunks) for chunks in chunk_lists]
+        self.tool_policies = []
         self._provider_name = "openai"
         self.provider_name = "openai"
         self.model = "gpt-5.4"
@@ -83,7 +84,10 @@ class _ResponsesStubLLM:
     def create_stream_state(self) -> dict[str, Any]:
         return self._responses.create_stream_state()
 
-    async def stream_assistant_response(self, messages) -> _StreamContext:
+    async def stream_assistant_response(
+        self, messages, *, tools_enabled: bool = True
+    ) -> _StreamContext:
+        self.tool_policies.append(tools_enabled)
         chunks = self._chunk_lists.pop(0) if self._chunk_lists else []
         return _StreamContext(chunks)
 
@@ -490,3 +494,48 @@ def test_consumers_have_no_stream_state_plumbing():
             f"{path} still imports attach_stream_metadata"
         )
         assert "stream_state=" not in source, f"{path} still threads stream_state"
+
+
+@pytest.mark.asyncio
+async def test_tools_disabled_flag_is_stream_local_and_preserves_reasoning_and_usage():
+    import asyncio
+
+    chunks = [
+        _event("response.output_item.done", item=_reasoning_item(), output_index=0),
+        *_text_events("Final answer"),
+    ]
+    agent = _make_agent([chunks, _text_events("normal")])
+    history = [{"role": "user", "content": [{"type": "text", "text": "work"}]}]
+    disabled = agent.process_messages(history, tools_enabled=False)
+    enabled = agent.process_messages(history)
+    results = await asyncio.gather(_drain(disabled), _drain(enabled))
+    assert results[0][-1][0] == "Final answer"
+    assert results[1][-1][0] == "normal"
+    assert agent.llm.tool_policies == [False, True]
+    message = disabled.format_assistant_message(
+        "Final answer", thinking=("step one", None)
+    )
+    assert get_responses_provider_state(message)["output_items"][0]["id"] == "rs_stream"
+    assert message["_metadata"]["context_usage"]["prompt_tokens"] == 10
+
+
+@pytest.mark.asyncio
+async def test_disabled_stream_does_not_hide_parsed_invalid_tool_calls():
+    from unittest.mock import AsyncMock, MagicMock
+
+    agent = _make_agent([_text_events("answer")])
+    agent._message_formatter.filter_invalid_tool_uses = MagicMock(return_value=[])
+    original = agent.llm.process_stream_chunk
+
+    def anomalous_chunk(*args):
+        response, _, usage, text, thinking = original(*args)
+        return response, [{"invalid": True}], usage, text, thinking
+
+    agent.llm.process_stream_chunk = anomalous_chunk
+    callback = MagicMock()
+    agent.pre_process_message = AsyncMock(
+        return_value=[{"role": "user", "content": "work"}]
+    )
+    await _drain(agent.process_messages(callback=callback, tools_enabled=False))
+    assert callback.call_args.args[0] == [{"invalid": True}]
+    agent._message_formatter.filter_invalid_tool_uses.assert_not_called()

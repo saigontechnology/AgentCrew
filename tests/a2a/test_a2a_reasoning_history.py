@@ -90,7 +90,9 @@ class _ResponsesStubLLM:
     def create_stream_state(self) -> dict[str, Any]:
         return self._responses.create_stream_state()
 
-    async def stream_assistant_response(self, messages) -> _StreamContext:
+    async def stream_assistant_response(
+        self, messages, *, tools_enabled: bool = True
+    ) -> _StreamContext:
         chunks = self._chunk_lists.pop(0) if self._chunk_lists else []
         return _StreamContext(chunks)
 

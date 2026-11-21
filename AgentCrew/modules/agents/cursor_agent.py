@@ -354,6 +354,8 @@ class CursorAgent(BaseAgent):
         self,
         messages: list[dict[str, Any]] | None = None,
         callback: Callable | None = None,
+        *,
+        tools_enabled: bool = True,
     ) -> AgentResponseStream:
         return AgentResponseStream(
             agent=self,

@@ -361,7 +361,9 @@ class OpenAIResponseService(BaseLLMService):
         self.tool_handlers[tool_name] = handler_function
         logger.info(f"🔧 Registered tool for Response API: {tool_name}")
 
-    async def stream_assistant_response(self, messages) -> Any:
+    async def stream_assistant_response(
+        self, messages, *, tools_enabled: bool = True
+    ) -> Any:
         """Stream the assistant's response using Response API."""
 
         # Convert messages to Response API input format
@@ -397,8 +399,10 @@ class OpenAIResponseService(BaseLLMService):
             stream_params["extra_headers"] = self._extra_headers
 
         # Add tools if available
-        if self.tools and "tool_use" in ModelRegistry.get_model_capabilities(
-            full_model_id
+        if (
+            tools_enabled
+            and self.tools
+            and "tool_use" in ModelRegistry.get_model_capabilities(full_model_id)
         ):
             # Include both custom tools and built-in tools
             all_tools = self.tools.copy()

@@ -254,7 +254,9 @@ class OpenAICodexService(OpenAIResponseService):
             base["ChatGPT-Account-ID"] = self._oauth.account_id
             self._extra_headers = base
 
-    async def stream_assistant_response(self, messages) -> Any:
+    async def stream_assistant_response(
+        self, messages, *, tools_enabled: bool = True
+    ) -> Any:
         self._ensure_valid_token()
         await self._ensure_extra_headers()
 
@@ -290,8 +292,10 @@ class OpenAICodexService(OpenAIResponseService):
         if self._extra_headers:
             stream_params["extra_headers"] = self._extra_headers
 
-        if self.tools and "tool_use" in ModelRegistry.get_model_capabilities(
-            full_model_id
+        if (
+            tools_enabled
+            and self.tools
+            and "tool_use" in ModelRegistry.get_model_capabilities(full_model_id)
         ):
             stream_params["tools"] = self.tools.copy()
 

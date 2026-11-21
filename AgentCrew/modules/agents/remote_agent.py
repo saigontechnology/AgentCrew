@@ -307,6 +307,8 @@ class RemoteAgent(BaseAgent):
         self,
         messages: list[dict[str, Any]] | None = None,
         callback: Callable | None = None,
+        *,
+        tools_enabled: bool = True,
     ) -> AgentResponseStream:
         """Process messages through the remote agent as a stream.
 

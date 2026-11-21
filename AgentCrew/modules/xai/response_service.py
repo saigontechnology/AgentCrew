@@ -345,6 +345,7 @@ class XAISubscriptionResponseService(OpenAIResponseService):
         *,
         model_id: str,
         reasoning_effort: str | None,
+        tools_enabled: bool = True,
     ) -> ResponsesStreamGuard:
         model = self._model_definition(model_id)
         loop = asyncio.get_running_loop()
@@ -365,15 +366,20 @@ class XAISubscriptionResponseService(OpenAIResponseService):
             params["include"] = ["reasoning.encrypted_content"]
             if reasoning_effort is not None:
                 params["reasoning"] = {"effort": reasoning_effort}
-        if self.tools:
+        if tools_enabled and self.tools:
             params["tools"] = [
                 tool for tool in self.tools if tool.get("type") == "function"
             ]
         return ResponsesStreamGuard(await self.client.responses.create(**params), "xAI")
 
-    async def stream_assistant_response(self, messages: list[dict[str, Any]]) -> Any:
+    async def stream_assistant_response(
+        self, messages: list[dict[str, Any]], *, tools_enabled: bool = True
+    ) -> Any:
         return await self._create_responses_stream(
-            messages, model_id=self.model, reasoning_effort=self.reasoning_effort
+            messages,
+            model_id=self.model,
+            reasoning_effort=self.reasoning_effort,
+            tools_enabled=tools_enabled,
         )
 
     @staticmethod

@@ -109,6 +109,8 @@ class BaseAgent(ABC):
         self,
         messages: list[dict[str, Any]] | None = None,
         callback: Callable | None = None,
+        *,
+        tools_enabled: bool = True,
     ) -> AgentResponseStream:
         """
         Process messages using this agent.

@@ -222,7 +222,9 @@ class OpenAIService(BaseLLMService):
         self.tool_handlers[tool_name] = handler_function
         logger.info(f"🔧 Registered tool: {tool_name}")
 
-    async def stream_assistant_response(self, messages) -> Any:
+    async def stream_assistant_response(
+        self, messages, *, tools_enabled: bool = True
+    ) -> Any:
         """Stream the assistant's response with tool support."""
         full_model_id = f"{self._provider_name}/{self.model}"
         stream_params = {
@@ -262,8 +264,10 @@ class OpenAIService(BaseLLMService):
             ] + messages
 
         # Add tools if available
-        if self.tools and "tool_use" in ModelRegistry.get_model_capabilities(
-            full_model_id
+        if (
+            tools_enabled
+            and self.tools
+            and "tool_use" in ModelRegistry.get_model_capabilities(full_model_id)
         ):
             stream_params["tools"] = self.tools
 

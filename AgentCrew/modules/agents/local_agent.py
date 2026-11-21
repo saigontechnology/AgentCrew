@@ -805,6 +805,8 @@ class LocalAgent(BaseAgent):
         self,
         messages: list[dict[str, Any]] | None = None,
         callback: Callable | None = None,
+        *,
+        tools_enabled: bool = True,
     ) -> AgentResponseStream:
         """
         Process messages using this agent.
@@ -817,6 +819,7 @@ class LocalAgent(BaseAgent):
         Args:
             messages: The messages to process
             callback: Optional ``(tool_uses, token_usage) -> None``
+            tools_enabled: Whether this request may advertise registered tools.
 
         Returns:
             An ``AgentResponseStream`` yielding
@@ -827,7 +830,7 @@ class LocalAgent(BaseAgent):
             agent=self,
             state_factory=self.create_stream_state,
             iterator_factory=lambda stream_state: self._stream_messages(
-                messages, callback, stream_state, request_usage
+                messages, callback, stream_state, request_usage, tools_enabled
             ),
             request_usage=request_usage,
         )
@@ -838,6 +841,7 @@ class LocalAgent(BaseAgent):
         callback: Callable | None,
         stream_state: dict[str, Any] | None,
         request_usage: dict[str, Any],
+        tools_enabled: bool = True,
     ):
         """Private async iterator implementing the stream lifecycle."""
         if not self.llm:
@@ -891,7 +895,7 @@ class LocalAgent(BaseAgent):
 
         try:
             async with await self.llm.stream_assistant_response(
-                final_messages
+                final_messages, tools_enabled=tools_enabled
             ) as stream:
                 async for chunk in stream:
                     if stream_state is not None:
@@ -954,7 +958,9 @@ class LocalAgent(BaseAgent):
             self.token_usage = _token_usage
             if callback:
                 callback(
-                    self._message_formatter.filter_invalid_tool_uses(_tool_uses),
+                    self._message_formatter.filter_invalid_tool_uses(_tool_uses)
+                    if tools_enabled
+                    else _tool_uses,
                     _token_usage,
                 )
             else:

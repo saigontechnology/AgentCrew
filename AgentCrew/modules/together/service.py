@@ -270,7 +270,9 @@ class TogetherAIService(BaseLLMService):
         self.tool_handlers[tool_name] = handler_function
         logger.info(f"🔧 Registered tool: {tool_name}")
 
-    async def stream_assistant_response(self, messages: list[dict[str, Any]]) -> Any:
+    async def stream_assistant_response(
+        self, messages: list[dict[str, Any]], *, tools_enabled: bool = True
+    ) -> Any:
         full_model_id = f"{self._provider_name}/{self.model}"
         stream_params: dict[str, Any] = {
             "model": self.model,
@@ -309,8 +311,10 @@ class TogetherAIService(BaseLLMService):
                 {"role": "system", "content": self.system_prompt}
             ] + stream_params["messages"]
 
-        if self.tools and "tool_use" in ModelRegistry.get_model_capabilities(
-            full_model_id
+        if (
+            tools_enabled
+            and self.tools
+            and "tool_use" in ModelRegistry.get_model_capabilities(full_model_id)
         ):
             stream_params["tools"] = self.tools
 

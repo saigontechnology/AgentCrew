@@ -10,7 +10,6 @@ from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.agents.local_agent import LocalAgent
 from AgentCrew.modules.agents.tool_loop_guard import (
     ToolLoopGuard,
-    pending_recovery_message,
 )
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.llm.token_usage import TokenUsage
@@ -98,7 +97,10 @@ async def _run_agent_loop(
         if request_usage_callback is not None:
             request_usage_callback(_token_usage)
 
-    stream = agent.process_messages(history, callback=process_result)
+    tools_enabled = tool_loop_guard.start_request()
+    stream = agent.process_messages(
+        history, callback=process_result, tools_enabled=tools_enabled
+    )
 
     try:
         iterator = aiter(stream)
@@ -134,6 +136,7 @@ async def _run_agent_loop(
     finally:
         await _close_stream(stream, sys.exc_info()[1])
 
+    tool_loop_guard.validate_response(current_response, tool_uses)
     thinking_data = (thinking_content, thinking_signature) if thinking_content else None
 
     def append_assistant_message(assistant_message: dict[str, Any] | None) -> None:
@@ -285,7 +288,7 @@ async def _run_agent_loop(
                 history.append(msg)
 
     tool_round.raise_if_terminal()
-    if recovery := pending_recovery_message(history):
+    if recovery := tool_round.recovery_message(history):
         history.append(recovery)
     return await _run_agent_loop(
         agent,

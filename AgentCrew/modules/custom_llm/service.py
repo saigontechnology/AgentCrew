@@ -484,10 +484,13 @@ class CustomLLMService(OpenAIService):
         is_streamable = "stream" in model_capabilities
         return stream_params, is_streamable
 
-    async def stream_assistant_response(self, messages):
+    async def stream_assistant_response(self, messages, *, tools_enabled: bool = True):
         """Stream the assistant's response with tool support."""
 
         stream_params, is_streamable = self._build_stream_params()
+        if not tools_enabled:
+            stream_params.pop("tools", None)
+            stream_params.pop("tool_choice", None)
 
         stream_params["messages"] = self._convert_internal_format(messages)
 

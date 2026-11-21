@@ -337,7 +337,9 @@ class GoogleAINativeService(BaseLLMService):
 
         logger.info(f"🔧 Registered tool: {tool_name}")
 
-    async def stream_assistant_response(self, messages: list[dict[str, Any]]) -> Any:
+    async def stream_assistant_response(
+        self, messages: list[dict[str, Any]], *, tools_enabled: bool = True
+    ) -> Any:
         """
         Stream the assistant's response with tool support.
         Returns a context manager compatible adapter around the Google GenAI stream.
@@ -377,8 +379,10 @@ class GoogleAINativeService(BaseLLMService):
             config.system_instruction = self.system_prompt
 
         # Add tools if available
-        if self.tools and "tool_use" in ModelRegistry.get_model_capabilities(
-            full_model_id
+        if (
+            tools_enabled
+            and self.tools
+            and "tool_use" in ModelRegistry.get_model_capabilities(full_model_id)
         ):
             config.tools = self.tools
             # config.tools.append(types.Tool(google_search=types.GoogleSearch()))

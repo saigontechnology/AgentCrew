@@ -422,7 +422,7 @@ class GithubCopilotService(CustomLLMService):
             else None,
         )
 
-    async def stream_assistant_response(self, messages):
+    async def stream_assistant_response(self, messages, *, tools_enabled: bool = True):
         """Stream the assistant's response with tool support."""
 
         if self._is_github_provider():
@@ -459,4 +459,6 @@ class GithubCopilotService(CustomLLMService):
                 ):
                     self.extra_headers["Copilot-Vision-Request"] = "true"
 
-        return await super().stream_assistant_response(messages)
+        return await super().stream_assistant_response(
+            messages, tools_enabled=tools_enabled
+        )

@@ -251,8 +251,10 @@ class BaseLLMService(ABC):
         """Handle the /file command and return message content."""
 
     @abstractmethod
-    async def stream_assistant_response(self, messages: list[dict[str, Any]]) -> Any:
-        """Stream the assistant's response."""
+    async def stream_assistant_response(
+        self, messages: list[dict[str, Any]], *, tools_enabled: bool = True
+    ) -> Any:
+        """Stream a response; omit tool definitions for this request when disabled."""
 
     @abstractmethod
     def register_tool(self, tool_definition, handler_function):

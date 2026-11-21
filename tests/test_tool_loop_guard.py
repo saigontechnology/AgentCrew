@@ -9,8 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from AgentCrew.modules.agents.message_metadata import is_tool_loop_recovery
+from AgentCrew.modules.agents.message_metadata import (
+    is_tool_loop_finalization,
+    is_tool_loop_recovery,
+)
 from AgentCrew.modules.agents.tool_loop_guard import (
+    FINALIZATION_PROMPT,
     MAX_TOOL_ROUNDS,
     REPEAT_WARNING,
     ToolLoopError,
@@ -111,8 +115,12 @@ def test_hard_cap_catches_alternating_tools():
     for index in range(MAX_TOOL_ROUNDS):
         assert guard.check_round([call(str(index % 2))]).errors == (None,)
     terminal = guard.check_round([call("new")])
-    with pytest.raises(ToolLoopError, match=f"exceeded {MAX_TOOL_ROUNDS}"):
-        terminal.raise_if_terminal()
+    assert terminal.finalization_required
+    assert terminal.terminal_error is None
+    assert terminal.omit_blocked_calls([call("new")])[0] == []
+    assert guard.start_request() is False
+    with pytest.raises(ToolLoopError, match="already attempted"):
+        guard.start_request()
 
 
 def test_guard_logs_only_name_count_and_digest():
@@ -142,7 +150,10 @@ class ModelStream:
         self.tools = tools
 
     async def __aiter__(self):
-        self.callback(self.tools or [], TokenUsage(input_tokens=1, output_tokens=1))
+        self.callback(
+            self.tools or [],
+            TokenUsage().merge(TokenUsage(input_tokens=1, output_tokens=1)),
+        )
         yield ("working" if self.tools else "Finished", None, None)
 
     async def aclose(self):
@@ -163,6 +174,8 @@ class Harness:
         self.batches = batches
         self.requests = 0
         self.request_histories = []
+        self.tool_policies = []
+        self.streams = []
         self.progress = AsyncMock()
         self.hooks = MagicMock()
         self.hooks.run_before = AsyncMock(side_effect=lambda point, **kwargs: kwargs)
@@ -213,7 +226,8 @@ class Harness:
                 message=None,
             )
 
-    def process_messages(self, messages=None, callback=None):
+    def process_messages(self, messages=None, callback=None, *, tools_enabled=True):
+        self.tool_policies.append(tools_enabled)
         assert self.requests < 60, "stub model exceeded bounded round budget"
         self.request_histories.append(
             copy.deepcopy(messages if messages is not None else self.history)
@@ -223,7 +237,10 @@ class Harness:
         self.requests += 1
         for index, tool in enumerate(tools or []):
             tool["id"] = f"r{self.requests}-{index}"
-        return ModelStream(self.agent, callback, tools)
+        stream = ModelStream(self.agent, callback, tools)
+        stream.tools_enabled = tools_enabled
+        self.streams.append(stream)
+        return stream
 
     def _setup_chat(self):
         from AgentCrew.modules.chat.message.handler import MessageHandler
@@ -238,6 +255,9 @@ class Harness:
         handler.streamline_messages = self.history
         handler.persistent_service = None
         handler.current_conversation_id = None
+        handler.current_user_input = None
+        handler.current_user_input_idx = -1
+        handler.last_assisstant_response_idx = -1
         handler.voice_service = None
         handler._pending_resource_attachments = []
         handler._messages_append = self.history.append
@@ -371,6 +391,7 @@ async def test_repeating_model_recovers_or_terminates(mode, recover, monkeypatch
     harness = Harness(mode, monkeypatch, batches)
     result = await harness.run(terminal=not recover)
     assert harness.requests == 4
+    assert all(harness.tool_policies)
     assert harness.llm.execute_tool.await_count == 2
     assert harness.hooks.run_before.await_count == 2
     assert harness.agent.validate_tool_use.call_count == 2
@@ -511,14 +532,61 @@ async def test_duplicate_batch_never_dispatches_more_than_twice(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
-async def test_hard_cap_bounds_alternating_model_across_paths(mode, monkeypatch):
-    batches = [[call(str(index % 2))] for index in range(MAX_TOOL_ROUNDS + 1)]
-    harness = Harness(mode, monkeypatch, batches)
-    await harness.run(terminal=True)
-    assert harness.requests == MAX_TOOL_ROUNDS + 1
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_hard_cap_finalizes_once_without_tools(mode, mixed, monkeypatch):
+    batches = [[call(str(index % 2))] for index in range(MAX_TOOL_ROUNDS)]
+    attempted = (
+        [call("overflow"), call("browser_click"), call("ask")]
+        if mixed
+        else [call("overflow")]
+    )
+    harness = Harness(mode, monkeypatch, batches + [attempted, None])
+    result = await harness.run()
+    assert harness.requests == MAX_TOOL_ROUNDS + 2
+    assert harness.tool_policies == [True] * (MAX_TOOL_ROUNDS + 1) + [False]
     assert harness.llm.execute_tool.await_count == MAX_TOOL_ROUNDS
+    assert harness.agent.validate_tool_use.call_count == MAX_TOOL_ROUNDS
+    assert harness.hooks.run_before.await_count == MAX_TOOL_ROUNDS
+    if harness.approval:
+        assert harness.approval.await_count == MAX_TOOL_ROUNDS
     harness.assert_paired()
-    assert f"exceeded {MAX_TOOL_ROUNDS}" in harness.history[-1]["content"]
+    messages = [
+        message for message in harness.history if is_tool_loop_finalization(message)
+    ]
+    assert len(messages) == 1
+    assert messages[0]["content"] == [{"type": "text", "text": FINALIZATION_PROMPT}]
+    assert harness.history[-1]["content"][0]["text"] == "Finished"
+    harness.assert_blocked_has_no_side_effects(
+        {f"r51-{i}" for i in range(len(attempted))}
+    )
+    assert harness.agent.extract_last_user_message_for_memory(harness.history) == "work"
+    assert is_tool_loop_recovery(messages[0])
+    if mode != "chat":
+        assert harness.agent.store_memory_if_available.call_args.args[0] == "work"
+    if mode in {"chat", "jobs", "a2a"}:
+        assert result[1].total_input_tokens == MAX_TOOL_ROUNDS + 2
+    if mode == "chat":
+        assert harness.session.status == "completed"
+    if mode == "acp":
+        assert harness.state.token_usage.total_input_tokens == MAX_TOOL_ROUNDS + 2
+    if mode == "a2a":
+        from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
+
+        assert [
+            args.args[1] for args in harness.store.append_history.await_args_list
+        ] == harness.history[1:]
+        tool_artifacts = [
+            args.args[0].artifact
+            for args in harness.queue.enqueue_event.await_args_list
+            if isinstance(args.args[0], TaskArtifactUpdateEvent)
+            and args.args[0].artifact.artifact_id.startswith("tool_")
+        ]
+        assert len(tool_artifacts) == MAX_TOOL_ROUNDS
+    if mode == "jobs":
+        assert (
+            sum(args.args[0] == "tool" for args in harness.progress.await_args_list)
+            == MAX_TOOL_ROUNDS
+        )
 
 
 @pytest.mark.asyncio
@@ -529,7 +597,7 @@ async def test_concurrent_jobs_share_agent_but_not_guard_state(monkeypatch):
     histories = [copy.deepcopy(harness.history), copy.deepcopy(harness.history)]
     rounds = {id(history): 0 for history in histories}
 
-    def process_messages(history, callback):
+    def process_messages(history, callback, *, tools_enabled=True):
         rounds[id(history)] += 1
         index = rounds[id(history)]
         tools = [call(call_id=f"{id(history)}-{index}")] if index <= 3 else []
@@ -817,3 +885,117 @@ async def test_chat_repeated_transfer_is_omitted_before_dispatch(monkeypatch):
     harness.assert_recovery()
     harness.assert_paired()
     harness.assert_blocked_has_no_side_effects({"r3-0"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
+@pytest.mark.parametrize(
+    "outcome", ["empty", "malformed", "tools", "exception", "api_error", "cancel"]
+)
+async def test_finalization_failures_never_retry_or_dispatch(
+    mode, outcome, monkeypatch
+):
+    original = ModelStream.__aiter__
+    closes = []
+
+    async def stream_result(stream):
+        if stream.tools_enabled:
+            async for item in original(stream):
+                yield item
+            return
+        if outcome == "exception":
+            raise RuntimeError("final transport failure")
+        if outcome == "api_error":
+            import httpx
+            from openai import BadRequestError
+
+            raise BadRequestError(
+                "context window",
+                response=httpx.Response(
+                    400, request=httpx.Request("POST", "https://stub.invalid")
+                ),
+                body={"code": "context_length_exceeded"},
+            )
+        if outcome == "cancel":
+            raise asyncio.CancelledError()
+        stream.callback(
+            [call(call_id="anomaly")] if outcome == "tools" else [],
+            TokenUsage(input_tokens=1),
+        )
+        yield ({"invalid": True} if outcome == "malformed" else "", None, None)
+
+    async def close(stream):
+        closes.append(stream)
+
+    monkeypatch.setattr(ModelStream, "__aiter__", stream_result)
+    monkeypatch.setattr(ModelStream, "aclose", close)
+    harness = Harness(
+        mode,
+        monkeypatch,
+        [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS + 1)] + [None],
+    )
+    result = None
+    if outcome == "cancel" and mode != "chat":
+        with pytest.raises(asyncio.CancelledError):
+            await harness.run()
+    elif outcome == "cancel":
+        result = await harness.run()
+        assert harness.session.status == "canceled"
+    elif outcome in {"exception", "api_error"} and mode in {"jobs", "acp"}:
+        with pytest.raises(Exception, match="final transport failure|context window"):
+            await harness.run()
+    else:
+        result = await harness.run(terminal=mode in {"jobs", "acp"})
+    if mode == "chat":
+        assert result[1].total_input_tokens >= MAX_TOOL_ROUNDS + 1
+        assert harness.handler.stream_generator is None
+    assert harness.tool_policies[-1] is False
+    assert len(harness.tool_policies) == MAX_TOOL_ROUNDS + 2
+    assert harness.llm.execute_tool.await_count == MAX_TOOL_ROUNDS
+    harness.assert_blocked_has_no_side_effects({"r51-0", "anomaly"})
+    harness.assert_paired()
+    assert len([m for m in harness.history if is_tool_loop_finalization(m)]) == 1
+    assert harness.streams[-1] in closes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
+async def test_budget_finalization_does_not_leak_to_fresh_turn(mode, monkeypatch):
+    harness = Harness(
+        mode,
+        monkeypatch,
+        [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS + 1)] + [None],
+    )
+    await harness.run()
+    harness.batches = [[call()], None]
+    harness.requests = 0
+    await harness.run()
+    assert harness.tool_policies[-2:] == [True, True]
+    assert harness.llm.execute_tool.await_count == MAX_TOOL_ROUNDS + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
+async def test_final_text_at_round_50_does_not_trigger_fallback(mode, monkeypatch):
+    harness = Harness(
+        mode, monkeypatch, [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS)] + [None]
+    )
+    await harness.run()
+    assert harness.requests == MAX_TOOL_ROUNDS + 1
+    assert all(harness.tool_policies)
+    assert harness.llm.execute_tool.await_count == MAX_TOOL_ROUNDS
+    assert not any(is_tool_loop_finalization(message) for message in harness.history)
+    harness.assert_paired()
+
+
+def test_exact_repeat_termination_takes_priority_at_budget_boundary():
+    guard = ToolLoopGuard()
+    for index in range(MAX_TOOL_ROUNDS - 3):
+        guard.check_round([call(str(index % 2))])
+    for _ in range(3):
+        guard.check_round([call("repeat")])
+    terminal = guard.check_round([call("repeat")])
+    assert terminal.terminal_error
+    assert not terminal.finalization_required
+    with pytest.raises(ToolLoopError, match="after the recovery warning"):
+        terminal.raise_if_terminal()

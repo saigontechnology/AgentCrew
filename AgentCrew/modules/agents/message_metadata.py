@@ -27,16 +27,26 @@ PROVIDER_STATE_OPENAI_RESPONSES = "openai_responses"
 REASONING_ITEM_TYPE = "reasoning"
 
 
-def mark_tool_loop_recovery(message: dict[str, Any]) -> None:
+def mark_tool_loop_recovery(
+    message: dict[str, Any], *, finalization: bool = False
+) -> None:
     """Mark an assistant recovery round or its synthetic user context."""
     metadata = message.setdefault(METADATA_FIELD, {"version": METADATA_VERSION})
     metadata["tool_loop_recovery"] = True
+    if finalization:
+        metadata["tool_loop_finalization"] = True
 
 
 def is_tool_loop_recovery(message: dict[str, Any]) -> bool:
     """Identify persisted loop recovery context without inspecting its text."""
     metadata = message.get(METADATA_FIELD)
     return isinstance(metadata, dict) and metadata.get("tool_loop_recovery") is True
+
+
+def is_tool_loop_finalization(message: dict[str, Any]) -> bool:
+    """Identify the internal, tools-disabled budget finalization instruction."""
+    metadata = message.get(METADATA_FIELD)
+    return isinstance(metadata, dict) and metadata.get("tool_loop_finalization") is True
 
 
 def build_responses_metadata(
