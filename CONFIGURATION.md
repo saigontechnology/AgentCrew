@@ -133,6 +133,8 @@ They can also be set directly as environment variables.
 | `FIREWORKS_API_KEY` | Fireworks AI provider credential. |
 | `REFUSELESS_API_KEY` | Refuseless OpenAI-compatible chat provider credential. |
 | `TAVILY_API_KEY` | Tavily web-search feature credential; not an LLM provider credential. |
+| `WEB_SEARCH_PROVIDER` | Set to `keenable` to use [Keenable](https://keenable.ai) for `search_web` and `fetch_webpage` instead of Tavily. Works without a key; `crawl_website` is not available with Keenable. |
+| `KEENABLE_API_KEY` | Optional Keenable key for higher rate limits when `WEB_SEARCH_PROVIDER=keenable`. |
 | `VOYAGE_API_KEY` | Voyage embedding credential for the normal memory path. |
 | `ELEVENLABS_API_KEY` | ElevenLabs voice-synthesis credential. |
 | `CURSOR_API_KEY` | Cursor Agent SDK credential. It can also be set directly in the environment. |
