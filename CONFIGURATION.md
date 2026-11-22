@@ -68,6 +68,7 @@ the full file shape.
     "theme": "dark",
     "swap_enter": false,
     "yolo_mode": false,
+    "max_tool_rounds": 200,
     "auto_context_shrink": true,
     "tool_result_summary_enabled": true,
     "shrink_excluded": [],
@@ -113,6 +114,37 @@ the full file shape.
 At least one hosted LLM needs a provider credential or an applicable
 OAuth/subscription login. Remove unused entries, or use empty strings, rather
 than keeping placeholder text in a live configuration.
+
+### Tool-Round Budget
+
+`global_settings.max_tool_rounds` sets the maximum number of model tool rounds
+per external user turn. It must be a positive JSON integer (not a boolean,
+string, or float) and defaults to **200**, including for existing config files
+that omit this setting. Reading the setting does not rewrite your config file.
+
+Set `AGENTCREW_MAX_TOOL_ROUNDS` to override the config value:
+
+```bash
+export AGENTCREW_MAX_TOOL_ROUNDS=100
+```
+
+Resolution order is an explicit internal `ToolLoopGuard(max_tool_rounds=...)`
+override, then a valid environment value, then a valid config value, then 200.
+The environment value is trimmed and parsed as an integer. Invalid or
+non-positive environment values log a warning and fall back to config; invalid
+config values log a warning and fall back to 200. Invalid explicit overrides
+raise `ValueError`.
+
+Each new turn snapshots its resolved budget. Environment changes and config
+changes detected by the existing modification-time cache affect new turns,
+not an in-progress turn. The budget counts model tool batches, not individual
+calls: rounds 1 through N are permitted. If the model attempts a tool batch in
+round N+1, the entire batch is removed without execution and one tools-disabled
+request asks for a best-effort final answer that discloses incomplete or
+uncertain work. Empty/malformed finalization output or unexpected tool calls
+still terminate the turn. The separate exact-repeat protection is unchanged:
+two identical calls may execute, the third is removed with recovery context,
+and a fourth consecutive repeat terminates instead of entering finalization.
 
 ### API Keys and Credential Scope
 
@@ -524,6 +556,7 @@ export AGENTCREW_MODEL_ID="YOUR_MODEL_ID"
 | `AGENTCREW_ACP_SESSION_DIR` | Directory for persisted ACP session JSON. Defaults to `.agentcrew/acp_sessions` when no constructor base directory is supplied. |
 | `AGENTCREW_PROVIDER` | Provider override; accepts a built-in provider or configured custom-provider name. |
 | `AGENTCREW_MODEL_ID` | Runtime model-ID override. |
+| `AGENTCREW_MAX_TOOL_ROUNDS` | Positive-integer tool-round budget per external turn; overrides `global_settings.max_tool_rounds`, which defaults to `200`. |
 | `AGENTCREW_FAST_CODEX` | Set to `1` to request the priority service tier for OpenAI Codex. |
 | `AGENTCREW_LOG_PATH` | Log directory in production mode. |
 | `AGENTCREW_LOG_LEVEL` | Log level, such as `ERROR`, `WARNING`, or `DEBUG`. |

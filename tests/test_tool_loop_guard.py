@@ -14,14 +14,15 @@ from AgentCrew.modules.agents.message_metadata import (
     is_tool_loop_recovery,
 )
 from AgentCrew.modules.agents.tool_loop_guard import (
-    FINALIZATION_PROMPT,
-    MAX_TOOL_ROUNDS,
+    FINALIZATION_PROMPT_TEMPLATE,
     REPEAT_WARNING,
     ToolLoopError,
     ToolLoopGuard,
     tool_call_fingerprint,
 )
 from AgentCrew.modules.llm.token_usage import TokenUsage
+
+TEST_MAX_TOOL_ROUNDS = 12
 
 
 def call(name="read_file", arguments=None, call_id="call"):
@@ -64,7 +65,7 @@ def test_fingerprint_handles_unexpected_values_without_repr_or_recursion():
 
 
 def test_first_two_execute_third_warns_fourth_terminates():
-    guard = ToolLoopGuard()
+    guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
     assert guard.check_round([call()]).errors == (None,)
     assert guard.check_round([call(call_id="new")]).errors == (None,)
     warning = guard.check_round([call()])
@@ -78,7 +79,7 @@ def test_first_two_execute_third_warns_fourth_terminates():
 
 
 def test_changed_arguments_absence_and_new_turn_reset_streaks():
-    guard = ToolLoopGuard()
+    guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
     guard.check_round([call()])
     guard.check_round([call()])
     assert guard.check_round([call(arguments={"new": 1})]).errors == (None,)
@@ -89,18 +90,20 @@ def test_changed_arguments_absence_and_new_turn_reset_streaks():
     guard.check_round([call()])
     guard.check_round([])
     assert guard.check_round([call()]).errors == (None,)
-    assert ToolLoopGuard().check_round([call()]).errors == (None,)
+    assert ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS).check_round(
+        [call()]
+    ).errors == (None,)
 
 
 def test_duplicates_share_budget_and_terminal_batch_is_nonexecuting():
-    guard = ToolLoopGuard()
+    guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
     assert guard.check_round([call(), call(), call()]).errors == (
         None,
         None,
         REPEAT_WARNING,
     )
     assert guard.check_round([call()]).terminal_error
-    first_batch = ToolLoopGuard()
+    first_batch = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
     assert first_batch.check_round([call()] * 4).errors == (
         None,
         None,
@@ -111,8 +114,8 @@ def test_duplicates_share_budget_and_terminal_batch_is_nonexecuting():
 
 
 def test_hard_cap_catches_alternating_tools():
-    guard = ToolLoopGuard()
-    for index in range(MAX_TOOL_ROUNDS):
+    guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
+    for index in range(TEST_MAX_TOOL_ROUNDS):
         assert guard.check_round([call(str(index % 2))]).errors == (None,)
     terminal = guard.check_round([call("new")])
     assert terminal.finalization_required
@@ -129,7 +132,7 @@ def test_guard_logs_only_name_count_and_digest():
     messages = []
     sink = logger.add(lambda message: messages.append(str(message)))
     try:
-        guard = ToolLoopGuard()
+        guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
         for _ in range(4):
             guard.check_round([call(arguments={"token": "secret-value"})])
     finally:
@@ -166,7 +169,19 @@ class ModelStream:
 
 
 class Harness:
-    def __init__(self, mode, monkeypatch, batches):
+    def __init__(
+        self, mode, monkeypatch, batches, *, max_tool_rounds=TEST_MAX_TOOL_ROUNDS
+    ):
+        modules = {
+            "jobs": "AgentCrew.modules.agents.agent_runner",
+            "chat": "AgentCrew.modules.chat.message.handler",
+            "acp": "AgentCrew.modules.acp.turn_executor",
+            "a2a": "AgentCrew.modules.a2a.agent_executor",
+        }
+        monkeypatch.setattr(
+            f"{modules[mode]}.ToolLoopGuard",
+            lambda: ToolLoopGuard(max_tool_rounds=max_tool_rounds),
+        )
         from AgentCrew.modules.agents.local_agent import LocalAgent
         from AgentCrew.modules.events import HookRegistry
 
@@ -534,7 +549,7 @@ async def test_duplicate_batch_never_dispatches_more_than_twice(
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
 @pytest.mark.parametrize("mixed", [False, True])
 async def test_hard_cap_finalizes_once_without_tools(mode, mixed, monkeypatch):
-    batches = [[call(str(index % 2))] for index in range(MAX_TOOL_ROUNDS)]
+    batches = [[call(str(index % 2))] for index in range(TEST_MAX_TOOL_ROUNDS)]
     attempted = (
         [call("overflow"), call("browser_click"), call("ask")]
         if mixed
@@ -542,33 +557,40 @@ async def test_hard_cap_finalizes_once_without_tools(mode, mixed, monkeypatch):
     )
     harness = Harness(mode, monkeypatch, batches + [attempted, None])
     result = await harness.run()
-    assert harness.requests == MAX_TOOL_ROUNDS + 2
-    assert harness.tool_policies == [True] * (MAX_TOOL_ROUNDS + 1) + [False]
-    assert harness.llm.execute_tool.await_count == MAX_TOOL_ROUNDS
-    assert harness.agent.validate_tool_use.call_count == MAX_TOOL_ROUNDS
-    assert harness.hooks.run_before.await_count == MAX_TOOL_ROUNDS
+    assert harness.requests == TEST_MAX_TOOL_ROUNDS + 2
+    assert harness.tool_policies == [True] * (TEST_MAX_TOOL_ROUNDS + 1) + [False]
+    assert harness.llm.execute_tool.await_count == TEST_MAX_TOOL_ROUNDS
+    assert harness.agent.validate_tool_use.call_count == TEST_MAX_TOOL_ROUNDS
+    assert harness.hooks.run_before.await_count == TEST_MAX_TOOL_ROUNDS
     if harness.approval:
-        assert harness.approval.await_count == MAX_TOOL_ROUNDS
+        assert harness.approval.await_count == TEST_MAX_TOOL_ROUNDS
     harness.assert_paired()
     messages = [
         message for message in harness.history if is_tool_loop_finalization(message)
     ]
     assert len(messages) == 1
-    assert messages[0]["content"] == [{"type": "text", "text": FINALIZATION_PROMPT}]
+    assert messages[0]["content"] == [
+        {
+            "type": "text",
+            "text": FINALIZATION_PROMPT_TEMPLATE.format(
+                max_tool_rounds=TEST_MAX_TOOL_ROUNDS
+            ),
+        }
+    ]
     assert harness.history[-1]["content"][0]["text"] == "Finished"
     harness.assert_blocked_has_no_side_effects(
-        {f"r51-{i}" for i in range(len(attempted))}
+        {f"r{TEST_MAX_TOOL_ROUNDS + 1}-{i}" for i in range(len(attempted))}
     )
     assert harness.agent.extract_last_user_message_for_memory(harness.history) == "work"
     assert is_tool_loop_recovery(messages[0])
     if mode != "chat":
         assert harness.agent.store_memory_if_available.call_args.args[0] == "work"
     if mode in {"chat", "jobs", "a2a"}:
-        assert result[1].total_input_tokens == MAX_TOOL_ROUNDS + 2
+        assert result[1].total_input_tokens == TEST_MAX_TOOL_ROUNDS + 2
     if mode == "chat":
         assert harness.session.status == "completed"
     if mode == "acp":
-        assert harness.state.token_usage.total_input_tokens == MAX_TOOL_ROUNDS + 2
+        assert harness.state.token_usage.total_input_tokens == TEST_MAX_TOOL_ROUNDS + 2
     if mode == "a2a":
         from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
 
@@ -581,11 +603,11 @@ async def test_hard_cap_finalizes_once_without_tools(mode, mixed, monkeypatch):
             if isinstance(args.args[0], TaskArtifactUpdateEvent)
             and args.args[0].artifact.artifact_id.startswith("tool_")
         ]
-        assert len(tool_artifacts) == MAX_TOOL_ROUNDS
+        assert len(tool_artifacts) == TEST_MAX_TOOL_ROUNDS
     if mode == "jobs":
         assert (
             sum(args.args[0] == "tool" for args in harness.progress.await_args_list)
-            == MAX_TOOL_ROUNDS
+            == TEST_MAX_TOOL_ROUNDS
         )
 
 
@@ -797,7 +819,7 @@ def test_recovery_marker_is_internal_but_user_content_reaches_provider():
     from AgentCrew.modules.agents.message_metadata import strip_internal_metadata
     from AgentCrew.modules.agents.tool_loop_guard import pending_recovery_message
 
-    guard = ToolLoopGuard()
+    guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
     for _ in range(2):
         guard.check_round([call()])
     tools, decision = guard.check_round([call()]).omit_blocked_calls([call()])
@@ -932,7 +954,7 @@ async def test_finalization_failures_never_retry_or_dispatch(
     harness = Harness(
         mode,
         monkeypatch,
-        [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS + 1)] + [None],
+        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS + 1)] + [None],
     )
     result = None
     if outcome == "cancel" and mode != "chat":
@@ -947,12 +969,14 @@ async def test_finalization_failures_never_retry_or_dispatch(
     else:
         result = await harness.run(terminal=mode in {"jobs", "acp"})
     if mode == "chat":
-        assert result[1].total_input_tokens >= MAX_TOOL_ROUNDS + 1
+        assert result[1].total_input_tokens >= TEST_MAX_TOOL_ROUNDS + 1
         assert harness.handler.stream_generator is None
     assert harness.tool_policies[-1] is False
-    assert len(harness.tool_policies) == MAX_TOOL_ROUNDS + 2
-    assert harness.llm.execute_tool.await_count == MAX_TOOL_ROUNDS
-    harness.assert_blocked_has_no_side_effects({"r51-0", "anomaly"})
+    assert len(harness.tool_policies) == TEST_MAX_TOOL_ROUNDS + 2
+    assert harness.llm.execute_tool.await_count == TEST_MAX_TOOL_ROUNDS
+    harness.assert_blocked_has_no_side_effects(
+        {f"r{TEST_MAX_TOOL_ROUNDS + 1}-0", "anomaly"}
+    )
     harness.assert_paired()
     assert len([m for m in harness.history if is_tool_loop_finalization(m)]) == 1
     assert harness.streams[-1] in closes
@@ -964,26 +988,30 @@ async def test_budget_finalization_does_not_leak_to_fresh_turn(mode, monkeypatch
     harness = Harness(
         mode,
         monkeypatch,
-        [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS + 1)] + [None],
+        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS + 1)] + [None],
     )
     await harness.run()
     harness.batches = [[call()], None]
     harness.requests = 0
     await harness.run()
     assert harness.tool_policies[-2:] == [True, True]
-    assert harness.llm.execute_tool.await_count == MAX_TOOL_ROUNDS + 1
+    assert harness.llm.execute_tool.await_count == TEST_MAX_TOOL_ROUNDS + 1
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
-async def test_final_text_at_round_50_does_not_trigger_fallback(mode, monkeypatch):
+async def test_final_text_at_configured_limit_does_not_trigger_fallback(
+    mode, monkeypatch
+):
     harness = Harness(
-        mode, monkeypatch, [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS)] + [None]
+        mode,
+        monkeypatch,
+        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS)] + [None],
     )
     await harness.run()
-    assert harness.requests == MAX_TOOL_ROUNDS + 1
+    assert harness.requests == TEST_MAX_TOOL_ROUNDS + 1
     assert all(harness.tool_policies)
-    assert harness.llm.execute_tool.await_count == MAX_TOOL_ROUNDS
+    assert harness.llm.execute_tool.await_count == TEST_MAX_TOOL_ROUNDS
     assert not any(is_tool_loop_finalization(message) for message in harness.history)
     harness.assert_paired()
 
@@ -995,7 +1023,7 @@ async def test_acp_stream_construction_failure_preserves_original_exception(
     finalization, failure, monkeypatch
 ):
     batches = (
-        [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS + 1)] + [None]
+        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS + 1)] + [None]
         if finalization
         else [None]
     )
@@ -1023,10 +1051,10 @@ async def test_acp_stream_construction_failure_preserves_original_exception(
         await harness.run()
     assert caught.value is error
     assert policies == (
-        [True] * (MAX_TOOL_ROUNDS + 1) + [False] if finalization else [True]
+        [True] * (TEST_MAX_TOOL_ROUNDS + 1) + [False] if finalization else [True]
     )
-    executions = MAX_TOOL_ROUNDS if finalization else 0
-    assert harness.requests == (MAX_TOOL_ROUNDS + 1 if finalization else 0)
+    executions = TEST_MAX_TOOL_ROUNDS if finalization else 0
+    assert harness.requests == (TEST_MAX_TOOL_ROUNDS + 1 if finalization else 0)
     assert harness.llm.execute_tool.await_count == executions
     assert harness.agent.validate_tool_use.call_count == executions
     assert harness.approval.await_count == executions
@@ -1034,7 +1062,7 @@ async def test_acp_stream_construction_failure_preserves_original_exception(
     harness.agent.store_memory_if_available.assert_not_called()
     harness.assert_paired()
     if finalization:
-        harness.assert_blocked_has_no_side_effects({"r51-0"})
+        harness.assert_blocked_has_no_side_effects({f"r{TEST_MAX_TOOL_ROUNDS + 1}-0"})
         assert (
             sum(is_tool_loop_finalization(message) for message in harness.history) == 1
         )
@@ -1049,14 +1077,14 @@ async def test_chat_budget_finalization_clears_deferred_transfer_without_follow_
     harness = Harness(
         "chat",
         monkeypatch,
-        [[call(str(i % 2))] for i in range(MAX_TOOL_ROUNDS + 1)] + [None],
+        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS + 1)] + [None],
     )
     harness.handler.agent_manager.defered_transfer = "Return to the coordinator"
     response, usage = await harness.run()
     assert response == "Finished"
-    assert usage.total_input_tokens == MAX_TOOL_ROUNDS + 2
-    assert harness.tool_policies == [True] * (MAX_TOOL_ROUNDS + 1) + [False]
-    assert harness.requests == MAX_TOOL_ROUNDS + 2
+    assert usage.total_input_tokens == TEST_MAX_TOOL_ROUNDS + 2
+    assert harness.tool_policies == [True] * (TEST_MAX_TOOL_ROUNDS + 1) + [False]
+    assert harness.requests == TEST_MAX_TOOL_ROUNDS + 2
     assert harness.session.status == "completed"
     assert harness.session.finished.is_set()
     assert harness.handler.agent_manager.defered_transfer == ""
@@ -1071,7 +1099,7 @@ async def test_chat_budget_finalization_clears_deferred_transfer_without_follow_
         for args in harness.handler.bus.emit.await_args_list
     )
     harness.assert_paired()
-    harness.assert_blocked_has_no_side_effects({"r51-0"})
+    harness.assert_blocked_has_no_side_effects({f"r{TEST_MAX_TOOL_ROUNDS + 1}-0"})
     harness.batches = [None]
     harness.requests = 0
     await harness.run()
@@ -1104,9 +1132,65 @@ async def test_chat_normal_final_response_still_runs_deferred_transfer_follow_up
     harness.assert_paired()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
+@pytest.mark.parametrize("source", ["environment", "config"])
+async def test_configured_budgets_apply_to_all_surfaces_and_new_turns(
+    mode, source, monkeypatch
+):
+    from AgentCrew.modules.config.global_config import GlobalConfig
+
+    settings = {"max_tool_rounds": 3}
+    monkeypatch.setattr(GlobalConfig, "read", lambda _: {"global_settings": settings})
+    monkeypatch.delenv("AGENTCREW_MAX_TOOL_ROUNDS", raising=False)
+    limit = 3
+    if source == "environment":
+        limit = 4
+        monkeypatch.setenv("AGENTCREW_MAX_TOOL_ROUNDS", str(limit))
+    harness = Harness(
+        mode,
+        monkeypatch,
+        [[call(str(i % 2))] for i in range(limit + 1)] + [None],
+        max_tool_rounds=None,
+    )
+    await harness.run()
+    assert harness.requests == limit + 2
+    assert harness.tool_policies == [True] * (limit + 1) + [False]
+    assert harness.llm.execute_tool.await_count == limit
+    harness.assert_blocked_has_no_side_effects({f"r{limit + 1}-0"})
+    finalization = [m for m in harness.history if is_tool_loop_finalization(m)]
+    assert len(finalization) == 1
+    assert (
+        f"tool budget of {limit} model tool rounds"
+        in finalization[0]["content"][0]["text"]
+    )
+    harness.assert_paired()
+
+    new_limit = limit + 2
+    if source == "environment":
+        monkeypatch.setenv("AGENTCREW_MAX_TOOL_ROUNDS", str(new_limit))
+    else:
+        settings["max_tool_rounds"] = new_limit
+    harness.batches = [[call(str(i % 2))] for i in range(new_limit + 1)] + [None]
+    harness.requests = 0
+    await harness.run()
+    assert harness.requests == new_limit + 2
+    assert harness.tool_policies[-(new_limit + 2) :] == [True] * (new_limit + 1) + [
+        False
+    ]
+    assert harness.llm.execute_tool.await_count == limit + new_limit
+    finalization = [m for m in harness.history if is_tool_loop_finalization(m)]
+    assert len(finalization) == 2
+    assert (
+        f"tool budget of {new_limit} model tool rounds"
+        in finalization[-1]["content"][0]["text"]
+    )
+    harness.assert_paired()
+
+
 def test_exact_repeat_termination_takes_priority_at_budget_boundary():
-    guard = ToolLoopGuard()
-    for index in range(MAX_TOOL_ROUNDS - 3):
+    guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
+    for index in range(TEST_MAX_TOOL_ROUNDS - 3):
         guard.check_round([call(str(index % 2))])
     for _ in range(3):
         guard.check_round([call("repeat")])

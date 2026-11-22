@@ -6,6 +6,8 @@ from typing import Any, Self
 
 from loguru import logger
 
+DEFAULT_MAX_TOOL_ROUNDS = 200
+
 
 class GlobalConfig:
     """
@@ -55,6 +57,7 @@ class GlobalConfig:
                 "theme": "dark",
                 "swap_enter": False,
                 "yolo_mode": False,
+                "max_tool_rounds": DEFAULT_MAX_TOOL_ROUNDS,
                 "auto_context_shrink": True,
                 "tool_result_summary_enabled": True,
                 "shrink_excluded": [],
@@ -117,6 +120,36 @@ class GlobalConfig:
                 self._cached_config = dict(default_config)
                 self._cached_mtime = 0
                 return self._cached_config
+
+    def get_max_tool_rounds(self) -> int:
+        """Resolve the tool-round budget from environment, config, then defaults."""
+        environment_value = os.getenv("AGENTCREW_MAX_TOOL_ROUNDS")
+        if environment_value is not None:
+            try:
+                value = int(environment_value.strip())
+            except ValueError:
+                value = 0
+            if value > 0:
+                return value
+            logger.warning(
+                "Invalid AGENTCREW_MAX_TOOL_ROUNDS; expected a positive integer. "
+                "Falling back to global_settings.max_tool_rounds."
+            )
+
+        settings = self.read().get("global_settings", {})
+        value = (
+            settings.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
+            if isinstance(settings, dict)
+            else None
+        )
+        if type(value) is int and value > 0:
+            return value
+        logger.warning(
+            "Invalid global_settings.max_tool_rounds; expected a positive integer. "
+            "Using default {}.",
+            DEFAULT_MAX_TOOL_ROUNDS,
+        )
+        return DEFAULT_MAX_TOOL_ROUNDS
 
     def write(self, config_data: dict[str, Any]) -> None:
         """Writes data to the global config.json file."""

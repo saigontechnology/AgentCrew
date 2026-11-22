@@ -9,10 +9,11 @@ from typing import Any
 
 from loguru import logger
 
+from AgentCrew.modules.config.global_config import DEFAULT_MAX_TOOL_ROUNDS, GlobalConfig
+
 from .message_metadata import is_tool_loop_recovery, mark_tool_loop_recovery
 
 MAX_CONSECUTIVE_TOOL_EXECUTIONS = 2
-MAX_TOOL_ROUNDS = 50
 
 REPEAT_WARNING = (
     "Tool loop protection: this exact tool call has already been requested "
@@ -23,8 +24,8 @@ REPEAT_WARNING = (
 )
 
 
-FINALIZATION_PROMPT = (
-    f"The tool budget of {MAX_TOOL_ROUNDS} model tool rounds is exhausted. All tool calls in "
+FINALIZATION_PROMPT_TEMPLATE = (
+    "The tool budget of {max_tool_rounds} model tool rounds is exhausted. All tool calls in "
     "the attempted extra round were removed and were not executed. No further "
     "tools are available. Use only the existing conversation and previous tool "
     "results to provide your best-effort final answer now. Clearly disclose "
@@ -130,6 +131,7 @@ class ToolLoopRound:
     terminal_error: str | None = None
     needs_recovery: bool = False
     finalization_required: bool = False
+    max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS
 
     def omit_blocked_calls(
         self, tool_uses: list[dict[str, Any]]
@@ -147,6 +149,7 @@ class ToolLoopRound:
             self.terminal_error,
             self.needs_recovery
             or any(error == REPEAT_WARNING for error in self.errors),
+            max_tool_rounds=self.max_tool_rounds,
         )
 
     def recovery_message(self, history: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -155,7 +158,14 @@ class ToolLoopRound:
             return pending_recovery_message(history)
         message = {
             "role": "user",
-            "content": [{"type": "text", "text": FINALIZATION_PROMPT}],
+            "content": [
+                {
+                    "type": "text",
+                    "text": FINALIZATION_PROMPT_TEMPLATE.format(
+                        max_tool_rounds=self.max_tool_rounds
+                    ),
+                }
+            ],
         }
         mark_tool_loop_recovery(message, finalization=True)
         return message
@@ -179,12 +189,26 @@ class ToolLoopGuard:
     opportunities, including calls rejected by validation or permission gates.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_tool_rounds: int | None = None) -> None:
+        if max_tool_rounds is not None and (
+            type(max_tool_rounds) is not int or max_tool_rounds <= 0
+        ):
+            raise ValueError("max_tool_rounds must be a positive integer")
+        self._max_tool_rounds = (
+            max_tool_rounds
+            if max_tool_rounds is not None
+            else GlobalConfig().get_max_tool_rounds()
+        )
         self._occurrences: dict[str, int] = {}
         self._rounds = 0
         self._terminal_error: str | None = None
         self._finalization_required = False
         self._finalization_requested = False
+
+    @property
+    def max_tool_rounds(self) -> int:
+        """The resolved budget snapshot for this external turn."""
+        return self._max_tool_rounds
 
     @property
     def tools_enabled(self) -> bool:
@@ -216,7 +240,7 @@ class ToolLoopGuard:
         """Decide before confirmation, hooks, or tool dispatch can take place."""
         if not tool_uses:
             self._occurrences = {}
-            return ToolLoopRound(())
+            return ToolLoopRound((), max_tool_rounds=self.max_tool_rounds)
         self._rounds += 1
         errors: list[str | None] = []
         occurrences: dict[str, int] = {}
@@ -253,9 +277,13 @@ class ToolLoopGuard:
         self._occurrences = occurrences
         if self._terminal_error:
             return ToolLoopRound(
-                tuple(self._terminal_error for _ in tool_uses), self._terminal_error
+                tuple(self._terminal_error for _ in tool_uses),
+                self._terminal_error,
+                max_tool_rounds=self.max_tool_rounds,
             )
-        if self._rounds > MAX_TOOL_ROUNDS:
+        if self._rounds > self.max_tool_rounds:
             self._finalization_required = True
-            return ToolLoopRound((), finalization_required=True)
-        return ToolLoopRound(tuple(errors))
+            return ToolLoopRound(
+                (), finalization_required=True, max_tool_rounds=self.max_tool_rounds
+            )
+        return ToolLoopRound(tuple(errors), max_tool_rounds=self.max_tool_rounds)
