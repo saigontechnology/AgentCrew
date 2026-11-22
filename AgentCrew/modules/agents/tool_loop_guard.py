@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 
@@ -24,12 +24,24 @@ REPEAT_WARNING = (
 )
 
 
+FinalizationCause = Literal["repeat", "budget"]
+
+_FINALIZATION_INSTRUCTIONS = (
+    "Use only the existing conversation and previous tool results to provide your "
+    "best-effort final answer now. Clearly disclose any incomplete work and any "
+    "uncertainty; do not claim unverified success."
+)
+
 FINALIZATION_PROMPT_TEMPLATE = (
     "The tool budget of {max_tool_rounds} model tool rounds is exhausted. All tool calls in "
     "the attempted extra round were removed and were not executed. No further "
-    "tools are available. Use only the existing conversation and previous tool "
-    "results to provide your best-effort final answer now. Clearly disclose "
-    "any incomplete work and any uncertainty; do not claim unverified success."
+    "tools are available. " + _FINALIZATION_INSTRUCTIONS
+)
+
+REPEAT_FINALIZATION_PROMPT = (
+    "The same exact tool call continued after the tool-loop recovery warning. "
+    "All tool calls in this round were removed and were not executed. Tools are "
+    "now disabled. " + _FINALIZATION_INSTRUCTIONS
 )
 
 
@@ -61,7 +73,7 @@ def pending_recovery_message(history: list[dict[str, Any]]) -> dict[str, Any] | 
 
 
 class ToolLoopError(RuntimeError):
-    """The model ignored loop recovery instructions or exceeded the round limit."""
+    """The guarded turn cannot safely continue or finalize."""
 
 
 def _encode(value: Any) -> str:
@@ -122,9 +134,9 @@ def tool_call_fingerprint(tool_use: dict[str, Any]) -> str:
 class ToolLoopRound:
     """Ordered pre-dispatch decisions for a complete model tool batch.
 
-    Repeat-terminal batches retain assistant/tool pairing before raising.
-    Global-budget overflow discards the complete batch and permits one
-    tools-disabled finalization request instead.
+    Recovery removes only the blocked calls. Repeat or global-budget
+    finalization discards the complete batch and permits one tools-disabled
+    request. A repeat after a warning takes precedence over budget overflow.
     """
 
     errors: tuple[str | None, ...]
@@ -132,6 +144,7 @@ class ToolLoopRound:
     needs_recovery: bool = False
     finalization_required: bool = False
     max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS
+    finalization_cause: FinalizationCause | None = None
 
     def omit_blocked_calls(
         self, tool_uses: list[dict[str, Any]]
@@ -150,10 +163,11 @@ class ToolLoopRound:
             self.needs_recovery
             or any(error == REPEAT_WARNING for error in self.errors),
             max_tool_rounds=self.max_tool_rounds,
+            finalization_cause=self.finalization_cause,
         )
 
     def recovery_message(self, history: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """Build one internal budget-finalization or repeat-recovery message."""
+        """Build one cause-aware internal finalization or recovery message."""
         if not self.finalization_required:
             return pending_recovery_message(history)
         message = {
@@ -161,8 +175,12 @@ class ToolLoopRound:
             "content": [
                 {
                     "type": "text",
-                    "text": FINALIZATION_PROMPT_TEMPLATE.format(
-                        max_tool_rounds=self.max_tool_rounds
+                    "text": (
+                        REPEAT_FINALIZATION_PROMPT
+                        if self.finalization_cause == "repeat"
+                        else FINALIZATION_PROMPT_TEMPLATE.format(
+                            max_tool_rounds=self.max_tool_rounds
+                        )
                     ),
                 }
             ],
@@ -184,7 +202,7 @@ class ToolLoopGuard:
     """Track consecutive fingerprints locally to one external turn.
 
     Duplicate calls within a batch consume the same execution budget but cannot
-    terminate before the model has received a warning in an earlier round.
+    trigger finalization before the model has received a warning in an earlier round.
     Absence from a model round resets a fingerprint's streak. Counts represent dispatch
     opportunities, including calls rejected by validation or permission gates.
     """
@@ -201,8 +219,7 @@ class ToolLoopGuard:
         )
         self._occurrences: dict[str, int] = {}
         self._rounds = 0
-        self._terminal_error: str | None = None
-        self._finalization_required = False
+        self._finalization_cause: FinalizationCause | None = None
         self._finalization_requested = False
 
     @property
@@ -213,7 +230,12 @@ class ToolLoopGuard:
     @property
     def tools_enabled(self) -> bool:
         """Whether this external turn still permits tool-enabled requests."""
-        return not self._finalization_required
+        return self._finalization_cause is None
+
+    @property
+    def finalization_cause(self) -> FinalizationCause | None:
+        """The snapshotted trigger, with repeat taking precedence at a boundary."""
+        return self._finalization_cause
 
     def start_request(self) -> bool:
         """Claim the sole tools-disabled request, preventing retry recursion."""
@@ -222,13 +244,13 @@ class ToolLoopGuard:
                 "Tool loop protection terminated this turn: tools-disabled "
                 "finalization was already attempted."
             )
-        if self._finalization_required:
+        if not self.tools_enabled:
             self._finalization_requested = True
         return self.tools_enabled
 
     def validate_response(self, response: Any, tool_uses: list[dict[str, Any]]) -> None:
         """Fail closed if the finalization request cannot produce a final answer."""
-        if self._finalization_required and (
+        if not self.tools_enabled and (
             tool_uses or not isinstance(response, str) or not response.strip()
         ):
             raise ToolLoopError(
@@ -244,6 +266,7 @@ class ToolLoopGuard:
         self._rounds += 1
         errors: list[str | None] = []
         occurrences: dict[str, int] = {}
+        repeated_after_warning = False
         for tool_use in tool_uses:
             fingerprint = tool_call_fingerprint(tool_use)
             count = (
@@ -263,27 +286,26 @@ class ToolLoopGuard:
                     count,
                     fingerprint,
                 )
-            elif (
-                count > MAX_CONSECUTIVE_TOOL_EXECUTIONS and self._terminal_error is None
-            ):
-                self._terminal_error = (
-                    "Tool loop protection terminated this turn: the model repeated "
-                    f"tool {tool_use.get('name', '')!r} after the recovery warning "
-                    f"(occurrence={count}, digest={fingerprint}). "
-                    "No tools in this round were executed."
+            elif count > MAX_CONSECUTIVE_TOOL_EXECUTIONS and not repeated_after_warning:
+                repeated_after_warning = True
+                logger.warning(
+                    "Tool loop finalizing: tool={} occurrence={} digest={}",
+                    tool_use.get("name", ""),
+                    count,
+                    fingerprint,
                 )
-                logger.error(self._terminal_error)
             errors.append(error)
         self._occurrences = occurrences
-        if self._terminal_error:
+        if self._finalization_cause is None:
+            if repeated_after_warning:
+                self._finalization_cause = "repeat"
+            elif self._rounds > self.max_tool_rounds:
+                self._finalization_cause = "budget"
+        if self._finalization_cause is not None:
             return ToolLoopRound(
-                tuple(self._terminal_error for _ in tool_uses),
-                self._terminal_error,
+                (),
+                finalization_required=True,
                 max_tool_rounds=self.max_tool_rounds,
-            )
-        if self._rounds > self.max_tool_rounds:
-            self._finalization_required = True
-            return ToolLoopRound(
-                (), finalization_required=True, max_tool_rounds=self.max_tool_rounds
+                finalization_cause=self._finalization_cause,
             )
         return ToolLoopRound(tuple(errors), max_tool_rounds=self.max_tool_rounds)

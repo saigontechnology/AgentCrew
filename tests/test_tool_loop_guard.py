@@ -15,6 +15,7 @@ from AgentCrew.modules.agents.message_metadata import (
 )
 from AgentCrew.modules.agents.tool_loop_guard import (
     FINALIZATION_PROMPT_TEMPLATE,
+    REPEAT_FINALIZATION_PROMPT,
     REPEAT_WARNING,
     ToolLoopError,
     ToolLoopGuard,
@@ -64,18 +65,25 @@ def test_fingerprint_handles_unexpected_values_without_repr_or_recursion():
     assert tool_call_fingerprint({"name": "tool", "arguments": "invalid json"})
 
 
-def test_first_two_execute_third_warns_fourth_terminates():
+def test_first_two_execute_third_warns_fourth_finalizes_once():
     guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
     assert guard.check_round([call()]).errors == (None,)
     assert guard.check_round([call(call_id="new")]).errors == (None,)
     warning = guard.check_round([call()])
     assert warning.errors == (REPEAT_WARNING,)
     assert warning.terminal_error is None
-    terminal = guard.check_round([call(), call("new_tool")])
-    assert all(terminal.errors)
-    with pytest.raises(ToolLoopError, match="after the recovery warning"):
-        terminal.raise_if_terminal()
-    assert guard.check_round([call("different")]).terminal_error
+    assert guard.tools_enabled
+    batch = [call(), call("new_tool")]
+    finalization = guard.check_round(batch)
+    assert finalization.finalization_required
+    assert finalization.finalization_cause == guard.finalization_cause == "repeat"
+    assert finalization.terminal_error is None
+    assert finalization.omit_blocked_calls(batch)[0] == []
+    finalization.raise_if_terminal()
+    assert guard.start_request() is False
+    guard.validate_response("Finished", [])
+    with pytest.raises(ToolLoopError, match="already attempted"):
+        guard.start_request()
 
 
 def test_changed_arguments_absence_and_new_turn_reset_streaks():
@@ -95,14 +103,14 @@ def test_changed_arguments_absence_and_new_turn_reset_streaks():
     ).errors == (None,)
 
 
-def test_duplicates_share_budget_and_terminal_batch_is_nonexecuting():
+def test_duplicates_share_budget_and_finalization_batch_is_nonexecuting():
     guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
     assert guard.check_round([call(), call(), call()]).errors == (
         None,
         None,
         REPEAT_WARNING,
     )
-    assert guard.check_round([call()]).terminal_error
+    assert guard.check_round([call()]).finalization_cause == "repeat"
     first_batch = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
     assert first_batch.check_round([call()] * 4).errors == (
         None,
@@ -110,7 +118,7 @@ def test_duplicates_share_budget_and_terminal_batch_is_nonexecuting():
         REPEAT_WARNING,
         REPEAT_WARNING,
     )
-    assert first_batch.check_round([call()]).terminal_error
+    assert first_batch.check_round([call()]).finalization_cause == "repeat"
 
 
 def test_hard_cap_catches_alternating_tools():
@@ -119,6 +127,7 @@ def test_hard_cap_catches_alternating_tools():
         assert guard.check_round([call(str(index % 2))]).errors == (None,)
     terminal = guard.check_round([call("new")])
     assert terminal.finalization_required
+    assert terminal.finalization_cause == guard.finalization_cause == "budget"
     assert terminal.terminal_error is None
     assert terminal.omit_blocked_calls([call("new")])[0] == []
     assert guard.start_request() is False
@@ -146,6 +155,16 @@ def test_guard_logs_only_name_count_and_digest():
     )
 
 
+def finalization_plan(cause):
+    if cause == "repeat":
+        return [[call()]] * 4 + [None], 2, {"r3-0", "r4-0"}
+    return (
+        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS + 1)] + [None],
+        TEST_MAX_TOOL_ROUNDS,
+        {f"r{TEST_MAX_TOOL_ROUNDS + 1}-0"},
+    )
+
+
 class ModelStream:
     def __init__(self, agent, callback, tools):
         self.agent = agent
@@ -157,7 +176,8 @@ class ModelStream:
             self.tools or [],
             TokenUsage().merge(TokenUsage(input_tokens=1, output_tokens=1)),
         )
-        yield ("working" if self.tools else "Finished", None, None)
+        response = "working" if self.tools else "Finished"
+        yield (response, response, None)
 
     async def aclose(self):
         pass
@@ -339,7 +359,9 @@ class Harness:
         recovery = [
             message
             for message in self.history
-            if message["role"] == "user" and is_tool_loop_recovery(message)
+            if message["role"] == "user"
+            and is_tool_loop_recovery(message)
+            and not is_tool_loop_finalization(message)
         ]
         assert len(recovery) == count
         assert all(
@@ -352,6 +374,19 @@ class Harness:
             if message["role"] == "tool"
         )
         return recovery
+
+    def assert_repeat_finalization(self):
+        messages = [m for m in self.history if is_tool_loop_finalization(m)]
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+        assert is_tool_loop_recovery(messages[0])
+        assert messages[0]["content"] == [
+            {"type": "text", "text": REPEAT_FINALIZATION_PROMPT}
+        ]
+        assert "budget" not in REPEAT_FINALIZATION_PROMPT
+        assert "exhausted" not in REPEAT_FINALIZATION_PROMPT
+        assert "Tools are now disabled" in REPEAT_FINALIZATION_PROMPT
+        return messages[0]
 
     def assert_blocked_has_no_side_effects(self, blocked_ids):
         validated = [
@@ -401,64 +436,74 @@ class Harness:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
 @pytest.mark.parametrize("recover", [True, False])
-async def test_repeating_model_recovers_or_terminates(mode, recover, monkeypatch):
-    batches = [[call()]] * 3 + [None] if recover else [[call()]]
-    harness = Harness(mode, monkeypatch, batches)
-    result = await harness.run(terminal=not recover)
-    assert harness.requests == 4
-    assert all(harness.tool_policies)
+async def test_repeating_model_recovers_or_finalizes(mode, recover, monkeypatch):
+    harness = Harness(mode, monkeypatch, [[call()]] * (3 if recover else 4) + [None])
+    result = await harness.run()
+    assert harness.requests == (4 if recover else 5)
+    assert harness.tool_policies == ([True] * 4 if recover else [True] * 4 + [False])
     assert harness.llm.execute_tool.await_count == 2
     assert harness.hooks.run_before.await_count == 2
     assert harness.agent.validate_tool_use.call_count == 2
     if harness.approval:
         assert harness.approval.await_count == 2
-    tool_messages = [
-        message for message in harness.history if message["role"] == "tool"
-    ]
+    assert len([m for m in harness.history if m["role"] == "tool"]) == 2
     harness.assert_recovery()
-    harness.assert_blocked_has_no_side_effects({"r3-0"})
-    assert len(tool_messages) == (2 if recover else 3)
+    harness.assert_blocked_has_no_side_effects(
+        {"r3-0"} if recover else {"r3-0", "r4-0"}
+    )
     if mode == "jobs":
-        assert sum(
-            args.args[0] == "tool" for args in harness.progress.await_args_list
-        ) == (2 if recover else 3)
+        assert (
+            sum(args.args[0] == "tool" for args in harness.progress.await_args_list)
+            == 2
+        )
     harness.assert_paired()
+    assert harness.history[-1]["content"][-1]["text"] == "Finished"
+    assert harness.agent.extract_last_user_message_for_memory(harness.history) == "work"
     if recover:
-        assert harness.history[-1]["content"][-1]["text"] == "Finished"
+        assert not any(is_tool_loop_finalization(m) for m in harness.history)
     else:
-        assert "terminated" in tool_messages[-1]["content"]
+        harness.assert_repeat_finalization()
+    if mode in {"chat", "jobs", "a2a"}:
+        assert result[0] == "Finished"
+        assert result[1].total_input_tokens == (4 if recover else 5)
+    if mode == "acp":
+        assert harness.state.token_usage.total_input_tokens == (4 if recover else 5)
+        assert "Finished" in str(
+            harness.executor._client_comm.send_agent_message.await_args_list
+        )
     if mode == "chat":
-        assert harness.session.status == ("completed" if recover else "failed")
-        assert harness.session.finished.is_set()
-        assert result[1].total_input_tokens == 4
-        if not recover:
-            from AgentCrew.modules.events import AppEvents
+        from AgentCrew.modules.events import AppEvents
 
-            assert any(
-                args.args[0] == AppEvents.ERROR
-                for args in harness.handler.bus.emit.await_args_list
-            )
+        assert harness.session.status == "completed"
+        assert harness.session.finished.is_set()
+        assert not any(
+            args.args[0] == AppEvents.ERROR
+            for args in harness.handler.bus.emit.await_args_list
+        )
     if mode == "a2a":
-        from a2a.types.a2a_pb2 import TaskState, TaskStatusUpdateEvent
+        from a2a.types.a2a_pb2 import (
+            TaskArtifactUpdateEvent,
+            TaskState,
+            TaskStatusUpdateEvent,
+        )
 
         states = [
             args.args[0]
             for args in harness.queue.enqueue_event.await_args_list
             if isinstance(args.args[0], TaskStatusUpdateEvent)
         ]
-        assert states[-1].status.state == (
-            TaskState.TASK_STATE_COMPLETED if recover else TaskState.TASK_STATE_FAILED
-        )
+        assert states[-1].status.state == TaskState.TASK_STATE_COMPLETED
         assert states[-1].task_id == "t" and states[-1].context_id == "c"
-        if not recover:
-            assert (
-                "Tool loop protection terminated"
-                in states[-1].status.message.parts[0].text
-            )
-        persisted = [
+        assert [
             args.args[1] for args in harness.store.append_history.await_args_list
+        ] == harness.history[1:]
+        artifacts = [
+            args.args[0].artifact
+            for args in harness.queue.enqueue_event.await_args_list
+            if isinstance(args.args[0], TaskArtifactUpdateEvent)
         ]
-        assert persisted == harness.history[1:]
+        assert len([a for a in artifacts if a.artifact_id.startswith("tool_")]) == 2
+        assert "Finished" in str(artifacts)
 
 
 @pytest.mark.asyncio
@@ -511,19 +556,21 @@ async def test_fresh_external_turn_uses_fresh_guard(mode, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
-async def test_terminal_mixed_batch_pairs_every_call_and_dispatches_nothing(
-    mode, monkeypatch
-):
+async def test_repeat_finalization_omits_entire_mixed_batch(mode, monkeypatch):
     batch = [call("new_parallel"), call(), call("ask"), call("browser_new")]
-    harness = Harness(mode, monkeypatch, [[call()], [call()], [call()], batch])
-    await harness.run(terminal=True)
-    assert harness.requests == 4
+    harness = Harness(mode, monkeypatch, [[call()]] * 3 + [batch, None])
+    await harness.run()
+    assert harness.requests == 5
+    assert harness.tool_policies == [True] * 4 + [False]
     assert harness.llm.execute_tool.await_count == 2
+    assert harness.agent.validate_tool_use.call_count == 2
     assert harness.hooks.run_before.await_count == 2
     if harness.approval:
         assert harness.approval.await_count == 2
     harness.assert_paired()
-    assert all("terminated" in message["content"] for message in harness.history[-4:])
+    harness.assert_recovery()
+    harness.assert_repeat_finalization()
+    harness.assert_blocked_has_no_side_effects({"r3-0", *(f"r4-{i}" for i in range(4))})
 
 
 @pytest.mark.asyncio
@@ -670,7 +717,7 @@ async def test_a2a_input_required_resume_preserves_remaining_calls_and_fresh_gua
     saved = harness.store.save_pending_tools.await_args.args
     pending = {"ask_tool_use": saved[1], "remaining_tools": saved[2]}
     harness.context.message = convert_agent_response_to_a2a_message("A")
-    harness.batches = [[call()], [call()], None] if recover else [[call()]]
+    harness.batches = [[call()]] * (2 if recover else 4) + [None]
     harness.requests = 0
     await asyncio.wait_for(
         harness.executor._resume_from_input_required(
@@ -680,15 +727,18 @@ async def test_a2a_input_required_resume_preserves_remaining_calls_and_fresh_gua
     )
     assert harness.llm.execute_tool.await_count == 4
     harness.assert_paired()
-    if recover:
-        harness.assert_recovery()
-    else:
-        assert "terminated" in harness.history[-1]["content"]
+    harness.assert_recovery(count=1 if recover else 2)
+    assert harness.history[-1]["content"][0]["text"] == "Finished"
+    if not recover:
+        harness.assert_repeat_finalization()
+        assert harness.tool_policies[-1] is False
     harness.store.clear_pending_tools.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_acp_terminal_prompt_refuses_and_clears_running_task(monkeypatch):
+async def test_acp_invalid_repeat_finalization_refuses_and_clears_running_task(
+    monkeypatch,
+):
     from AgentCrew.modules.acp.agent import AgentCrewAcpAgent
 
     harness = Harness("acp", monkeypatch, [[call()]])
@@ -709,7 +759,9 @@ async def test_acp_terminal_prompt_refuses_and_clears_running_task(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
-async def test_terminal_logging_never_dumps_raw_tool_arguments(mode, monkeypatch):
+async def test_repeat_finalization_failure_logging_never_dumps_raw_tool_arguments(
+    mode, monkeypatch
+):
     from loguru import logger
 
     harness = Harness(
@@ -727,23 +779,44 @@ async def test_terminal_logging_never_dumps_raw_tool_arguments(mode, monkeypatch
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
-async def test_several_repeated_calls_produce_one_recovery_message(mode, monkeypatch):
+@pytest.mark.parametrize("finalize", [False, True])
+async def test_several_repeated_calls_produce_one_context_per_round(
+    mode, finalize, monkeypatch
+):
     repeated = [call("read_file"), call("browser_click")]
-    harness = Harness(mode, monkeypatch, [repeated, repeated, repeated, None])
+    harness = Harness(mode, monkeypatch, [repeated] * (4 if finalize else 3) + [None])
     await harness.run()
     assert harness.llm.execute_tool.await_count == 4
     assert harness.agent.validate_tool_use.call_count == 4
     assert harness.hooks.run_before.await_count == 4
     harness.assert_paired()
     harness.assert_recovery()
-    harness.assert_blocked_has_no_side_effects({"r3-0", "r3-1"})
+    harness.assert_blocked_has_no_side_effects(
+        {"r3-0", "r3-1", "r4-0", "r4-1"} if finalize else {"r3-0", "r3-1"}
+    )
+    if finalize:
+        harness.assert_repeat_finalization()
+        assert harness.tool_policies == [True] * 4 + [False]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
-async def test_recovery_can_change_arguments_and_continue(mode, monkeypatch):
+@pytest.mark.parametrize("change", ["arguments", "tool"])
+async def test_recovery_can_change_arguments_or_tool_and_continue(
+    mode, change, monkeypatch
+):
     harness = Harness(
-        mode, monkeypatch, [[call()]] * 3 + [[call(arguments={"new": 1})], None]
+        mode,
+        monkeypatch,
+        [[call()]] * 3
+        + [
+            [
+                call(arguments={"new": 1})
+                if change == "arguments"
+                else call("different")
+            ],
+            None,
+        ],
     )
     await harness.run()
     assert harness.llm.execute_tool.await_count == 3
@@ -753,8 +826,11 @@ async def test_recovery_can_change_arguments_and_continue(mode, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
-async def test_memory_storage_uses_external_user_after_recovery(mode, monkeypatch):
-    harness = Harness(mode, monkeypatch, [[call()]] * 3 + [None])
+@pytest.mark.parametrize("finalize", [False, True])
+async def test_memory_storage_uses_external_user_after_recovery(
+    mode, finalize, monkeypatch
+):
+    harness = Harness(mode, monkeypatch, [[call()]] * (4 if finalize else 3) + [None])
     if mode == "chat":
         from AgentCrew.modules.chat.message.handler import MessageHandler
 
@@ -775,7 +851,7 @@ async def test_memory_storage_uses_external_user_after_recovery(mode, monkeypatc
     extracted = harness.agent._memory_coordinator.extract_assistant_messages_for_memory(
         harness.history
     )
-    assert extracted == ["working", "working", "working", "Finished"]
+    assert extracted == ["working"] * (4 if finalize else 3) + ["Finished"]
 
 
 @pytest.mark.asyncio
@@ -914,8 +990,9 @@ async def test_chat_repeated_transfer_is_omitted_before_dispatch(monkeypatch):
 @pytest.mark.parametrize(
     "outcome", ["empty", "malformed", "tools", "exception", "api_error", "cancel"]
 )
+@pytest.mark.parametrize("cause", ["budget", "repeat"])
 async def test_finalization_failures_never_retry_or_dispatch(
-    mode, outcome, monkeypatch
+    mode, outcome, cause, monkeypatch
 ):
     original = ModelStream.__aiter__
     closes = []
@@ -951,11 +1028,8 @@ async def test_finalization_failures_never_retry_or_dispatch(
 
     monkeypatch.setattr(ModelStream, "__aiter__", stream_result)
     monkeypatch.setattr(ModelStream, "aclose", close)
-    harness = Harness(
-        mode,
-        monkeypatch,
-        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS + 1)] + [None],
-    )
+    batches, executions, blocked = finalization_plan(cause)
+    harness = Harness(mode, monkeypatch, batches)
     result = None
     if outcome == "cancel" and mode != "chat":
         with pytest.raises(asyncio.CancelledError):
@@ -969,14 +1043,16 @@ async def test_finalization_failures_never_retry_or_dispatch(
     else:
         result = await harness.run(terminal=mode in {"jobs", "acp"})
     if mode == "chat":
-        assert result[1].total_input_tokens >= TEST_MAX_TOOL_ROUNDS + 1
+        assert result[1].total_input_tokens >= len(batches) - 1
         assert harness.handler.stream_generator is None
     assert harness.tool_policies[-1] is False
-    assert len(harness.tool_policies) == TEST_MAX_TOOL_ROUNDS + 2
-    assert harness.llm.execute_tool.await_count == TEST_MAX_TOOL_ROUNDS
-    harness.assert_blocked_has_no_side_effects(
-        {f"r{TEST_MAX_TOOL_ROUNDS + 1}-0", "anomaly"}
-    )
+    assert len(harness.tool_policies) == len(batches)
+    assert harness.llm.execute_tool.await_count == executions
+    assert harness.agent.validate_tool_use.call_count == executions
+    assert harness.hooks.run_before.await_count == executions
+    if harness.approval:
+        assert harness.approval.await_count == executions
+    harness.assert_blocked_has_no_side_effects(blocked | {"anomaly"})
     harness.assert_paired()
     assert len([m for m in harness.history if is_tool_loop_finalization(m)]) == 1
     assert harness.streams[-1] in closes
@@ -984,18 +1060,17 @@ async def test_finalization_failures_never_retry_or_dispatch(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
-async def test_budget_finalization_does_not_leak_to_fresh_turn(mode, monkeypatch):
-    harness = Harness(
-        mode,
-        monkeypatch,
-        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS + 1)] + [None],
-    )
+@pytest.mark.parametrize("cause", ["budget", "repeat"])
+async def test_finalization_does_not_leak_to_fresh_turn(mode, cause, monkeypatch):
+    batches, executions, blocked = finalization_plan(cause)
+    harness = Harness(mode, monkeypatch, batches)
     await harness.run()
+    harness.assert_blocked_has_no_side_effects(blocked)
     harness.batches = [[call()], None]
     harness.requests = 0
     await harness.run()
     assert harness.tool_policies[-2:] == [True, True]
-    assert harness.llm.execute_tool.await_count == TEST_MAX_TOOL_ROUNDS + 1
+    assert harness.llm.execute_tool.await_count == executions + 1
 
 
 @pytest.mark.asyncio
@@ -1017,15 +1092,14 @@ async def test_final_text_at_configured_limit_does_not_trigger_fallback(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("finalization", [False, True])
+@pytest.mark.parametrize("cause", ["none", "budget", "repeat"])
 @pytest.mark.parametrize("failure", ["runtime", "connection"])
 async def test_acp_stream_construction_failure_preserves_original_exception(
-    finalization, failure, monkeypatch
+    cause, failure, monkeypatch
 ):
-    batches = (
-        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS + 1)] + [None]
-        if finalization
-        else [None]
+    finalization = cause != "none"
+    batches, executions, blocked = (
+        finalization_plan(cause) if finalization else ([None], 0, set())
     )
     harness = Harness("acp", monkeypatch, batches)
     error = RuntimeError("ACP stream construction failed")
@@ -1051,10 +1125,9 @@ async def test_acp_stream_construction_failure_preserves_original_exception(
         await harness.run()
     assert caught.value is error
     assert policies == (
-        [True] * (TEST_MAX_TOOL_ROUNDS + 1) + [False] if finalization else [True]
+        [True] * (len(batches) - 1) + [False] if finalization else [True]
     )
-    executions = TEST_MAX_TOOL_ROUNDS if finalization else 0
-    assert harness.requests == (TEST_MAX_TOOL_ROUNDS + 1 if finalization else 0)
+    assert harness.requests == (len(batches) - 1 if finalization else 0)
     assert harness.llm.execute_tool.await_count == executions
     assert harness.agent.validate_tool_use.call_count == executions
     assert harness.approval.await_count == executions
@@ -1062,29 +1135,29 @@ async def test_acp_stream_construction_failure_preserves_original_exception(
     harness.agent.store_memory_if_available.assert_not_called()
     harness.assert_paired()
     if finalization:
-        harness.assert_blocked_has_no_side_effects({f"r{TEST_MAX_TOOL_ROUNDS + 1}-0"})
+        harness.assert_blocked_has_no_side_effects(blocked)
         assert (
             sum(is_tool_loop_finalization(message) for message in harness.history) == 1
         )
 
 
 @pytest.mark.asyncio
-async def test_chat_budget_finalization_clears_deferred_transfer_without_follow_up(
+@pytest.mark.parametrize("cause", ["budget", "repeat"])
+async def test_chat_finalization_clears_deferred_transfer_without_follow_up(
+    cause,
     monkeypatch,
 ):
     from AgentCrew.modules.events import AppEvents
 
-    harness = Harness(
-        "chat",
-        monkeypatch,
-        [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS + 1)] + [None],
-    )
+    batches, executions, blocked = finalization_plan(cause)
+    harness = Harness("chat", monkeypatch, batches)
     harness.handler.agent_manager.defered_transfer = "Return to the coordinator"
     response, usage = await harness.run()
     assert response == "Finished"
-    assert usage.total_input_tokens == TEST_MAX_TOOL_ROUNDS + 2
-    assert harness.tool_policies == [True] * (TEST_MAX_TOOL_ROUNDS + 1) + [False]
-    assert harness.requests == TEST_MAX_TOOL_ROUNDS + 2
+    assert usage.total_input_tokens == len(batches)
+    assert harness.tool_policies == [True] * (len(batches) - 1) + [False]
+    assert harness.requests == len(batches)
+    assert harness.llm.execute_tool.await_count == executions
     assert harness.session.status == "completed"
     assert harness.session.finished.is_set()
     assert harness.handler.agent_manager.defered_transfer == ""
@@ -1099,7 +1172,7 @@ async def test_chat_budget_finalization_clears_deferred_transfer_without_follow_
         for args in harness.handler.bus.emit.await_args_list
     )
     harness.assert_paired()
-    harness.assert_blocked_has_no_side_effects({f"r{TEST_MAX_TOOL_ROUNDS + 1}-0"})
+    harness.assert_blocked_has_no_side_effects(blocked)
     harness.batches = [None]
     harness.requests = 0
     await harness.run()
@@ -1188,14 +1261,43 @@ async def test_configured_budgets_apply_to_all_surfaces_and_new_turns(
     harness.assert_paired()
 
 
-def test_exact_repeat_termination_takes_priority_at_budget_boundary():
+def test_repeat_finalization_takes_priority_at_budget_boundary():
     guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
     for index in range(TEST_MAX_TOOL_ROUNDS - 3):
         guard.check_round([call(str(index % 2))])
     for _ in range(3):
         guard.check_round([call("repeat")])
-    terminal = guard.check_round([call("repeat")])
-    assert terminal.terminal_error
-    assert not terminal.finalization_required
-    with pytest.raises(ToolLoopError, match="after the recovery warning"):
-        terminal.raise_if_terminal()
+    decision = guard.check_round([call("repeat")])
+    assert decision.terminal_error is None
+    assert decision.finalization_required
+    assert decision.finalization_cause == "repeat"
+    assert (
+        decision.recovery_message([])["content"][0]["text"]
+        == REPEAT_FINALIZATION_PROMPT
+    )
+    assert guard.start_request() is False
+    with pytest.raises(ToolLoopError, match="already attempted"):
+        guard.start_request()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["chat", "jobs", "acp", "a2a"])
+async def test_repeat_at_budget_boundary_finalizes_once_with_repeat_cause(
+    mode, monkeypatch
+):
+    batches = [[call(str(i % 2))] for i in range(TEST_MAX_TOOL_ROUNDS - 3)]
+    harness = Harness(mode, monkeypatch, batches + [[call("repeat")]] * 4 + [None])
+    await harness.run()
+    assert harness.requests == TEST_MAX_TOOL_ROUNDS + 2
+    assert harness.tool_policies == [True] * (TEST_MAX_TOOL_ROUNDS + 1) + [False]
+    assert harness.llm.execute_tool.await_count == TEST_MAX_TOOL_ROUNDS - 1
+    assert harness.agent.validate_tool_use.call_count == TEST_MAX_TOOL_ROUNDS - 1
+    assert harness.hooks.run_before.await_count == TEST_MAX_TOOL_ROUNDS - 1
+    if harness.approval:
+        assert harness.approval.await_count == TEST_MAX_TOOL_ROUNDS - 1
+    harness.assert_recovery()
+    harness.assert_repeat_finalization()
+    harness.assert_paired()
+    harness.assert_blocked_has_no_side_effects(
+        {f"r{TEST_MAX_TOOL_ROUNDS}-0", f"r{TEST_MAX_TOOL_ROUNDS + 1}-0"}
+    )

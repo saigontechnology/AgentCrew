@@ -142,9 +142,13 @@ calls: rounds 1 through N are permitted. If the model attempts a tool batch in
 round N+1, the entire batch is removed without execution and one tools-disabled
 request asks for a best-effort final answer that discloses incomplete or
 uncertain work. Empty/malformed finalization output or unexpected tool calls
-still terminate the turn. The separate exact-repeat protection is unchanged:
-two identical calls may execute, the third is removed with recovery context,
-and a fourth consecutive repeat terminates instead of entering finalization.
+still terminate the turn. Exact-repeat protection allows two identical calls
+to execute; the third is removed with recovery context while tools remain
+enabled. A fourth consecutive repeat removes the entire batch and requests
+one tools-disabled final answer using repeat-specific context. If repetition
+and round-budget overflow coincide, the repeat cause takes precedence, with
+only one finalization request. Changing the tool or arguments after recovery
+resets the repeat streak and permits normal execution.
 
 ### API Keys and Credential Scope
 
