@@ -36,7 +36,8 @@ class FakeAgent:
     def __init__(self):
         self.turn = 0
 
-    def process_messages(self, history, callback):
+    def process_messages(self, history, callback, *, tools_enabled: bool = True):
+        assert tools_enabled is True
         self.turn += 1
         if self.turn == 1:
             return FakeStream(

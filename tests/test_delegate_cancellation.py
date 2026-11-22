@@ -46,7 +46,8 @@ class Agent:
         self.tool_started = asyncio.Event()
         self.streams = []
 
-    def process_messages(self, history, callback):
+    def process_messages(self, history, callback, *, tools_enabled: bool = True):
+        assert tools_enabled is True
         stream = Stream(
             callback,
             tools=[{"name": "read_file"}]
@@ -114,7 +115,12 @@ async def test_runner_closes_stream_on_completion_and_error():
 async def test_runner_bounded_close_preserves_primary_failure(close_failure, primary):
     agent = Agent(block_stream=primary == "cancel")
     stream = Stream(lambda *_: None, block_stream=primary == "cancel")
-    agent.process_messages = lambda history, callback: stream
+
+    def process_messages(history, callback, *, tools_enabled: bool = True):
+        assert tools_enabled is True
+        return stream
+
+    agent.process_messages = process_messages
 
     async def failing_close():
         if close_failure == "error":
@@ -158,7 +164,8 @@ async def test_runner_limits_empty_responses_and_preserves_usage():
 
     agent = Agent()
 
-    def process_messages(history, callback):
+    def process_messages(history, callback, *, tools_enabled: bool = True):
+        assert tools_enabled is True
         stream = EmptyStream(callback)
         agent.streams.append(stream)
         return stream
@@ -191,7 +198,8 @@ async def test_runner_accepts_answer_on_fifth_empty_retry():
 
     agent = Agent()
 
-    def process_messages(history, callback):
+    def process_messages(history, callback, *, tools_enabled: bool = True):
+        assert tools_enabled is True
         stream = RetryStream(callback, empty=len(agent.streams) < 5)
         agent.streams.append(stream)
         return stream
@@ -226,7 +234,12 @@ async def test_runner_does_not_time_out_later_items():
 
     agent = Agent()
     stream = DelayedSecondStream(lambda *_: None)
-    agent.process_messages = lambda history, callback: stream
+
+    def process_messages(history, callback, *, tools_enabled: bool = True):
+        assert tools_enabled is True
+        return stream
+
+    agent.process_messages = process_messages
     task = asyncio.create_task(run_agent_loop(agent, [], first_response_timeout=0.01))
     await asyncio.wait_for(stream.second_started.wait(), 1)
     await asyncio.sleep(0.03)
@@ -245,12 +258,13 @@ async def test_runner_times_out_first_item_after_tool():
     agent = ToolAgent(nested_tool=True)
     original_process = agent.process_messages
 
-    def process_messages(history, callback):
+    def process_messages(history, callback, *, tools_enabled: bool = True):
+        assert tools_enabled is True
         if agent.streams:
             stream = Stream(callback, block_stream=True)
             agent.streams.append(stream)
             return stream
-        return original_process(history, callback)
+        return original_process(history, callback, tools_enabled=tools_enabled)
 
     agent.process_messages = process_messages
     with pytest.raises(TimeoutError, match="no first item within 0.01s"):

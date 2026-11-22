@@ -107,7 +107,8 @@ class Clone(LocalAgent):
     async def deactivate_async(self):
         return True
 
-    def process_messages(self, history, callback):
+    def process_messages(self, history, callback, *, tools_enabled: bool = True):
+        assert tools_enabled is True
         self.turn_histories.append(history.copy())
         return FakeStream(0, history, callback)
 

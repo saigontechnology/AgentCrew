@@ -65,7 +65,8 @@ async def test_stop_during_tool_keeps_turn_session_and_does_not_resume_provider(
         def __init__(self):
             self.history = [{"role": "user", "content": "test"}]
 
-        def process_messages(self, callback):
+        def process_messages(self, callback, *, tools_enabled: bool = True):
+            assert tools_enabled is True
             nonlocal calls
             calls += 1
             return Stream(callback)
@@ -85,7 +86,10 @@ async def test_stop_during_tool_keeps_turn_session_and_does_not_resume_provider(
         def is_streaming(self):
             return True
 
-    async def execute_tools_batch(tool_uses):
+    async def execute_tools_batch(tool_uses, tool_round=None):
+        assert tool_round is not None
+        assert tool_round.errors == (None,) * len(tool_uses)
+        assert not tool_round.finalization_required
         assert tool_uses[0]["name"] == "delegate"
         assert handler.has_active_stream()
         assert handler._active_stream_session.task is asyncio.current_task()
@@ -118,6 +122,7 @@ async def test_stop_during_tool_keeps_turn_session_and_does_not_resume_provider(
     handler.voice_service = None
     handler._turn_usage_ledger = {}
     handler._turn_usage_committed = {}
+    handler._pending_resource_attachments = []
 
     turn = asyncio.create_task(handler.get_assistant_response())
     await asyncio.wait_for(tool_started.wait(), 2)
