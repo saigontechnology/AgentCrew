@@ -33,7 +33,6 @@ from AgentCrew.modules.agents.tool_loop_guard import (
     ToolLoopError,
     ToolLoopGuard,
     ToolLoopRound,
-    pending_recovery_message,
 )
 from AgentCrew.modules.llm.token_usage import TokenUsage
 
@@ -424,7 +423,9 @@ class AgentCrewA2AExecutor(AgentExecutor):
         stream = None
         try:
             stream = agent.process_messages(
-                history, callback=process_result, tools_enabled=tools_enabled
+                tool_loop_guard.request_history(history),
+                callback=process_result,
+                tools_enabled=tools_enabled,
             )
             async for (
                 response_message,
@@ -507,58 +508,55 @@ class AgentCrewA2AExecutor(AgentExecutor):
                 tool_uses, tool_round = tool_loop_guard.check_round(
                     tool_uses
                 ).omit_blocked_calls(tool_uses)
-                from .adapters import convert_agent_response_to_a2a_artifact
+                if not tool_round.discard_assistant:
+                    from .adapters import convert_agent_response_to_a2a_artifact
 
-                tool_artifact_id = f"tool_{task_id}"
-                if answer_state.turn > 0:
-                    tool_artifact_id = f"tool_{task_id}_turn_{answer_state.turn}"
-                tool_artifact = convert_agent_response_to_a2a_artifact(
-                    "",
-                    artifact_id=tool_artifact_id,
-                    tool_uses=tool_uses,
-                )
-                if tool_artifact and tool_uses:
-                    await event_queue.enqueue_event(
-                        TaskArtifactUpdateEvent(
-                            task_id=task_id,
-                            context_id=context_id,
-                            artifact=tool_artifact,
+                    tool_artifact_id = f"tool_{task_id}"
+                    if answer_state.turn > 0:
+                        tool_artifact_id = f"tool_{task_id}_turn_{answer_state.turn}"
+                    tool_artifact = convert_agent_response_to_a2a_artifact(
+                        "",
+                        artifact_id=tool_artifact_id,
+                        tool_uses=tool_uses,
+                    )
+                    if tool_artifact and tool_uses:
+                        await event_queue.enqueue_event(
+                            TaskArtifactUpdateEvent(
+                                task_id=task_id,
+                                context_id=context_id,
+                                artifact=tool_artifact,
+                            )
                         )
+
+                    assistant_message = stream.format_assistant_message(
+                        current_response,
+                        thinking=thinking_data,
+                        tool_uses=[
+                            t
+                            for index, t in enumerate(tool_uses)
+                            if t.get("name", "") != "transfer"
+                            or tool_round.errors[index]
+                        ],
+                    )
+                    if assistant_message:
+                        await self.session_store.append_history(
+                            context_id, assistant_message, owner
+                        )
+                        history.append(assistant_message)
+
+                    result = await self._execute_tool_calls(
+                        agent,
+                        task_id,
+                        context_id,
+                        tool_uses,
+                        history,
+                        event_queue,
+                        owner,
+                        tool_round,
                     )
 
-                assistant_message = stream.format_assistant_message(
-                    current_response,
-                    thinking=thinking_data,
-                    tool_uses=[
-                        t
-                        for index, t in enumerate(tool_uses)
-                        if t.get("name", "") != "transfer" or tool_round.errors[index]
-                    ],
-                )
-                tool_round.mark_assistant_message(assistant_message)
-                if assistant_message:
-                    await self.session_store.append_history(
-                        context_id, assistant_message, owner
-                    )
-                    history.append(assistant_message)
-
-                result = await self._execute_tool_calls(
-                    agent,
-                    task_id,
-                    context_id,
-                    tool_uses,
-                    history,
-                    event_queue,
-                    owner,
-                    tool_round,
-                )
-
-                if result == ToolCallResult.INPUT_REQUIRED:
-                    return "", token_usage
-                if recovery := tool_round.recovery_message(history):
-                    await self.session_store.append_history(context_id, recovery, owner)
-                    history.append(recovery)
-
+                    if result == ToolCallResult.INPUT_REQUIRED:
+                        return "", token_usage
                 # Recurse with a fresh state for the next turn so each LLM/tool
                 # round streams into its own per-turn artifact
                 next_turn = answer_state.turn + 1
@@ -806,10 +804,6 @@ class AgentCrewA2AExecutor(AgentExecutor):
             )
             if result == ToolCallResult.INPUT_REQUIRED:
                 return
-
-        if recovery := pending_recovery_message(history):
-            await self.session_store.append_history(context_id, recovery, owner)
-            history.append(recovery)
 
         result = await self._run_agent_loop(
             context,

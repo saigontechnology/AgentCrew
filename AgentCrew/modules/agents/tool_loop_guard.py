@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from dataclasses import dataclass
@@ -11,65 +12,45 @@ from loguru import logger
 
 from AgentCrew.modules.config.global_config import DEFAULT_MAX_TOOL_ROUNDS, GlobalConfig
 
-from .message_metadata import is_tool_loop_recovery, mark_tool_loop_recovery
+from .message_metadata import mark_tool_loop_recovery
 
-MAX_CONSECUTIVE_TOOL_EXECUTIONS = 2
+MAX_CONSECUTIVE_TOOL_BATCHES = 2
 
 REPEAT_WARNING = (
-    "Tool loop protection: this exact tool call has already been requested "
-    "twice. The repeated call was removed from the assistant message and was not "
-    "executed again. "
-    "Reuse the previous result, change the tool or arguments, or finish the task "
-    "without repeating this call."
+    "<Tool_Loop_Recovery>\n"
+    "This exact complete tool-call batch has already been requested twice. The "
+    "entire repeated assistant round, including its text, thinking, and tool "
+    "calls, was discarded and no calls in that round were executed. "
+    "Reuse the previous results, change the tool-call batch or arguments, or "
+    "finish the task without repeating this batch.\n"
+    "</Tool_Loop_Recovery>"
 )
-
 
 FinalizationCause = Literal["repeat", "budget"]
 
 _FINALIZATION_INSTRUCTIONS = (
+    "<Final_Response_Requirements>"
     "Use only the existing conversation and previous tool results to provide your "
     "best-effort final answer now. Clearly disclose any incomplete work and any "
     "uncertainty; do not claim unverified success."
+    "</Final_Response_Requirements>\n</Tool_Loop_Finalization>"
 )
 
 FINALIZATION_PROMPT_TEMPLATE = (
-    "The tool budget of {max_tool_rounds} model tool rounds is exhausted. All tool calls in "
-    "the attempted extra round were removed and were not executed. No further "
-    "tools are available. " + _FINALIZATION_INSTRUCTIONS
+    "<Tool_Loop_Finalization>\n<Cause>"
+    "The tool budget of {max_tool_rounds} model tool rounds is exhausted. The "
+    "entire attempted extra assistant round was discarded and no calls in it "
+    "were executed. No further tools are available."
+    "</Cause>\n" + _FINALIZATION_INSTRUCTIONS
 )
 
 REPEAT_FINALIZATION_PROMPT = (
-    "The same exact tool call continued after the tool-loop recovery warning. "
-    "All tool calls in this round were removed and were not executed. Tools are "
-    "now disabled. " + _FINALIZATION_INSTRUCTIONS
+    "<Tool_Loop_Finalization>\n<Cause>"
+    "The same complete tool-call batch continued after the tool-loop recovery "
+    "warning. The entire assistant round was discarded and no calls in it were "
+    "executed. Tools are now disabled."
+    "</Cause>\n" + _FINALIZATION_INSTRUCTIONS
 )
-
-
-def pending_recovery_message(history: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Return recovery context once all retained calls have results.
-
-    The assistant marker survives ask/input-required pauses and persistence.
-    A marked user message closes that recovery round without mutating history.
-    """
-    for index in range(len(history) - 1, -1, -1):
-        message = history[index]
-        if not is_tool_loop_recovery(message):
-            continue
-        if message.get("role") != "assistant":
-            return None
-        pending_ids = {call["id"] for call in message.get("tool_calls", [])}
-        for following in history[index + 1 :]:
-            if following.get("role") == "tool":
-                pending_ids.discard(following.get("tool_call_id"))
-        if pending_ids:
-            return None
-        recovery = {
-            "role": "user",
-            "content": [{"type": "text", "text": REPEAT_WARNING}],
-        }
-        mark_tool_loop_recovery(recovery)
-        return recovery
-    return None
 
 
 class ToolLoopError(RuntimeError):
@@ -130,14 +111,15 @@ def tool_call_fingerprint(tool_use: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def tool_batch_fingerprint(tool_uses: list[dict[str, Any]]) -> str:
+    """Hash the order-independent multiset of canonical call fingerprints."""
+    fingerprints = sorted(tool_call_fingerprint(tool) for tool in tool_uses)
+    return hashlib.sha256(_encode(fingerprints).encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True)
 class ToolLoopRound:
-    """Ordered pre-dispatch decisions for a complete model tool batch.
-
-    Recovery removes only the blocked calls. Repeat or global-budget
-    finalization discards the complete batch and permits one tools-disabled
-    request. A repeat after a warning takes precedence over budget overflow.
-    """
+    """Pre-dispatch decision for an entire model tool-call batch."""
 
     errors: tuple[str | None, ...]
     terminal_error: str | None = None
@@ -146,52 +128,32 @@ class ToolLoopRound:
     max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS
     finalization_cause: FinalizationCause | None = None
 
+    @property
+    def discard_assistant(self) -> bool:
+        """Whether the entire assistant round must stay out of history."""
+        return self.needs_recovery or self.finalization_required
+
     def omit_blocked_calls(
         self, tool_uses: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], ToolLoopRound]:
-        """Remove recovery-blocked calls while keeping terminal batches paired."""
-        if self.finalization_required:
-            return [], self
-        retained = [
-            (tool, error)
-            for tool, error in zip(tool_uses, self.errors, strict=True)
-            if error != REPEAT_WARNING
-        ]
-        return [tool for tool, _ in retained], ToolLoopRound(
-            tuple(error for _, error in retained),
-            self.terminal_error,
-            self.needs_recovery
-            or any(error == REPEAT_WARNING for error in self.errors),
-            max_tool_rounds=self.max_tool_rounds,
-            finalization_cause=self.finalization_cause,
-        )
+        """Cancel the whole batch on intervention; never partially filter calls."""
+        return ([] if self.discard_assistant else tool_uses), self
 
-    def recovery_message(self, history: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """Build one cause-aware internal finalization or recovery message."""
+    def request_message(self) -> dict[str, Any] | None:
+        """Build marked context for one request, never for canonical history."""
+        if not self.discard_assistant:
+            return None
         if not self.finalization_required:
-            return pending_recovery_message(history)
-        message = {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        REPEAT_FINALIZATION_PROMPT
-                        if self.finalization_cause == "repeat"
-                        else FINALIZATION_PROMPT_TEMPLATE.format(
-                            max_tool_rounds=self.max_tool_rounds
-                        )
-                    ),
-                }
-            ],
-        }
-        mark_tool_loop_recovery(message, finalization=True)
+            prompt = REPEAT_WARNING
+        elif self.finalization_cause == "repeat":
+            prompt = REPEAT_FINALIZATION_PROMPT
+        else:
+            prompt = FINALIZATION_PROMPT_TEMPLATE.format(
+                max_tool_rounds=self.max_tool_rounds
+            )
+        message = {"role": "user", "content": [{"type": "text", "text": prompt}]}
+        mark_tool_loop_recovery(message, finalization=self.finalization_required)
         return message
-
-    def mark_assistant_message(self, message: dict[str, Any] | None) -> None:
-        """Persist a pending recovery round before its retained tools execute."""
-        if self.needs_recovery and message is not None:
-            mark_tool_loop_recovery(message)
 
     def raise_if_terminal(self) -> None:
         if self.terminal_error:
@@ -199,12 +161,10 @@ class ToolLoopRound:
 
 
 class ToolLoopGuard:
-    """Track consecutive fingerprints locally to one external turn.
+    """Track identical consecutive tool batches within one external turn.
 
-    Duplicate calls within a batch consume the same execution budget but cannot
-    trigger finalization before the model has received a warning in an earlier round.
-    Absence from a model round resets a fingerprint's streak. Counts represent dispatch
-    opportunities, including calls rejected by validation or permission gates.
+    Call order and generated IDs do not matter; duplicate multiplicity does.
+    Any change in the complete batch, or an empty round, resets its streak.
     """
 
     def __init__(self, max_tool_rounds: int | None = None) -> None:
@@ -217,7 +177,9 @@ class ToolLoopGuard:
             if max_tool_rounds is not None
             else GlobalConfig().get_max_tool_rounds()
         )
-        self._occurrences: dict[str, int] = {}
+        self._last_batch: str | None = None
+        self._batch_occurrences = 0
+        self._pending_request_round: ToolLoopRound | None = None
         self._rounds = 0
         self._finalization_cause: FinalizationCause | None = None
         self._finalization_requested = False
@@ -248,6 +210,21 @@ class ToolLoopGuard:
             self._finalization_requested = True
         return self.tools_enabled
 
+    def request_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply one request-only intervention to a deep copy of canonical history.
+
+        Normal requests retain the existing history semantics. Intervention
+        context is consumed here and cannot enter persistence or replay state.
+        """
+        decision = self._pending_request_round
+        self._pending_request_round = None
+        if decision is None:
+            return history
+        messages = copy.deepcopy(history)
+        if message := decision.request_message():
+            messages.append(message)
+        return messages
+
     def validate_response(self, response: Any, tool_uses: list[dict[str, Any]]) -> None:
         """Fail closed if the finalization request cannot produce a final answer."""
         if not self.tools_enabled and (
@@ -259,53 +236,38 @@ class ToolLoopGuard:
             )
 
     def check_round(self, tool_uses: list[dict[str, Any]]) -> ToolLoopRound:
-        """Decide before confirmation, hooks, or tool dispatch can take place."""
+        """Decide on the whole batch before formatting, events, or dispatch."""
         if not tool_uses:
-            self._occurrences = {}
+            self._last_batch = None
+            self._batch_occurrences = 0
             return ToolLoopRound((), max_tool_rounds=self.max_tool_rounds)
         self._rounds += 1
-        errors: list[str | None] = []
-        occurrences: dict[str, int] = {}
-        repeated_after_warning = False
-        for tool_use in tool_uses:
-            fingerprint = tool_call_fingerprint(tool_use)
-            count = (
-                occurrences.get(fingerprint, self._occurrences.get(fingerprint, 0)) + 1
-            )
-            occurrences[fingerprint] = count
-            error = None
-            if (
-                count > MAX_CONSECUTIVE_TOOL_EXECUTIONS
-                and self._occurrences.get(fingerprint, 0)
-                <= MAX_CONSECUTIVE_TOOL_EXECUTIONS
-            ):
-                error = REPEAT_WARNING
-                logger.warning(
-                    "Tool loop blocked: tool={} occurrence={} digest={}",
-                    tool_use.get("name", ""),
-                    count,
-                    fingerprint,
-                )
-            elif count > MAX_CONSECUTIVE_TOOL_EXECUTIONS and not repeated_after_warning:
-                repeated_after_warning = True
-                logger.warning(
-                    "Tool loop finalizing: tool={} occurrence={} digest={}",
-                    tool_use.get("name", ""),
-                    count,
-                    fingerprint,
-                )
-            errors.append(error)
-        self._occurrences = occurrences
+        fingerprint = tool_batch_fingerprint(tool_uses)
+        self._batch_occurrences = (
+            self._batch_occurrences + 1 if fingerprint == self._last_batch else 1
+        )
+        self._last_batch = fingerprint
         if self._finalization_cause is None:
-            if repeated_after_warning:
+            if self._batch_occurrences > MAX_CONSECUTIVE_TOOL_BATCHES + 1:
                 self._finalization_cause = "repeat"
             elif self._rounds > self.max_tool_rounds:
                 self._finalization_cause = "budget"
-        if self._finalization_cause is not None:
-            return ToolLoopRound(
-                (),
-                finalization_required=True,
-                max_tool_rounds=self.max_tool_rounds,
-                finalization_cause=self._finalization_cause,
+        decision = ToolLoopRound(
+            tuple(None for _ in tool_uses),
+            needs_recovery=(
+                self._batch_occurrences == MAX_CONSECUTIVE_TOOL_BATCHES + 1
+                and self._finalization_cause is None
+            ),
+            finalization_required=self._finalization_cause is not None,
+            max_tool_rounds=self.max_tool_rounds,
+            finalization_cause=self._finalization_cause,
+        )
+        if decision.discard_assistant:
+            self._pending_request_round = decision
+            logger.warning(
+                "Tool loop intervention: calls={} occurrence={} digest={}",
+                len(tool_uses),
+                self._batch_occurrences,
+                fingerprint,
             )
-        return ToolLoopRound(tuple(errors), max_tool_rounds=self.max_tool_rounds)
+        return decision

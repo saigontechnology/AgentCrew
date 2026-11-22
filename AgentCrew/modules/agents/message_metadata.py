@@ -30,7 +30,7 @@ REASONING_ITEM_TYPE = "reasoning"
 def mark_tool_loop_recovery(
     message: dict[str, Any], *, finalization: bool = False
 ) -> None:
-    """Mark an assistant recovery round or its synthetic user context."""
+    """Mark request-only loop context; legacy persisted markers remain readable."""
     metadata = message.setdefault(METADATA_FIELD, {"version": METADATA_VERSION})
     metadata["tool_loop_recovery"] = True
     if finalization:
@@ -38,13 +38,13 @@ def mark_tool_loop_recovery(
 
 
 def is_tool_loop_recovery(message: dict[str, Any]) -> bool:
-    """Identify persisted loop recovery context without inspecting its text."""
+    """Identify loop context in requests or legacy histories without reading text."""
     metadata = message.get(METADATA_FIELD)
     return isinstance(metadata, dict) and metadata.get("tool_loop_recovery") is True
 
 
 def is_tool_loop_finalization(message: dict[str, Any]) -> bool:
-    """Identify the internal, tools-disabled budget finalization instruction."""
+    """Identify internal tools-disabled finalization context."""
     metadata = message.get(METADATA_FIELD)
     return isinstance(metadata, dict) and metadata.get("tool_loop_finalization") is True
 

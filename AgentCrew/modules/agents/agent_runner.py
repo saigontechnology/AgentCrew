@@ -99,7 +99,9 @@ async def _run_agent_loop(
 
     tools_enabled = tool_loop_guard.start_request()
     stream = agent.process_messages(
-        history, callback=process_result, tools_enabled=tools_enabled
+        tool_loop_guard.request_history(history),
+        callback=process_result,
+        tools_enabled=tools_enabled,
     )
 
     try:
@@ -145,6 +147,7 @@ async def _run_agent_loop(
             history.append(assistant_message)
 
     if not tool_uses:
+        tool_loop_guard.check_round([])
         assistant_message = stream.format_assistant_message(
             current_response, thinking=thinking_data
         )
@@ -172,11 +175,11 @@ async def _run_agent_loop(
     tool_uses, tool_round = tool_loop_guard.check_round(tool_uses).omit_blocked_calls(
         tool_uses
     )
-    assistant_message = stream.format_assistant_message(
-        current_response, thinking=thinking_data, tool_uses=tool_uses
-    )
-    tool_round.mark_assistant_message(assistant_message)
-    append_assistant_message(assistant_message)
+    if not tool_round.discard_assistant:
+        assistant_message = stream.format_assistant_message(
+            current_response, thinking=thinking_data, tool_uses=tool_uses
+        )
+        append_assistant_message(assistant_message)
 
     parallel_buffer: list[dict[str, Any]] = []
 
@@ -288,8 +291,6 @@ async def _run_agent_loop(
                 history.append(msg)
 
     tool_round.raise_if_terminal()
-    if recovery := tool_round.recovery_message(history):
-        history.append(recovery)
     return await _run_agent_loop(
         agent,
         history,

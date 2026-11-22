@@ -8,7 +8,6 @@ from AgentCrew.modules.agents.base import MessageType
 from AgentCrew.modules.agents.tool_loop_guard import (
     ToolLoopGuard,
     ToolLoopRound,
-    pending_recovery_message,
 )
 from AgentCrew.modules.events.hooks import CancelOperation
 from AgentCrew.modules.tools.parallel_executor import (
@@ -83,7 +82,9 @@ class TurnExecutor:
         stream = None
         try:
             stream = agent.process_messages(
-                state.history, callback=process_result, tools_enabled=tools_enabled
+                tool_loop_guard.request_history(state.history),
+                callback=process_result,
+                tools_enabled=tools_enabled,
             )
             async for (
                 response_message,
@@ -117,22 +118,21 @@ class TurnExecutor:
             tool_uses, tool_round = tool_loop_guard.check_round(
                 tool_uses
             ).omit_blocked_calls(tool_uses)
-            assistant_message = stream.format_assistant_message(
-                current_response,
-                thinking=thinking_data,
-                tool_uses=tool_uses,
-            )
-            tool_round.mark_assistant_message(assistant_message)
-            if assistant_message:
-                state.history.append(assistant_message)
+            if not tool_round.discard_assistant:
+                assistant_message = stream.format_assistant_message(
+                    current_response,
+                    thinking=thinking_data,
+                    tool_uses=tool_uses,
+                )
+                if assistant_message:
+                    state.history.append(assistant_message)
 
             if has_tool_uses:
-                await self.execute_tools(
-                    session_id, state, agent, tool_uses, tool_round
-                )
+                if tool_uses:
+                    await self.execute_tools(
+                        session_id, state, agent, tool_uses, tool_round
+                    )
                 if not state.cancelled and state.pending_ask_tool is None:
-                    if recovery := tool_round.recovery_message(state.history):
-                        state.history.append(recovery)
                     await self.run_turn(session_id, state, conn, tool_loop_guard)
                 return
 
@@ -446,8 +446,6 @@ class TurnExecutor:
             result,
         )
         state.pending_ask_tool = None
-        if recovery := pending_recovery_message(state.history):
-            state.history.append(recovery)
         return True
 
     async def append_tool_result(

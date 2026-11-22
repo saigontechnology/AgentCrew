@@ -65,7 +65,9 @@ async def test_stop_during_tool_keeps_turn_session_and_does_not_resume_provider(
         def __init__(self):
             self.history = [{"role": "user", "content": "test"}]
 
-        def process_messages(self, callback, *, tools_enabled: bool = True):
+        def process_messages(
+            self, messages=None, callback=None, *, tools_enabled: bool = True
+        ):
             assert tools_enabled is True
             nonlocal calls
             calls += 1

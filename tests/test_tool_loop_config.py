@@ -65,7 +65,7 @@ def test_default_budget_allows_200_rounds_before_finalization(config_path):
     assert decision.max_tool_rounds == 200
     assert (
         "tool budget of 200 model tool rounds"
-        in decision.recovery_message([])["content"][0]["text"]
+        in decision.request_message()["content"][0]["text"]
     )
     assert guard.start_request() is False
 
@@ -198,13 +198,13 @@ def test_config_mtime_changes_affect_new_guards_not_active_turn_or_prompt(config
     retained, decision = decision.omit_blocked_calls(blocked)
     assert retained == []
     assert decision.max_tool_rounds == 3
-    recovery = decision.recovery_message([])
+    recovery = decision.request_message()
     assert is_tool_loop_finalization(recovery)
     assert "tool budget of 3 model tool rounds" in recovery["content"][0]["text"]
     assert original.start_request() is False
 
 
-def test_filtering_repeat_blocked_calls_preserves_resolved_budget():
+def test_cancelling_repeat_batch_preserves_resolved_budget():
     guard = ToolLoopGuard(max_tool_rounds=9)
     tools = [{"id": "repeat", "name": "read_file", "input": {}}]
     guard.check_round(tools)

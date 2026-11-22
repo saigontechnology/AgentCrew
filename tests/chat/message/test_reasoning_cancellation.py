@@ -72,7 +72,7 @@ class _StubAgent:
         }
 
     def process_messages(
-        self, callback=None, *, tools_enabled: bool = True
+        self, messages=None, callback=None, *, tools_enabled: bool = True
     ) -> AgentResponseStream:
         assert tools_enabled is True
         return AgentResponseStream(
@@ -204,14 +204,16 @@ async def test_normal_tool_call_completion_formats_tool_message_before_recursion
     original_process_messages = agent.process_messages
     segments = 0
 
-    def process_messages(callback=None, *, tools_enabled: bool = True):
+    def process_messages(messages=None, callback=None, *, tools_enabled: bool = True):
         assert tools_enabled is True
         nonlocal segments
         segments += 1
         if segments == 2:
             agent._chunks = [("final", "final", None)]
             agent._tool_uses = []
-        return original_process_messages(callback, tools_enabled=tools_enabled)
+        return original_process_messages(
+            messages, callback, tools_enabled=tools_enabled
+        )
 
     agent.process_messages = process_messages
 

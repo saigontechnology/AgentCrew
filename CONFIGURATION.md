@@ -138,17 +138,40 @@ raise `ValueError`.
 Each new turn snapshots its resolved budget. Environment changes and config
 changes detected by the existing modification-time cache affect new turns,
 not an in-progress turn. The budget counts model tool batches, not individual
-calls: rounds 1 through N are permitted. If the model attempts a tool batch in
-round N+1, the entire batch is removed without execution and one tools-disabled
-request asks for a best-effort final answer that discloses incomplete or
-uncertain work. Empty/malformed finalization output or unexpected tool calls
-still terminate the turn. Exact-repeat protection allows two identical calls
-to execute; the third is removed with recovery context while tools remain
-enabled. A fourth consecutive repeat removes the entire batch and requests
-one tools-disabled final answer using repeat-specific context. If repetition
-and round-budget overflow coincide, the repeat cause takes precedence, with
-only one finalization request. Changing the tool or arguments after recovery
-resets the repeat streak and permits normal execution.
+calls: rounds 1 through N are permitted. An attempted tool batch in round N+1
+discards the **entire assistant round** (text, thinking, metadata, and calls),
+executes nothing, and requests one tools-disabled best-effort final answer
+that discloses incomplete or uncertain work. Invalid finalization output
+(empty/malformed text or unexpected tool calls) still terminates the turn.
+
+Repeat detection compares the **complete tool-call batch** as an unordered
+multiset of canonical tool names and arguments. Call IDs and order do not
+matter; duplicate multiplicity does. For example, `[A, B]`, `[A, C]`, and
+`[A, D]` are different batches and execute normally. Reordering `[A, B]` to
+`[B, A]` does not reset the streak. Adding/removing a call or changing its
+arguments resets the streak; duplicate calls in one batch do not themselves
+count as repeated rounds.
+
+The first two identical consecutive batches execute and persist normally.
+The third discards the entire assistant round and retries with tools enabled.
+A fourth consecutive identical batch discards the entire round and requests one
+tools-disabled final answer using repeat-specific context. Repeat cause takes
+precedence if a fourth repeat and round-budget overflow coincide; only one
+finalization request is made.
+
+Recovery and finalization instructions are marked temporary user context in a
+copied history for the **next provider request only**. Neither these prompts
+nor discarded assistant rounds enter canonical/session history, conversation
+persistence, memory input, or future replay. An `ask` in a discarded batch is
+cancelled, not paused or resumed. A changed batch after recovery resumes normal
+execution and persistence. After tools-disabled finalization, only the valid
+final assistant response is persisted. Existing saved conversations are not
+rewritten; legacy internal-message markers remain recognized.
+
+Already-emitted text/thinking chunks can remain visible. A2A streaming
+answer/thinking artifacts may already have been emitted (and recorded by the
+SDK task store); this does not retract them. No new tool artifact or assistant
+session-history entry is created for a discarded round.
 
 ### API Keys and Credential Scope
 

@@ -448,7 +448,9 @@ class MessageHandler:
             session.begin_segment()
             tools_enabled = tool_loop_guard.start_request()
             response_stream = request_agent.process_messages(
-                callback=process_result, tools_enabled=tools_enabled
+                tool_loop_guard.request_history(request_agent.history),
+                callback=process_result,
+                tools_enabled=tools_enabled,
             )
             self.stream_generator = response_stream
             stream_iter = response_stream.__aiter__()
@@ -594,6 +596,8 @@ class MessageHandler:
                 end_thinking = True
 
             tool_loop_guard.validate_response(assistant_response, tool_uses)
+            if not tool_uses:
+                tool_loop_guard.check_round([])
 
             # Add thinking content as a separate message if available
             thinking_data = (
@@ -606,42 +610,39 @@ class MessageHandler:
                 tool_uses, tool_round = tool_loop_guard.check_round(
                     tool_uses
                 ).omit_blocked_calls(tool_uses)
-                tool_uses_without_transfer = [
-                    t
-                    for index, t in enumerate(tool_uses)
-                    if t["name"] != "transfer" or tool_round.errors[index]
-                ]
-                # only append message if there are tool uses other than transfer
-                if len(tool_uses_without_transfer) > 0:
-                    assistant_message = response_stream.format_assistant_message(
-                        assistant_response,
-                        thinking=thinking_data,
-                        tool_uses=tool_uses_without_transfer,
+                if tool_round.discard_assistant:
+                    assistant_response = ""
+                    thinking_content = ""
+                    thinking_signature = ""
+                else:
+                    tool_uses_without_transfer = [
+                        t
+                        for index, t in enumerate(tool_uses)
+                        if t["name"] != "transfer" or tool_round.errors[index]
+                    ]
+                    # only append message if there are tool uses other than transfer
+                    if len(tool_uses_without_transfer) > 0:
+                        assistant_message = response_stream.format_assistant_message(
+                            assistant_response,
+                            thinking=thinking_data,
+                            tool_uses=tool_uses_without_transfer,
+                        )
+                        self._messages_append(assistant_message)
+                    # ignore if message is empty
+                    elif assistant_response.strip():
+                        assistant_message = response_stream.format_assistant_message(
+                            assistant_response, thinking=thinking_data
+                        )
+                        self._messages_append(assistant_message)
+                    await self.bus.emit(
+                        AppEvents.ASSISTANT_MESSAGE_ADDED,
+                        response=assistant_response,
                     )
-                    tool_round.mark_assistant_message(assistant_message)
-                    self._messages_append(assistant_message)
-                # ignore if message is empty
-                elif (
-                    assistant_response.strip()
-                    or tool_round.needs_recovery
-                    or tool_round.finalization_required
-                ):
-                    assistant_message = response_stream.format_assistant_message(
-                        assistant_response, thinking=thinking_data
-                    )
-                    tool_round.mark_assistant_message(assistant_message)
-                    self._messages_append(assistant_message)
-                await self.bus.emit(
-                    AppEvents.ASSISTANT_MESSAGE_ADDED,
-                    response=assistant_response,
-                )
 
-                self._yolo_mode_check()
+                    self._yolo_mode_check()
 
-                # Process each tool use
-                await self.tool_manager.execute_tools_batch(tool_uses, tool_round)
-                if recovery := tool_round.recovery_message(self.streamline_messages):
-                    self._messages_append(recovery)
+                    # Process each tool use
+                    await self.tool_manager.execute_tools_batch(tool_uses, tool_round)
 
                 if token_usage:
                     await self.bus.emit(
