@@ -595,6 +595,7 @@ class MessageHandler:
                 )
                 end_thinking = True
 
+            tool_loop_guard.acknowledge_response()
             tool_loop_guard.validate_response(assistant_response, tool_uses)
             if not tool_uses:
                 tool_loop_guard.check_round([])

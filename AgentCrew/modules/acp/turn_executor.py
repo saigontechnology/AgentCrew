@@ -113,6 +113,7 @@ class TurnExecutor:
 
             if token_usage:
                 state.token_usage = state.token_usage.merge(token_usage)
+            tool_loop_guard.acknowledge_response()
             tool_loop_guard.validate_response(current_response, tool_uses)
             has_tool_uses = bool(tool_uses)
             tool_uses, tool_round = tool_loop_guard.check_round(

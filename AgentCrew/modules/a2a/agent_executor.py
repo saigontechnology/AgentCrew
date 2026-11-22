@@ -499,6 +499,7 @@ class AgentCrewA2AExecutor(AgentExecutor):
             await buffer.flush()
             await stop_flush_task()
 
+            tool_loop_guard.acknowledge_response()
             tool_loop_guard.validate_response(current_response, tool_uses)
             thinking_data = (
                 (thinking_content, thinking_signature) if thinking_content else None

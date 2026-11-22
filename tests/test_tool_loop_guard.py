@@ -916,7 +916,7 @@ async def test_changed_ask_batch_resumes_without_synthetic_context(mode, monkeyp
     harness.assert_paired()
 
 
-def test_request_overlay_is_internal_deep_copied_and_consumed_once():
+def test_request_overlay_is_internal_deep_copied_until_acknowledged():
     from AgentCrew.modules.agents.message_metadata import (
         attach_stream_metadata,
         get_responses_provider_state,
@@ -953,6 +953,8 @@ def test_request_overlay_is_internal_deep_copied_and_consumed_once():
     ]
     original = copy.deepcopy(history)
     messages = guard.request_history(history)
+    retry_messages = guard.request_history(history)
+    assert messages == retry_messages and messages is not retry_messages
     assert messages[:-1] == history and messages is not history
     assert is_tool_loop_recovery(messages[-1])
     assert get_responses_provider_state(messages[1]) == get_responses_provider_state(
@@ -963,10 +965,17 @@ def test_request_overlay_is_internal_deep_copied_and_consumed_once():
     assert provider_messages[-1]["content"][0]["text"] == REPEAT_WARNING
     assert provider_messages[-2]["tool_call_id"] == "prior"
     messages[0]["content"][0]["text"] = "changed"
+    messages[-1]["content"][0]["text"] = "mutated intervention"
     get_responses_provider_state(messages[1])["output_items"][0]["summary"].append(
         {"type": "summary_text", "text": "changed"}
     )
     assert history == original
+    assert retry_messages[:-1] == original
+    assert retry_messages[-1]["content"][0]["text"] == REPEAT_WARNING
+    assert guard.request_history(history) == retry_messages
+    guard.acknowledge_response()
+    assert guard.request_history(history) is history
+    guard.acknowledge_response()
     assert guard.request_history(history) is history
 
 
@@ -1407,6 +1416,7 @@ def test_changed_complete_batch_resets_after_warning(change):
         warning = guard.check_round(base)
     assert warning.needs_recovery
     guard.request_history([])
+    guard.acknowledge_response()
     for _ in range(2):
         assert not guard.check_round(changed).discard_assistant
     decision = guard.check_round(changed)
@@ -1588,3 +1598,161 @@ async def test_cancelled_finalization_never_restores_discarded_rounds(
     assert harness.tool_policies[-1] is False
     harness.assert_blocked_has_no_side_effects(blocked)
     harness.assert_paired()
+
+
+@pytest.mark.parametrize("cause", ["repeat", "budget"])
+def test_acknowledgement_precedes_new_intervention_and_preserves_one_shot(cause):
+    guard = ToolLoopGuard(max_tool_rounds=3 if cause == "budget" else 12)
+    history = [{"role": "user", "content": [{"type": "text", "text": "original"}]}]
+    guard.acknowledge_response()
+    for _ in range(3):
+        guard.check_round([call()])
+    assert guard.start_request() is True
+    assert guard.request_history(history)[-1]["content"][0]["text"] == REPEAT_WARNING
+    guard.acknowledge_response()
+    assert guard.request_history(history) is history
+    decision = guard.check_round([call() if cause == "repeat" else call("changed")])
+    assert decision.finalization_cause == cause
+    assert guard.start_request() is False
+    pending = guard.request_history(history)
+    assert is_tool_loop_finalization(pending[-1])
+    assert guard.request_history(history) == pending
+    guard.acknowledge_response()
+    guard.validate_response("Finished", [])
+    assert guard.request_history(history) is history
+    with pytest.raises(ToolLoopError, match="already attempted"):
+        guard.start_request()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["acp", "a2a", "chat"])
+@pytest.mark.parametrize("phase", ["construction", "stream"])
+@pytest.mark.parametrize("outcome", ["changed", "finished", "repeat"])
+async def test_recovery_overlay_survives_retryable_api_attempt(
+    mode, phase, outcome, monkeypatch
+):
+    import httpx
+    from openai import BadRequestError
+
+    from AgentCrew.modules.llm.model_registry import ModelRegistry
+
+    guard = ToolLoopGuard(max_tool_rounds=TEST_MAX_TOOL_ROUNDS)
+    tail = (
+        [None]
+        if outcome == "finished"
+        else [[call("changed") if outcome == "changed" else call()], None]
+    )
+    harness = Harness(mode, monkeypatch, [[call()]] * 3 + tail, guard=guard)
+    harness.agent.get_model = MagicMock(return_value="stub/test")
+    monkeypatch.setattr(ModelRegistry, "get_model_limit", lambda model: 128)
+    error = BadRequestError(
+        "context window exceeded",
+        response=httpx.Response(
+            400, request=httpx.Request("POST", "https://stub.invalid")
+        ),
+        body={"code": "context_length_exceeded"},
+    )
+    process_messages = harness.agent.process_messages
+    original_iter = ModelStream.__aiter__
+    attempt_histories, policies, failed_streams, closed = [], [], [], []
+
+    async def iterate(stream):
+        if stream in failed_streams:
+            yield ("failed-attempt-content", "failed-attempt-content", None)
+            raise error
+        async for item in original_iter(stream):
+            yield item
+
+    async def close(stream):
+        closed.append(stream)
+
+    monkeypatch.setattr(ModelStream, "__aiter__", iterate)
+    monkeypatch.setattr(ModelStream, "aclose", close)
+
+    def attempt(messages=None, callback=None, *, tools_enabled=True):
+        policies.append(tools_enabled)
+        attempt_histories.append(copy.deepcopy(messages))
+        if len(policies) in (4, 5):
+            assert guard.tools_enabled and guard.finalization_cause is None
+            assert harness.llm.execute_tool.await_count == 2
+        if len(policies) == 4:
+            assert tools_enabled is True
+            if phase == "construction":
+                raise error
+            stream = ModelStream(harness.agent, callback, [])
+            stream.tools_enabled = tools_enabled
+            failed_streams.append(stream)
+            return stream
+        return process_messages(messages, callback, tools_enabled=tools_enabled)
+
+    harness.agent.process_messages = attempt
+    result = await harness.run()
+    assert len(policies) == len(harness.batches) + 1
+    assert policies == (
+        [True] * 5 + [False] if outcome == "repeat" else [True] * len(policies)
+    )
+    warning_attempts = attempt_histories[3:5]
+    assert warning_attempts[0] == warning_attempts[1]
+    assert warning_attempts[0] is not warning_attempts[1]
+    for history in warning_attempts:
+        assert is_tool_loop_recovery(history[-1])
+        assert not is_tool_loop_finalization(history[-1])
+        assert history[-1]["content"][0]["text"] == REPEAT_WARNING
+    assert guard.request_history(harness.history) is harness.history
+    assert harness.agent.input_tokens_usage == 128
+    assert harness.streams[2].format_calls == 0
+    executions = 3 if outcome == "changed" else 2
+    assert harness.llm.execute_tool.await_count == executions
+    assert harness.agent.validate_tool_use.call_count == executions
+    assert harness.hooks.run_before.await_count == executions
+    assert harness.approval is None or harness.approval.await_count == executions
+    assert sum(m["role"] == "assistant" for m in harness.history) == executions + 1
+    assert harness.history[-1]["content"][0]["text"] == "Finished"
+    assert all(stream.format_calls == 0 for stream in failed_streams)
+    assert all(
+        block.get("text") != "failed-attempt-content"
+        for message in harness.history
+        for block in message.get("content", [])
+        if isinstance(block, dict)
+    )
+    harness.assert_blocked_has_no_side_effects(
+        {"r3-0", "r4-0"} if outcome == "repeat" else {"r3-0"}
+    )
+    harness.assert_paired()
+    assert harness.agent.extract_last_user_message_for_memory(harness.history) == "work"
+    if outcome == "repeat":
+        assert guard.finalization_cause == "repeat"
+        assert is_tool_loop_finalization(attempt_histories[-1][-1])
+        assert harness.streams[3].format_calls == 0
+        assert policies.count(False) == 1
+    else:
+        assert guard.tools_enabled and guard.finalization_cause is None
+        assert not any(
+            is_tool_loop_finalization(m)
+            for history in attempt_histories
+            for m in history
+        )
+    if mode == "acp":
+        assert harness.state.token_usage.total_input_tokens == len(harness.batches)
+    else:
+        assert result[1].total_input_tokens == len(harness.batches)
+    if mode in {"acp", "a2a"}:
+        assert all(stream in closed for stream in harness.streams + failed_streams)
+    if mode == "a2a":
+        from a2a.types.a2a_pb2 import TaskArtifactUpdateEvent
+
+        assert [
+            args.args[1] for args in harness.store.append_history.await_args_list
+        ] == harness.history[1:]
+        tool_artifacts = [
+            args.args[0].artifact
+            for args in harness.queue.enqueue_event.await_args_list
+            if isinstance(args.args[0], TaskArtifactUpdateEvent)
+            and args.args[0].artifact.artifact_id.startswith("tool_")
+        ]
+        assert len(tool_artifacts) == executions
+        assert not any(
+            "_TurnChunkBuffer.flush_loop" in task.get_coro().__qualname__
+            for task in asyncio.all_tasks()
+            if not task.done()
+        )

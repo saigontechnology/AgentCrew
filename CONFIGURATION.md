@@ -160,8 +160,11 @@ precedence if a fourth repeat and round-budget overflow coincide; only one
 finalization request is made.
 
 Recovery and finalization instructions are marked temporary user context in a
-copied history for the **next provider request only**. Neither these prompts
-nor discarded assistant rounds enter canonical/session history, conversation
+copied history for the **next completed provider response only**. Failed
+provider attempts and retryable API errors keep that context for the retry.
+Acknowledgement clears it before the response is checked, so later normal
+requests do not replay it. Neither these prompts nor discarded assistant rounds
+enter canonical/session history, conversation
 persistence, memory input, or future replay. An `ask` in a discarded batch is
 cancelled, not paused or resumed. A changed batch after recovery resumes normal
 execution and persistence. After tools-disabled finalization, only the valid

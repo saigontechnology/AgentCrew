@@ -214,16 +214,20 @@ class ToolLoopGuard:
         """Apply one request-only intervention to a deep copy of canonical history.
 
         Normal requests retain the existing history semantics. Intervention
-        context is consumed here and cannot enter persistence or replay state.
+        context survives failed attempts until a completed response is acknowledged;
+        it never enters persistence or replay state.
         """
         decision = self._pending_request_round
-        self._pending_request_round = None
         if decision is None:
             return history
         messages = copy.deepcopy(history)
         if message := decision.request_message():
             messages.append(message)
         return messages
+
+    def acknowledge_response(self) -> None:
+        """Clear delivered context after stream completion, before checking its round."""
+        self._pending_request_round = None
 
     def validate_response(self, response: Any, tool_uses: list[dict[str, Any]]) -> None:
         """Fail closed if the finalization request cannot produce a final answer."""

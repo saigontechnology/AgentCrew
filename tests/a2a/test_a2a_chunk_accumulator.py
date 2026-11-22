@@ -299,7 +299,10 @@ class _FakeLocalAgent(LocalAgent):
         self.name = "fake"
         self._calls = 0
 
-    def process_messages(self, messages=None, callback=None) -> AgentResponseStream:
+    def process_messages(
+        self, messages=None, callback=None, *, tools_enabled: bool = True
+    ) -> AgentResponseStream:
+        assert tools_enabled is True
         return AgentResponseStream(
             agent=self,
             state_factory=lambda: None,
