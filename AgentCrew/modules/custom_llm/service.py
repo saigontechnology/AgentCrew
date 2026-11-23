@@ -72,8 +72,13 @@ class CustomLLMService(OpenAIService):
         return {}
 
     @staticmethod
-    def _normalize_tool_input_values(tool_input: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_tool_input_values(
+        tool_input: dict[str, Any], tool_name: str | None = None
+    ) -> dict[str, Any]:
+        """Coerce container arguments without interpreting literal file content."""
         for key, value in list(tool_input.items()):
+            if tool_name == "write_file" and key == "write_blocks":
+                continue
             if not isinstance(value, str):
                 continue
             stripped = value.strip()
@@ -139,7 +144,7 @@ class CustomLLMService(OpenAIService):
                 f"(raw_arguments={raw_arguments!r}, tool_call_id={getattr(tool_call, 'id', None)})"
             )
         tool_input = self._safe_json_loads(raw_arguments)
-        self._normalize_tool_input_values(tool_input)
+        self._normalize_tool_input_values(tool_input, tool_name=tool_name)
         tool_uses.append(
             {
                 "id": getattr(tool_call, "id", None)
@@ -226,7 +231,9 @@ class CustomLLMService(OpenAIService):
                 try:
                     parsed_arguments = json.loads(tool_use["args_json"])
                     if isinstance(parsed_arguments, dict):
-                        self._normalize_tool_input_values(parsed_arguments)
+                        self._normalize_tool_input_values(
+                            parsed_arguments, tool_name=tool_use.get("name")
+                        )
                         tool_use["input"] = parsed_arguments
                 except json.JSONDecodeError:
                     logger.debug(
@@ -619,7 +626,7 @@ class CustomLLMService(OpenAIService):
                             f"_process_non_stream_chunk (XML): tool '{tool_name}' has empty arguments "
                             f"(tool_data={tool_data!r})"
                         )
-                    self._normalize_tool_input_values(tool_input)
+                    self._normalize_tool_input_values(tool_input, tool_name=tool_name)
                     tool_uses.append(
                         {
                             "id": f"toolu_{len(tool_uses)}",  # Generate an ID
