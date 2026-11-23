@@ -26,7 +26,7 @@ def classify_tool_kind(tool_name: str) -> ToolKind:
         or "find" in tool_name
     ):
         return "read"
-    if "write" in tool_name or "edit" in tool_name:
+    if "write" in tool_name or "edit" in tool_name or tool_name == "craft_skill":
         return "edit"
     if "search" in tool_name or "analyze" in tool_name:
         return "search"

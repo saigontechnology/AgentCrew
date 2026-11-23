@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 SENSITIVE_TOOL_NAMES: set[str] = {
     "acp_write_file",
     "write_file",
+    "craft_skill",
     "acp_run_command",
     "run_command",
     "browser_navigate",

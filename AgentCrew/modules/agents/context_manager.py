@@ -85,16 +85,19 @@ You must analyze and plan out the steps then execute it with your available tool
             adaptive_messages.append(mcp_resources_prompt)
 
         skills_service = agent.services.get("skills")
-        if skills_service and skills_service.has_skills():
-            catalog = skills_service.get_catalog()
-            skill_lines = [f"- **{s['name']}**: {s['description']}" for s in catalog]
-            adaptive_messages.append(
-                "## Available Skills\n"
-                f"{'\n'.join(skill_lines)}\n\n"
-                "When a task matches a skill's description, call the "
-                "`activate_skill` tool with the skill's name to load its "
-                "full instructions before proceeding."
+        if (
+            skills_service
+            and skills_service.has_skills()
+            and "skills" not in agent.excluded_tools
+            and "activate_skill" not in agent.excluded_tools
+        ):
+            from AgentCrew.modules.llm.model_registry import ModelRegistry
+
+            catalog = skills_service.catalog_prompt(
+                ModelRegistry.get_model_limit(agent.get_model())
             )
+            if catalog:
+                adaptive_messages.append(catalog)
 
         from AgentCrew.modules.memory.context_persistent import (
             ContextPersistenceService,

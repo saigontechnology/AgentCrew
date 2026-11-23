@@ -137,6 +137,7 @@ class ApplicationSetup:
 
         # Initialize events infrastructure
         self.plugin_manager = PluginManager(trusted_project_plugins=_trusted)
+        self._trusted_project = bool(_trusted)
         self._plugins_initialized = False
         self._standalone_llm_services: list[Any] = []
         self._run_async = None
@@ -629,7 +630,7 @@ class ApplicationSetup:
         try:
             from AgentCrew.modules.skills import SkillsService
 
-            skills_service = SkillsService()
+            skills_service = SkillsService(trusted_project=self._trusted_project)
         except Exception as e:
             click.echo(f"\u26a0\ufe0f Skills service not available: {e!s}")
             skills_service = None

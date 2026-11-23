@@ -656,10 +656,13 @@ class LocalAgent(BaseAgent):
         - No changes in state -> no-op
         """
         skills_service = self.services.get("skills")
-        if not skills_service:
+        if not skills_service or {"skills", "activate_skill"} & self.excluded_tools:
             return
 
-        changed = skills_service.refresh()
+        skills_service.refresh()
+        skill_names = tuple(skills_service.get_skill_names())
+        changed = skill_names != getattr(self, "_skill_schema_names", None)
+        self._skill_schema_names = skill_names
         has_skills = skills_service.has_skills()
         has_tool = "activate_skill" in self.tool_definitions
 
@@ -781,6 +784,9 @@ class LocalAgent(BaseAgent):
         # ─────────────────────────────────────────────────────────────
 
         final_messages = copy.deepcopy(enhancing_messages)
+        from AgentCrew.modules.skills.tool import compact_skill_results
+
+        compact_skill_results(final_messages)
 
         await VisionPreprocessingUtils.preprocess_messages(
             final_messages,
@@ -825,6 +831,9 @@ class LocalAgent(BaseAgent):
             An ``AgentResponseStream`` yielding
             ``(assistant_response, chunk_text, thinking_chunk)`` tuples.
         """
+        from AgentCrew.modules.skills.tool import bind_skill_history
+
+        bind_skill_history(self, messages if messages is not None else self.history)
         request_usage: dict[str, Any] = {}
         return AgentResponseStream(
             agent=self,
@@ -847,7 +856,9 @@ class LocalAgent(BaseAgent):
         if not self.llm:
             return
 
-        final_messages = await self.pre_process_message(messages or self.history)
+        final_messages = await self.pre_process_message(
+            messages if messages is not None else self.history
+        )
         if final_messages is None:
             return
 
