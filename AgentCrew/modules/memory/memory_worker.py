@@ -353,28 +353,26 @@ class MemoryWorker:
         }
 
     def _worker_loop(self):
-        loop = asyncio.new_event_loop()
-        while True:
-            try:
-                operation_data = self._conversation_queue.get(
-                    timeout=DEFAULT_QUEUE_TIMEOUT
-                )
+        """Finalize worker-owned tasks and async generators before loop teardown."""
+        with asyncio.Runner() as runner:
+            while True:
+                try:
+                    operation_data = self._conversation_queue.get(
+                        timeout=DEFAULT_QUEUE_TIMEOUT
+                    )
 
-                if operation_data.get("type") == "shutdown":
-                    break
+                    if operation_data.get("type") == "shutdown":
+                        break
 
-                loop.run_until_complete(
-                    self._store_conversation_internal(operation_data)
-                )
-                self._conversation_queue.task_done()
+                    runner.run(self._store_conversation_internal(operation_data))
+                    self._conversation_queue.task_done()
 
-            except queue.Empty:
-                if self._memory_stop_event.is_set():
-                    break
-                continue
-            except Exception as e:
-                logger.error(f"Memory worker error: {e}")
-        loop.close()
+                except queue.Empty:
+                    if self._memory_stop_event.is_set():
+                        break
+                    continue
+                except Exception as e:
+                    logger.error(f"Memory worker error: {e}")
 
     async def _store_conversation_internal(self, operation_data: dict[str, Any]):
         try:
