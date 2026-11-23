@@ -84,7 +84,9 @@ class CustomLLMService(OpenAIService):
             function = definition.get("function", definition)
             if not isinstance(function, dict) or function.get("name") != tool_name:
                 continue
-            return normalize_tool_input(tool_input, extract_tool_input_schema(definition))
+            return normalize_tool_input(
+                tool_input, extract_tool_input_schema(definition)
+            )
         return tool_input
 
     def _normalize_tool_call_for_request(
@@ -324,6 +326,11 @@ class CustomLLMService(OpenAIService):
                 msg["role"] = "user"
                 msg.pop("metadata", None)
             elif role == "assistant":
+                supports_thinking = "thinking" in ModelRegistry.get_model_capabilities(
+                    f"{self._provider_name}/{self.model}"
+                )
+                if not supports_thinking:
+                    msg.pop("reasoning_content", None)
                 if isinstance(msg.get("content"), list):
                     thinking_block = next(
                         (
@@ -343,8 +350,10 @@ class CustomLLMService(OpenAIService):
                         )
                         or " "
                     )
-                    if thinking_block:
+                    if supports_thinking and thinking_block:
                         msg["reasoning_content"] = thinking_block.get("thinking", "")
+                elif not msg.get("content"):
+                    msg["content"] = " "
 
                 if "tool_calls" in msg and msg.get("tool_calls", []):
                     normalized_tool_calls = []
@@ -355,10 +364,7 @@ class CustomLLMService(OpenAIService):
                         if normalized_tool_call:
                             normalized_tool_calls.append(normalized_tool_call)
                     msg["tool_calls"] = normalized_tool_calls
-                    # set default empty reasoning_content if message has tool_calls
-                    if "thinking" in ModelRegistry.get_model_capabilities(
-                        f"{self._provider_name}/{self.model}"
-                    ):
+                    if supports_thinking:
                         msg["reasoning_content"] = (
                             msg["reasoning_content"]
                             if msg.get("reasoning_content")

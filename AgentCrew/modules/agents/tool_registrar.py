@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from AgentCrew.modules.prompts.constants import TOOL_USE_GUIDANCE
 from AgentCrew.modules.tools.utils import extract_tool_name
 
 if TYPE_CHECKING:
@@ -222,6 +223,8 @@ class AgentToolRegistrar:
             handler_factory,
             service_instance,
         )
+        if TOOL_USE_GUIDANCE not in self._agent.tool_prompts:
+            self._agent.tool_prompts.append(TOOL_USE_GUIDANCE)
 
     def get_tool_definition(self, tool_name: str) -> dict[str, Any] | None:
         """Resolve and return the full tool definition dict for *tool_name*.
@@ -270,6 +273,11 @@ class AgentToolRegistrar:
                 agent.registered_tools.add(tool_name)
             except Exception as e:
                 logger.error(f"Error registering tool {tool_name}: {e}")
+
+        if agent.is_active and agent.registered_tools:
+            system_prompt = agent.llm.get_system_prompt()
+            if TOOL_USE_GUIDANCE not in system_prompt:
+                agent.llm.set_system_prompt(f"{system_prompt}\n\n{TOOL_USE_GUIDANCE}")
 
     def _clear_from_llm(self) -> None:
         """Remove all tool registrations from the LLM service."""

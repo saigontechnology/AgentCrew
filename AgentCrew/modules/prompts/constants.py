@@ -1,3 +1,10 @@
+TOOL_USE_GUIDANCE = """<Tool_Use_Guidance>
+When tools are available, include one short user-visible sentence explaining what
+you are doing or what the previous tool result showed. If another tool is needed,
+put that sentence and the tool call in the same response; do not stop after the
+sentence or blindly repeat an identical call.
+</Tool_Use_Guidance>"""
+
 # Instructions injected when there IS previous conversation context (merge mode)
 MERGE_INSTRUCTIONS = """When PREVIOUS_CONVERSATION_CONTEXT is provided:
 Extract only this turn's additions. The application preserves previous fields and
