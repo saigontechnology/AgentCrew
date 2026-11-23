@@ -1,4 +1,3 @@
-import ast
 import json
 from typing import Any
 
@@ -8,6 +7,8 @@ from AgentCrew.modules.llm.base import AsyncIterator
 from AgentCrew.modules.llm.model_registry import ModelRegistry
 from AgentCrew.modules.llm.token_usage import TokenUsage
 from AgentCrew.modules.openai import OpenAIService
+from AgentCrew.modules.tools.input_normalization import normalize_tool_input
+from AgentCrew.modules.tools.input_validation import extract_tool_input_schema
 
 
 class CustomLLMService(OpenAIService):
@@ -71,40 +72,20 @@ class CustomLLMService(OpenAIService):
         )
         return {}
 
-    @staticmethod
     def _normalize_tool_input_values(
-        tool_input: dict[str, Any], tool_name: str | None = None
+        self, tool_input: dict[str, Any], tool_name: str | None = None
     ) -> dict[str, Any]:
-        """Coerce container arguments without interpreting literal file content."""
-        for key, value in list(tool_input.items()):
-            if tool_name == "write_file" and key == "write_blocks":
+        """Repair containers using the currently registered tool's input schema."""
+        if not self._has_usable_tool_name(tool_name):
+            return tool_input
+        for definition in self.tools:
+            if not isinstance(definition, dict):
                 continue
-            if not isinstance(value, str):
+            function = definition.get("function", definition)
+            if not isinstance(function, dict) or function.get("name") != tool_name:
                 continue
-            stripped = value.strip()
-            if not stripped:
-                continue
-            if stripped.startswith(("[", "{")):
-                parsed = CustomLLMService._try_parse_container_literal(stripped)
-                if parsed is not None:
-                    tool_input[key] = parsed
+            return normalize_tool_input(tool_input, extract_tool_input_schema(definition))
         return tool_input
-
-    @staticmethod
-    def _try_parse_container_literal(value: str) -> Any:
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, (list, dict)):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-        try:
-            parsed = ast.literal_eval(value)
-            if isinstance(parsed, (list, dict, tuple)):
-                return parsed
-        except (ValueError, SyntaxError):
-            pass
-        return None
 
     def _normalize_tool_call_for_request(
         self, raw_tool_call: dict[str, Any]
@@ -144,7 +125,7 @@ class CustomLLMService(OpenAIService):
                 f"(raw_arguments={raw_arguments!r}, tool_call_id={getattr(tool_call, 'id', None)})"
             )
         tool_input = self._safe_json_loads(raw_arguments)
-        self._normalize_tool_input_values(tool_input, tool_name=tool_name)
+        tool_input = self._normalize_tool_input_values(tool_input, tool_name=tool_name)
         tool_uses.append(
             {
                 "id": getattr(tool_call, "id", None)
@@ -231,10 +212,9 @@ class CustomLLMService(OpenAIService):
                 try:
                     parsed_arguments = json.loads(tool_use["args_json"])
                     if isinstance(parsed_arguments, dict):
-                        self._normalize_tool_input_values(
+                        tool_use["input"] = self._normalize_tool_input_values(
                             parsed_arguments, tool_name=tool_use.get("name")
                         )
-                        tool_use["input"] = parsed_arguments
                 except json.JSONDecodeError:
                     logger.debug(
                         f"_merge_stream_tool_call_delta: accumulated args_json still incomplete "
@@ -626,7 +606,9 @@ class CustomLLMService(OpenAIService):
                             f"_process_non_stream_chunk (XML): tool '{tool_name}' has empty arguments "
                             f"(tool_data={tool_data!r})"
                         )
-                    self._normalize_tool_input_values(tool_input, tool_name=tool_name)
+                    tool_input = self._normalize_tool_input_values(
+                        tool_input, tool_name=tool_name
+                    )
                     tool_uses.append(
                         {
                             "id": f"toolu_{len(tool_uses)}",  # Generate an ID
