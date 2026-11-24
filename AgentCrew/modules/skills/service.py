@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 from collections import OrderedDict
 from pathlib import Path, PurePosixPath
@@ -16,7 +17,9 @@ from .publisher import (
     RecoveryReport,
     SkillPublisher,
     check_project_path,
+    inspect_skill_entry,
     portable_key,
+    skill_tree_snapshot,
     validate_relative_names,
 )
 from .validators import validate_script
@@ -291,10 +294,16 @@ class SkillsService:
             for entry in sorted(root.iterdir()):
                 if entry.is_symlink():
                     continue
+                if root.is_relative_to(self.project_root):
+                    self._check_project_path(entry)
                 if entry.is_file() and entry.name != "SKILL.md":
                     resources.append(entry.name)
                 elif entry.is_dir() and entry.name not in _SKIP_DIRS:
                     for sub in sorted(entry.iterdir()):
+                        if root.is_relative_to(self.project_root):
+                            if sub.is_symlink():
+                                continue
+                            self._check_project_path(sub)
                         if sub.is_file() and not sub.is_symlink():
                             resources.append(sub.relative_to(root).as_posix())
                 if len(resources) >= 100:
@@ -308,19 +317,12 @@ class SkillsService:
 
     def _tree_files(self, root: Path) -> dict[str, bytes]:
         files = {}
-        directories = []
         total = 0
-        self._check_project_path(root)
-        for path in sorted(root.rglob("*")):
-            self._check_project_path(path)
-            if path.is_dir():
-                directories.append(path.relative_to(root).as_posix())
+        for path, metadata in skill_tree_snapshot(self.project_root, root):
+            if stat.S_ISDIR(metadata.st_mode):
                 continue
-            if not path.is_file() or path.stat().st_nlink != 1:
-                raise ValueError(
-                    "Only regular, non-hardlinked skill files are supported"
-                )
-            total += path.stat().st_size
+            metadata = inspect_skill_entry(self.project_root, path)
+            total += metadata.st_size
             if total > MAX_CRAFT_BYTES:
                 raise ValueError("Existing skill exceeds the 1 MB update limit")
             with path.open("rb") as source:
@@ -328,7 +330,6 @@ class SkillsService:
             if len(content) > MAX_CRAFT_BYTES:
                 raise ValueError("Existing skill file exceeds the 1 MB update limit")
             files[path.relative_to(root).as_posix()] = content
-        validate_relative_names(list(files), directories=directories)
         if sum(map(len, files.values())) > MAX_CRAFT_BYTES:
             raise ValueError("Existing skill exceeds the 1 MB update limit")
         return files
@@ -535,14 +536,13 @@ class SkillsService:
             try:
                 directory_modes = {}
                 if exists:
-                    for directory in sorted(target.rglob("*")):
-                        self._check_project_path(directory)
-                        if directory.is_dir():
+                    for directory, metadata in skill_tree_snapshot(
+                        self.project_root, target
+                    ):
+                        if stat.S_ISDIR(metadata.st_mode):
                             relative_dir = directory.relative_to(target)
                             (stage / relative_dir).mkdir(parents=True, exist_ok=True)
-                            directory_modes[relative_dir] = (
-                                directory.stat().st_mode & 0o777
-                            )
+                            directory_modes[relative_dir] = metadata.st_mode & 0o777
                 for relative, content in merged.items():
                     path = stage / relative
                     path.parent.mkdir(parents=True, exist_ok=True)

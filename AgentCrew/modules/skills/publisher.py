@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
 import sys
 import threading
@@ -108,6 +107,71 @@ def check_project_path(project_root: Path, path: Path) -> None:
             )
     if not path.resolve().is_relative_to(project_root):
         raise ValueError("Skill path escapes project root")
+
+
+def _reject_tree_link(metadata: os.stat_result) -> None:
+    if stat.S_ISLNK(metadata.st_mode) or (
+        getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        raise ValueError(
+            "Symlinks, junctions and reparse points are not allowed in skill trees"
+        )
+
+
+def inspect_skill_entry(
+    project_root: Path, path: Path, metadata: os.stat_result | None = None
+) -> os.stat_result:
+    """Reject cached link flags, then use fresh lstat for complete metadata/link counts."""
+    path.relative_to(project_root)
+    if metadata is not None:
+        _reject_tree_link(metadata)
+    check_project_path(project_root, path)
+    metadata = path.lstat()
+    _reject_tree_link(metadata)
+    if not stat.S_ISDIR(metadata.st_mode) and not (
+        stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1
+    ):
+        raise ValueError(
+            "Only regular, non-hardlinked skill files and directories are supported"
+        )
+    return metadata
+
+
+def skill_tree_snapshot(
+    project_root: Path, root: Path
+) -> list[tuple[Path, os.stat_result]]:
+    """Inspect immediate children without following links; enqueue only validated directories."""
+    root_metadata = inspect_skill_entry(project_root, root)
+    if not stat.S_ISDIR(root_metadata.st_mode):
+        raise ValueError("Skill tree root is not a directory")
+    pending = [root]
+    result = []
+    while pending:
+        directory = pending.pop()
+        inspect_skill_entry(project_root, directory)
+        with os.scandir(directory) as children:
+            batch = [
+                (
+                    directory / child.name,
+                    inspect_skill_entry(
+                        project_root,
+                        directory / child.name,
+                        child.stat(follow_symlinks=False),
+                    ),
+                )
+                for child in sorted(children, key=lambda entry: entry.name)
+            ]
+        validate_relative_names(
+            [path.name for path, info in batch if stat.S_ISREG(info.st_mode)],
+            directories=[
+                path.name for path, info in batch if stat.S_ISDIR(info.st_mode)
+            ],
+        )
+        result.extend(batch)
+        pending.extend(
+            path for path, info in reversed(batch) if stat.S_ISDIR(info.st_mode)
+        )
+    return sorted(result, key=lambda item: item[0].relative_to(root).as_posix())
 
 
 def retry_filesystem(operation: Callable):
@@ -482,23 +546,24 @@ class DirectorySkillPublisher:
         retry_filesystem(move)
 
     def _remove_tree(self, path: Path) -> None:
-        self._check(path)
-        for root, directories, files in os.walk(path):
-            current = Path(root)
-            self._check(current)
-            current.chmod(current.stat().st_mode | stat.S_IRWXU)
-            for name in directories + files:
-                child = current / name
-                self._check(child)
-                if child.is_file() and child.stat().st_nlink != 1:
-                    raise ValueError("Refusing to clean hardlinked skill files")
-                child.chmod(
-                    child.stat().st_mode
-                    | stat.S_IWRITE
-                    | stat.S_IREAD
-                    | (stat.S_IEXEC if child.is_dir() else 0)
-                )
-        retry_filesystem(lambda: shutil.rmtree(path))
+        entries = skill_tree_snapshot(self.project_root, path)
+        root_metadata = inspect_skill_entry(self.project_root, path)
+        path.chmod(root_metadata.st_mode | stat.S_IRWXU)
+        for child, _ in entries:
+            metadata = inspect_skill_entry(self.project_root, child)
+            child.chmod(
+                metadata.st_mode
+                | stat.S_IWRITE
+                | stat.S_IREAD
+                | (stat.S_IEXEC if stat.S_ISDIR(metadata.st_mode) else 0)
+            )
+        for child, _ in reversed(entries):
+            metadata = inspect_skill_entry(self.project_root, child)
+            retry_filesystem(
+                child.rmdir if stat.S_ISDIR(metadata.st_mode) else child.unlink
+            )
+        inspect_skill_entry(self.project_root, path)
+        retry_filesystem(path.rmdir)
 
     def _clean_journal(self, paths: dict[str, Path], warnings: list[str]) -> None:
         for key in ("temporary", "journal"):

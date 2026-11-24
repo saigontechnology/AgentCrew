@@ -210,6 +210,13 @@ Recovery runs before trusted discovery/publication/activation lookups:
   removed only after rollback is recorded. Repeated recovery is idempotent.
 - Journal-derived names, root identity, containment, symlinks/junctions/reparse
   points, hardlinks, and tree hashes are checked before recovery renames/deletes.
+  Tree traversal inspects each immediate child with non-following metadata and
+  validates it before queuing a directory for descent. Fresh `lstat` supplies
+  hardlink counts, which Windows cached `DirEntry.stat` does not provide.
+  Hashing, directory preservation, and cleanup share this deterministic snapshot.
+  Cleanup validates
+  the complete snapshot before changing permissions, then uses non-recursive
+  unlink/rmdir operations; it does not send the tree to a second recursive walker.
   Conflicting journals, malformed/torn journals, or hash disagreements preserve
   evidence and block project skill reads/writes with the journal location and
   actionable recovery guidance. Do not delete a backup or journal blindly:
@@ -280,3 +287,4 @@ References:
 - [Linux renameat2 atomic exchange/no-replace semantics](https://man7.org/linux/man-pages/man2/renameat2.2.html)
 - [Python Windows nonblocking byte locks](https://docs.python.org/3.12/library/msvcrt.html#msvcrt.locking)
 - [Python Unix file locks](https://docs.python.org/3.12/library/fcntl.html#fcntl.flock)
+- [Python non-following directory-entry metadata and Windows cache limits](https://docs.python.org/3.12/library/os.html#os.DirEntry.stat)
