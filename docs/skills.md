@@ -77,6 +77,11 @@ built-in `run_command` and `write_file` capabilities actually registered. Known
 ACP replacements (`acp_run_command` / `acp_write_file`) also count within those
 enabled groups. Group and individual exclusions still apply; global services,
 configuration names, and unrelated same-name tools alone do not grant authoring.
+The adapter must successfully register at least one provenance-valid command
+capability and one editing capability in the current sync before AgentCrew's
+`craft_skill` is registered. A failed prerequisite suppresses authoring and its
+instruction until a successful resync; known ACP alternatives can provide a
+successful fallback.
 The configuration group is `command_execution`, not `code_execution`.
 
 Eligible agents receive one authoring instruction through `agent.tool_prompts`,

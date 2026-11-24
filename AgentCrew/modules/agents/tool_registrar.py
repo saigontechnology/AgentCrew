@@ -247,26 +247,36 @@ class AgentToolRegistrar:
 
     def sync_to_llm(self) -> None:
         """Push all registered tool definitions to the LLM service."""
-        agent = self._agent
-        craft_prompt = None
-        if agent.services.get("skills") or "craft_skill" in agent.tool_definitions:
-            from AgentCrew.modules.skills.tool import (
-                craft_skill_instruction_prompt,
-                sync_craft_skill_registration,
-            )
+        from AgentCrew.modules.skills.tool import (
+            can_register_craft_skill,
+            craft_skill_instruction_prompt,
+            sync_craft_skill_registration,
+        )
 
-            sync_craft_skill_registration(agent.services.get("skills"), agent)
-            craft_prompt = craft_skill_instruction_prompt()
+        agent = self._agent
+        craft_prompt = craft_skill_instruction_prompt()
+        defer_craft = sync_craft_skill_registration(agent.services.get("skills"), agent)
         if not agent.llm:
             return
 
         self._clear_from_llm()
+        tool_entries = list(agent.tool_definitions.items())
+        if defer_craft:
+            tool_entries.sort(key=lambda item: item[0] == "craft_skill")
 
         for tool_name, (
             definition_func,
             handler_factory,
             service_instance,
-        ) in agent.tool_definitions.items():
+        ) in tool_entries:
+            if (
+                defer_craft
+                and tool_name == "craft_skill"
+                and not can_register_craft_skill(
+                    agent.services.get("skills"), agent, agent.registered_tools
+                )
+            ):
+                continue
             try:
                 if callable(definition_func):
                     tool_def = definition_func()

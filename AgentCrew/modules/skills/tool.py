@@ -248,10 +248,13 @@ def get_craft_skill_tool_handler(skills_service: "SkillsService"):
     return handler
 
 
-def _matches_registration(agent, name, definition, handler, service) -> bool:
+def _matches_registration(
+    agent, name, definition, handler, service, registered_tools: set[str] | None = None
+) -> bool:
     entry = agent.tool_definitions.get(name)
     return (
         name not in agent.excluded_tools
+        and (registered_tools is None or name in registered_tools)
         and entry is not None
         and entry[0] is definition
         and entry[1] is handler
@@ -259,7 +262,10 @@ def _matches_registration(agent, name, definition, handler, service) -> bool:
     )
 
 
-def _can_register_craft_skill(service: "SkillsService | None", agent) -> bool:
+def can_register_craft_skill(
+    service: "SkillsService | None", agent, registered_tools: set[str] | None = None
+) -> bool:
+    """Check local provenance, optionally requiring successful registrations this sync."""
     if (
         service is None
         or not service.trusted_project
@@ -297,6 +303,7 @@ def _can_register_craft_skill(service: "SkillsService | None", agent) -> bool:
         get_run_command_tool_definition,
         get_run_command_tool_handler,
         agent.services["command_execution"],
+        registered_tools,
     )
     can_edit = _matches_registration(
         agent,
@@ -304,6 +311,7 @@ def _can_register_craft_skill(service: "SkillsService | None", agent) -> bool:
         get_file_write_or_edit_tool_definition,
         get_file_write_or_edit_tool_handler,
         agent.services["file_editing"],
+        registered_tools,
     )
     if not can_execute and "acp_run_command" in agent.tool_definitions:
         from AgentCrew.modules.acp.tools.terminal import (
@@ -317,6 +325,7 @@ def _can_register_craft_skill(service: "SkillsService | None", agent) -> bool:
             get_acp_run_command_tool_definition,
             get_acp_run_command_tool_handler,
             None,
+            registered_tools,
         )
     if not can_edit and "acp_write_file" in agent.tool_definitions:
         from AgentCrew.modules.acp.tools.filesystem import (
@@ -330,6 +339,7 @@ def _can_register_craft_skill(service: "SkillsService | None", agent) -> bool:
             get_acp_write_file_tool_definition,
             get_acp_write_file_tool_handler,
             None,
+            registered_tools,
         )
     return can_execute and can_edit
 
@@ -347,7 +357,7 @@ def sync_craft_skill_registration(
         and current[1] is get_craft_skill_tool_handler
     )
     registered = False
-    if _can_register_craft_skill(service, agent) and (current is None or owned):
+    if can_register_craft_skill(service, agent) and (current is None or owned):
         register_tool(
             get_craft_skill_tool_definition,
             get_craft_skill_tool_handler,

@@ -389,3 +389,238 @@ def test_unrelated_acp_named_tool_is_not_a_known_remapping(make_agent, name):
     )
     agent.resync_tools_to_llm()
     assert_authoring(agent, False)
+
+
+def reject_adapter_tools(agent, failures):
+    original = agent.llm.register_tool
+    attempts = []
+
+    def register_tool(definition, handler):
+        name = definition["function"]["name"]
+        attempts.append(name)
+        if name in failures:
+            raise ValueError(f"Adapter rejected {name}")
+        original(definition, handler)
+
+    agent.llm.register_tool = register_tool
+    return attempts
+
+
+def add_unrelated_tool(agent, name="unrelated_tool"):
+    entry = (
+        lambda: {"type": "function", "function": {"name": name}},
+        lambda: Mock(),
+        None,
+    )
+    agent.tool_definitions[name] = entry
+    return entry
+
+
+def add_acp_capabilities(agent, *, replace=False):
+    from AgentCrew.modules.acp.tools.filesystem import register as register_fs
+    from AgentCrew.modules.acp.tools.terminal import register as register_terminal
+
+    if replace:
+        agent.tool_definitions.pop("run_command")
+        agent.tool_definitions.pop("write_file")
+    register_fs(agent=agent, enable_read=False)
+    register_terminal(agent=agent)
+
+
+def assert_adapter_authoring(agent, enabled):
+    prompt = craft_skill_instruction_prompt()
+    assert ("craft_skill" in agent.llm.tools) == enabled
+    assert ("craft_skill" in agent.registered_tools) == enabled
+    assert agent.tool_prompts.count(prompt) == int(enabled)
+    assert agent.llm.prompt.count(prompt) == int(enabled)
+
+
+@pytest.mark.parametrize("failed", ["run_command", "write_file"])
+def test_failed_local_adapter_prerequisite_suppresses_authoring_and_retries(
+    make_agent, failed
+):
+    from AgentCrew.modules.prompts.constants import TOOL_USE_GUIDANCE
+
+    agent = make_agent()
+    agent.is_active = True
+    agent.register_tools()
+    unrelated = add_unrelated_tool(agent)
+    custom = "<CustomTool>Preserve my tool instructions.</CustomTool>"
+    agent.tool_prompts.append(custom)
+    agent.llm.prompt += f"\n{custom}"
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, True)
+    assert failed in agent.registered_tools
+    entry = agent.tool_definitions.pop("craft_skill")
+    agent.tool_definitions = {"craft_skill": entry, **agent.tool_definitions}
+    failures = {failed}
+    attempts = reject_adapter_tools(agent, failures)
+
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, False)
+    assert failed not in agent.registered_tools
+    assert "craft_skill" not in attempts
+    assert all(
+        actual is expected
+        for actual, expected in zip(
+            agent.tool_definitions["craft_skill"], entry, strict=True
+        )
+    )
+    assert agent.tool_definitions["unrelated_tool"] is unrelated
+    assert "unrelated_tool" in agent.llm.tools
+    assert custom in agent.tool_prompts and custom in agent.llm.prompt
+    assert agent.llm.prompt.startswith("Keep my custom instructions")
+    assert agent.llm.prompt.count(TOOL_USE_GUIDANCE) == 1
+
+    failures.clear()
+    attempts.clear()
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, True)
+    assert attempts[-1] == "craft_skill"
+    assert attempts.count("craft_skill") == 1
+
+
+@pytest.mark.parametrize("failed", ["acp_run_command", "acp_write_file"])
+def test_failed_acp_adapter_prerequisite_suppresses_authoring_and_retries(
+    make_agent, failed
+):
+    agent = make_agent()
+    agent.is_active = True
+    agent.register_tools()
+    add_acp_capabilities(agent, replace=True)
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, True)
+    assert failed in agent.registered_tools
+    failures = {failed}
+    attempts = reject_adapter_tools(agent, failures)
+
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, False)
+    assert "craft_skill" not in attempts
+    assert failed not in agent.registered_tools
+    failures.clear()
+    attempts.clear()
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, True)
+    assert attempts[-1] == "craft_skill"
+    assert attempts.count("craft_skill") == 1
+
+
+@pytest.mark.parametrize(
+    "failed", ["run_command", "write_file", "acp_run_command", "acp_write_file"]
+)
+def test_successful_provenance_valid_fallback_keeps_authoring(make_agent, failed):
+    agent = make_agent()
+    agent.is_active = True
+    agent.register_tools()
+    add_acp_capabilities(agent)
+    agent.resync_tools_to_llm()
+    assert failed in agent.registered_tools
+    attempts = reject_adapter_tools(agent, {failed})
+    agent.resync_tools_to_llm()
+    assert failed not in agent.registered_tools
+    assert_adapter_authoring(agent, True)
+    assert attempts[-1] == "craft_skill"
+
+
+@pytest.mark.parametrize(
+    "failures",
+    [{"run_command", "acp_run_command"}, {"write_file", "acp_write_file"}],
+)
+def test_all_candidates_for_either_capability_must_not_fail(make_agent, failures):
+    agent = make_agent()
+    agent.is_active = True
+    agent.register_tools()
+    add_acp_capabilities(agent)
+    attempts = reject_adapter_tools(agent, failures)
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, False)
+    assert "craft_skill" not in attempts
+
+
+@pytest.mark.parametrize(
+    ("failed", "unrelated"),
+    [("run_command", "acp_run_command"), ("write_file", "acp_write_file")],
+)
+def test_successful_unrelated_candidate_cannot_replace_failed_prerequisite(
+    make_agent, failed, unrelated
+):
+    agent = make_agent()
+    agent.is_active = True
+    agent.register_tools()
+    add_unrelated_tool(agent, unrelated)
+    attempts = reject_adapter_tools(agent, {failed})
+    agent.resync_tools_to_llm()
+    assert unrelated in agent.registered_tools
+    assert_adapter_authoring(agent, False)
+    assert "craft_skill" not in attempts
+
+
+def test_reregister_then_sync_clears_active_guidance_after_skills_service_removal(
+    make_agent,
+):
+    from AgentCrew.modules.prompts.constants import TOOL_USE_GUIDANCE
+
+    agent = make_agent()
+    agent.is_active = True
+    agent.register_tools()
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, True)
+    generic = TOOL_USE_GUIDANCE
+    custom = "<CustomTool>Keep unrelated instructions.</CustomTool>"
+    agent.tool_prompts.append(custom)
+    agent.llm.prompt += f"\n{custom}"
+    service = agent.services.pop("skills")
+    agent.register_tools()
+    assert "craft_skill" not in agent.tool_definitions
+    assert craft_skill_instruction_prompt() not in agent.tool_prompts
+    assert craft_skill_instruction_prompt() in agent.llm.prompt
+
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, False)
+    assert custom in agent.tool_prompts and custom in agent.llm.prompt
+    assert agent.llm.prompt.count(generic) == 1
+    assert agent.llm.prompt.startswith("Keep my custom instructions")
+    agent.services["skills"] = service
+    agent.register_tools()
+    agent.resync_tools_to_llm()
+    assert_adapter_authoring(agent, True)
+
+
+@pytest.mark.parametrize("failed", ["run_command", "write_file"])
+def test_unrelated_craft_tool_keeps_normal_adapter_registration(make_agent, failed):
+    agent = make_agent()
+    agent.is_active = True
+    agent.register_tools()
+    unrelated = add_unrelated_tool(agent, "craft_skill")
+    agent.tool_definitions = {
+        "craft_skill": unrelated,
+        **{
+            name: entry
+            for name, entry in agent.tool_definitions.items()
+            if name != "craft_skill"
+        },
+    }
+    custom = "<CustomTool>Keep external craft behavior.</CustomTool>"
+    agent.tool_prompts.append(custom)
+    agent.llm.prompt += f"\n{custom}"
+    attempts = reject_adapter_tools(agent, {failed})
+    agent.resync_tools_to_llm()
+    assert attempts[0] == "craft_skill"
+    assert agent.tool_definitions["craft_skill"] is unrelated
+    assert "craft_skill" in agent.registered_tools and "craft_skill" in agent.llm.tools
+    assert craft_skill_instruction_prompt() not in agent.tool_prompts
+    assert craft_skill_instruction_prompt() not in agent.llm.prompt
+    assert custom in agent.tool_prompts and custom in agent.llm.prompt
+
+
+def test_unrelated_adapter_failure_does_not_suppress_authoring(make_agent):
+    agent = make_agent()
+    agent.is_active = True
+    agent.register_tools()
+    add_unrelated_tool(agent, "unrelated_failure")
+    attempts = reject_adapter_tools(agent, {"unrelated_failure"})
+    agent.resync_tools_to_llm()
+    assert "unrelated_failure" not in agent.registered_tools
+    assert_adapter_authoring(agent, True)
+    assert attempts[-1] == "craft_skill"
