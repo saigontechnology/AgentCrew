@@ -1,6 +1,5 @@
 """Progressive skill discovery and project-local, non-executing skill authoring."""
 
-import ast
 import ctypes
 import hashlib
 import json
@@ -15,6 +14,8 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 from loguru import logger
+
+from .validators import validate_script
 
 SKILL_SCAN_DIRS = [".claude/skills", ".agents/skills", ".od-skills", ".codex/skills"]
 _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox"}
@@ -380,7 +381,7 @@ class SkillsService:
             raise TypeError("update_existing must be a boolean")
         if not isinstance(scripts, list) or not 1 <= len(scripts) <= 32:
             raise ValueError(
-                "Provide 1-32 reusable Python scripts; instruction-only skills are not supported"
+                "Provide 1-32 reusable scripts; instruction-only skills are not supported"
             )
         frontmatter = {"name": name, "description": description.strip()}
         if compatibility is not None:
@@ -409,33 +410,20 @@ class SkillsService:
                 script["content"],
             )
             if not isinstance(path, str) or not re.fullmatch(
-                r"scripts/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.py", path
+                r"scripts/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.[A-Za-z0-9]+", path
             ):
                 raise ValueError(
-                    "Script paths must be relative scripts/.../*.py paths without traversal"
+                    "Script paths must be relative scripts/.../file.ext paths without traversal"
                 )
             pure = PurePosixPath(path)
             if pure.is_absolute() or ".." in pure.parts or path in files:
                 raise ValueError("Invalid or duplicate script path")
-            if language != "python":
-                raise ValueError(
-                    f"Unsupported validator: {language!r}; only Python (ast.parse) is available"
-                )
             if not isinstance(content, str) or not content.strip():
                 raise ValueError("Script content must be a nonempty string")
             if len(content.encode()) > MAX_CRAFT_BYTES:
                 raise ValueError("Script exceeds the 1 MB skill limit")
-            try:
-                tree = ast.parse(content, filename=path)
-                compile(tree, path, "exec", dont_inherit=True)
-            except (SyntaxError, ValueError, RecursionError) as exc:
-                raise ValueError(
-                    f"Static Python syntax validation failed for {path}: {exc}"
-                ) from exc
-            files[path] = content.encode()
-            validation.append(
-                {"path": path, "validator": "ast.parse+compile", "status": "passed"}
-            )
+            validation.append(validate_script(path, language, content))
+            files[path] = content.encode("utf-8")
         if (
             sum(map(len, files.values())) > MAX_CRAFT_BYTES
             or len(files["SKILL.md"]) > MAX_SKILL_FILE_BYTES
@@ -543,6 +531,7 @@ class SkillsService:
             "paths": [str(target / path) for path in sorted(files)],
             "content_hash": content_hash,
             "validation": validation,
+            "validation_scope": "static_syntax_only",
             "executed": False,
             "warnings": warnings,
         }

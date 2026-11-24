@@ -92,17 +92,33 @@ Optional fields are `compatibility` (up to 500 characters), string-to-string
 `metadata`, `update_existing` (default false), and `expected_existing_hash`.
 Names use 1–64 lowercase ASCII letters/digits and single internal hyphens;
 descriptions are limited to 1,024 characters. Script paths must be portable,
-relative `scripts/.../*.py` paths. Absolute paths, traversal, duplicate paths,
+relative `scripts/.../file.ext` paths matching the declared language. Absolute paths, traversal, duplicate paths,
 symlinks, hardlinked update files and writes outside the skill tree are rejected.
 A skill is limited to 32 scripts, a 1 MB file tree, and a 128 KB `SKILL.md`.
 
-Only **Python** is accepted in this first slice. `ast.parse` plus Python
-`compile(..., 'exec')` validate syntax and compile-time restrictions without
-executing, importing, or installing anything from the script. Unsupported
-validators are explicitly rejected. Validation does not prove script safety,
-correctness, self-containment, dependency availability or determinism; write
-scripts using project-relative paths and document their dependencies. Later
-execution must use the existing command-execution tool and its safeguards.
+The validator registry deliberately accepts only these four languages:
+
+| Language | Extensions | Static validator |
+| --- | --- | --- |
+| `python` | `.py` | `ast.parse` plus `compile(AST, ..., 'exec', dont_inherit=True)` |
+| `bash` | `.sh`, `.bash` | Installed Tree-sitter Bash grammar |
+| `powershell` | `.ps1`, `.psm1` | Installed Tree-sitter PowerShell grammar |
+| `javascript` | `.js`, `.mjs`, `.cjs` | Installed Tree-sitter JavaScript grammar |
+
+Tree-sitter uses AgentCrew's pinned `tree-sitter-language-pack` runtime and checks
+both its manifest and local grammar availability before loading grammar data.
+Missing/unavailable parsers fail closed with an explicit error; crafting does not
+download/install grammars or invoke Bash, PowerShell, or Node. ERROR and MISSING
+syntax nodes are rejected. Fresh parser instances avoid shared mutable parser state.
+Each script reports its language and validator identity; the result explicitly
+identifies validation as `static_syntax_only`.
+
+Validation never executes, imports, or installs anything from the authored script.
+It does not prove semantics, runtime safety, correctness, self-containment,
+dependency availability or determinism. Tree-sitter grammar acceptance is not
+interpreter-specific semantic validation. Use project-relative paths and document
+dependencies. Later execution must use the existing command-execution tool and
+its safeguards. Unsupported languages and language/extension mismatches are rejected.
 
 **Never embed credentials** in instructions, metadata, or scripts. Metadata may
 name required environment variables; scripts should obtain their values from the
@@ -156,8 +172,9 @@ external editors should not write concurrently during publication. Atomic
 visibility does not promise crash/power-loss durability or preserve extended
 filesystem attributes. Discovery is invalidated/refreshed after publication.
 
-Automatic run-start/post-implementation triggers, non-Python validators,
-portable atomic-publication backends and script-execution hooks are deferred.
+Automatic run-start/post-implementation triggers, validators beyond the four
+listed languages, portable atomic-publication backends and script-execution hooks
+are deferred.
 
 ## Verification
 

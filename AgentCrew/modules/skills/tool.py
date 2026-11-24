@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from xml.sax.saxutils import quoteattr
 
 from .service import MAX_BODY_CHARS
+from .validators import SCRIPT_VALIDATORS
 
 if TYPE_CHECKING:
     from .service import SkillsService
@@ -154,7 +155,7 @@ def get_craft_skill_tool_definition():
             "description": (
                 "WRITE-CAPABLE: atomically create/update a trusted project skill in "
                 ".agents/skills/<name>. Requires instructions and at least one reusable, "
-                "project-self-contained Python script. Static syntax validation only; "
+                "project-self-contained Python, Bash, PowerShell or JavaScript script. Static syntax validation only; "
                 "never executes scripts. Use environment variable names, never credential "
                 "values. Existing updates require update_existing; use the returned whole-tree "
                 "content_hash as expected_existing_hash to protect user edits. Linux renameat2 required."
@@ -186,9 +187,12 @@ def get_craft_skill_tool_definition():
                             "properties": {
                                 "path": {
                                     "type": "string",
-                                    "description": "Relative scripts/.../*.py path",
+                                    "description": "Relative scripts/.../file.ext path matching the declared language.",
                                 },
-                                "language": {"type": "string", "enum": ["python"]},
+                                "language": {
+                                    "type": "string",
+                                    "enum": list(SCRIPT_VALIDATORS),
+                                },
                                 "content": {"type": "string", "minLength": 1},
                             },
                             "required": ["path", "language", "content"],
