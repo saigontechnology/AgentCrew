@@ -547,7 +547,7 @@ class DirectorySkillPublisher:
         if (
             hashes["target"] == new
             and hashes["stage"] is None
-            and record["phase"] != "rolled_back"
+            and record["phase"] not in {"rolling_back", "rolled_back"}
         ):
             return True, self._finish(record, paths, committed=True)
         if old is not None and hashes["target"] is None and hashes["backup"] == old:

@@ -255,3 +255,17 @@ def test_pending_cleanup_does_not_allow_conflicting_second_journal(
         )
     assert service._publisher.recover().performed
     assert not service._publisher.recover().performed
+
+
+def test_rollback_phase_with_new_committed_target_is_ambiguous(
+    service, recipe, portable
+):
+    service.craft_skill(**recipe)
+    cases.interrupt_at_phase(service, recipe | {"instructions": "Changed"}, "new_moved")
+    record, paths = cases.pending(service)
+    record["phase"] = "rolling_back"
+    paths["journal"].write_text(json.dumps(record))
+    before = cases.tree_snapshot(paths["target"].parent)
+    with pytest.raises(SkillRecoveryError, match="ambiguous"):
+        service._publisher.recover()
+    assert cases.tree_snapshot(paths["target"].parent) == before
