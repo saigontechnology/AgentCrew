@@ -113,7 +113,7 @@ def test_shared_service_refresh_updates_each_agent_schema(agent):
     other = LocalAgent("Other", "Verification", Mock(), agent.services, [])
     agent._tool_registrar.register_tools()
     other._tool_registrar.register_tools()
-    assert "craft_skill" in agent.tool_definitions
+    assert "craft_skill" not in agent.tool_definitions
     assert "activate_skill" not in agent.tool_definitions
     write_skill(service.project_root, "a")
     agent._refresh_agent_skills()
@@ -132,7 +132,7 @@ def test_shared_service_refresh_updates_each_agent_schema(agent):
     (service.project_root / ".agents/skills/b/SKILL.md").unlink()
     agent._refresh_agent_skills()
     assert "activate_skill" not in agent.tool_definitions
-    assert "craft_skill" in agent.tool_definitions
+    assert "craft_skill" not in agent.tool_definitions
 
 
 def test_excluded_skills_stay_excluded(agent):

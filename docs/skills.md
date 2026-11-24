@@ -71,6 +71,22 @@ scans immediate skill directories to notice additions, removals and edits.
 
 ## Crafting a project skill
 
+`craft_skill` is offered only to trusted-project agents with both
+`command_execution` and `file_editing` enabled, their services available, and the
+built-in `run_command` and `write_file` capabilities actually registered. Known
+ACP replacements (`acp_run_command` / `acp_write_file`) also count within those
+enabled groups. Group and individual exclusions still apply; global services,
+configuration names, and unrelated same-name tools alone do not grant authoring.
+The configuration group is `command_execution`, not `code_execution`.
+
+Eligible agents receive one authoring instruction through `agent.tool_prompts`,
+including when the skill catalog is empty. It is not adaptive catalog content.
+Use crafting on user requests to save repeatable project workflows, reuse or wrap
+existing skills/scripts where appropriate, and suggest/get confirmation before
+unsolicited persistent creation. Do not craft one-off tasks. Crafting saves and
+statically validates; it does not execute scripts. Activation eligibility is
+unchanged and does not require these authoring capabilities.
+
 `craft_skill` requires a valid name, description, instructions and **at least one
 script**. Instruction-only creation is rejected. Example input:
 

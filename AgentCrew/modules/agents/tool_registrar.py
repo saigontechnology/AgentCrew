@@ -136,6 +136,10 @@ class AgentToolRegistrar:
             from AgentCrew.modules.skills.tool import register as register_skills
 
             register_skills(skills_service, agent)
+        elif "craft_skill" in agent.tool_definitions:
+            from AgentCrew.modules.skills.tool import sync_craft_skill_registration
+
+            sync_craft_skill_registration(skills_service, agent)
 
         if agent.services.get("agent_manager"):
             from AgentCrew.modules.agents import AgentMode
@@ -244,6 +248,15 @@ class AgentToolRegistrar:
     def sync_to_llm(self) -> None:
         """Push all registered tool definitions to the LLM service."""
         agent = self._agent
+        craft_prompt = None
+        if agent.services.get("skills") or "craft_skill" in agent.tool_definitions:
+            from AgentCrew.modules.skills.tool import (
+                craft_skill_instruction_prompt,
+                sync_craft_skill_registration,
+            )
+
+            sync_craft_skill_registration(agent.services.get("skills"), agent)
+            craft_prompt = craft_skill_instruction_prompt()
         if not agent.llm:
             return
 
@@ -274,10 +287,24 @@ class AgentToolRegistrar:
             except Exception as e:
                 logger.error(f"Error registering tool {tool_name}: {e}")
 
-        if agent.is_active and agent.registered_tools:
+        if craft_prompt is not None and "craft_skill" not in agent.registered_tools:
+            agent.tool_prompts[:] = [
+                item for item in agent.tool_prompts if item != craft_prompt
+            ]
+
+        if agent.is_active and (agent.registered_tools or craft_prompt is not None):
             system_prompt = agent.llm.get_system_prompt()
-            if TOOL_USE_GUIDANCE not in system_prompt:
-                agent.llm.set_system_prompt(f"{system_prompt}\n\n{TOOL_USE_GUIDANCE}")
+            updated_prompt = system_prompt
+            if craft_prompt is not None:
+                if craft_prompt in agent.tool_prompts:
+                    if craft_prompt not in updated_prompt:
+                        updated_prompt = f"{updated_prompt}\n\n{craft_prompt}"
+                else:
+                    updated_prompt = updated_prompt.replace(craft_prompt, "")
+            if agent.registered_tools and TOOL_USE_GUIDANCE not in updated_prompt:
+                updated_prompt = f"{updated_prompt}\n\n{TOOL_USE_GUIDANCE}"
+            if updated_prompt != system_prompt:
+                agent.llm.set_system_prompt(updated_prompt)
 
     def _clear_from_llm(self) -> None:
         """Remove all tool registrations from the LLM service."""

@@ -474,20 +474,27 @@ async def test_never_executes_script_and_unavailable_publication(
 
 def test_registration_sequential_permission_and_empty_catalog(service):
     from AgentCrew.modules.acp.tools.permission_broker import SENSITIVE_TOOL_NAMES
+    from AgentCrew.modules.agents.local_agent import LocalAgent
     from AgentCrew.modules.tools.parallel_executor import is_sequential_tool
 
-    agent = Mock()
-    register(service, agent)
-    names = [
-        call.args[0]()["function"]["name"]
-        for call in agent.register_tool.call_args_list
-    ]
-    assert names == ["craft_skill"]
+    agent = LocalAgent(
+        "Registration",
+        "Verification",
+        None,
+        {
+            "skills": service,
+            "command_execution": Mock(),
+            "file_editing": Mock(),
+        },
+        ["command_execution", "file_editing"],
+    )
+    agent.register_tools()
+    assert "craft_skill" in agent.tool_definitions
+    assert "activate_skill" not in agent.tool_definitions
     assert service.catalog_prompt() == ""
     service.trusted_project = False
-    agent.reset_mock()
     register(service, agent)
-    agent.register_tool.assert_not_called()
+    assert "craft_skill" not in agent.tool_definitions
     assert is_sequential_tool("activate_skill") and is_sequential_tool("craft_skill")
     assert "craft_skill" in SENSITIVE_TOOL_NAMES
 

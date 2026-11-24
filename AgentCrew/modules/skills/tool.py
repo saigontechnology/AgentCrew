@@ -13,6 +13,8 @@ from .service import MAX_BODY_CHARS
 from .validators import SCRIPT_VALIDATORS
 
 if TYPE_CHECKING:
+    from AgentCrew.modules.agents.local_agent import LocalAgent
+
     from .service import SkillsService
 
 _skill_activation: ContextVar[tuple[object, str | None, dict] | None] = ContextVar(
@@ -147,6 +149,22 @@ def get_activate_skill_tool_handler(skills_service: "SkillsService", *, agent=No
     return handler
 
 
+def craft_skill_instruction_prompt() -> str:
+    """Model-facing authoring policy, attached only to eligible tool users."""
+    return """<CraftSkill_Tool_Instruction>
+  <When_To_Use>
+    - Use `craft_skill` when the user requests saving a repeatable project workflow.
+    - Suggest a skill and get confirmation before unsolicited persistent creation.
+    - Do not craft skills for one-off tasks or instruction-only notes.
+  </When_To_Use>
+  <Authoring_Workflow>
+    - Reuse or wrap existing project skills/scripts when appropriate instead of duplicating them.
+    - Save clear instructions with at least one reusable, project-self-contained script.
+    - Crafting saves and statically validates; it does not execute scripts. Run scripts separately through the normal approved execution tools when requested.
+  </Authoring_Workflow>
+</CraftSkill_Tool_Instruction>"""
+
+
 def get_craft_skill_tool_definition():
     return {
         "type": "function",
@@ -230,6 +248,131 @@ def get_craft_skill_tool_handler(skills_service: "SkillsService"):
     return handler
 
 
+def _matches_registration(agent, name, definition, handler, service) -> bool:
+    entry = agent.tool_definitions.get(name)
+    return (
+        name not in agent.excluded_tools
+        and entry is not None
+        and entry[0] is definition
+        and entry[1] is handler
+        and entry[2] is service
+    )
+
+
+def _can_register_craft_skill(service: "SkillsService | None", agent) -> bool:
+    if (
+        service is None
+        or not service.trusted_project
+        or {"skills", "craft_skill"} & agent.excluded_tools
+    ):
+        return False
+    for group, name, acp_name in (
+        ("command_execution", "run_command", "acp_run_command"),
+        ("file_editing", "write_file", "acp_write_file"),
+    ):
+        if (
+            group not in agent.tools
+            or {group, name} & agent.excluded_tools
+            or not agent.services.get(group)
+            or not any(
+                candidate in agent.tool_definitions
+                and candidate not in agent.excluded_tools
+                for candidate in (name, acp_name)
+            )
+        ):
+            return False
+
+    from AgentCrew.modules.command_execution.tool import (
+        get_run_command_tool_definition,
+        get_run_command_tool_handler,
+    )
+    from AgentCrew.modules.file_editing.tool import (
+        get_file_write_or_edit_tool_definition,
+        get_file_write_or_edit_tool_handler,
+    )
+
+    can_execute = _matches_registration(
+        agent,
+        "run_command",
+        get_run_command_tool_definition,
+        get_run_command_tool_handler,
+        agent.services["command_execution"],
+    )
+    can_edit = _matches_registration(
+        agent,
+        "write_file",
+        get_file_write_or_edit_tool_definition,
+        get_file_write_or_edit_tool_handler,
+        agent.services["file_editing"],
+    )
+    if not can_execute and "acp_run_command" in agent.tool_definitions:
+        from AgentCrew.modules.acp.tools.terminal import (
+            get_acp_run_command_tool_definition,
+            get_acp_run_command_tool_handler,
+        )
+
+        can_execute = _matches_registration(
+            agent,
+            "acp_run_command",
+            get_acp_run_command_tool_definition,
+            get_acp_run_command_tool_handler,
+            None,
+        )
+    if not can_edit and "acp_write_file" in agent.tool_definitions:
+        from AgentCrew.modules.acp.tools.filesystem import (
+            get_acp_write_file_tool_definition,
+            get_acp_write_file_tool_handler,
+        )
+
+        can_edit = _matches_registration(
+            agent,
+            "acp_write_file",
+            get_acp_write_file_tool_definition,
+            get_acp_write_file_tool_handler,
+            None,
+        )
+    return can_execute and can_edit
+
+
+def sync_craft_skill_registration(
+    service: "SkillsService | None", agent: "LocalAgent"
+) -> bool:
+    """Keep our authoring tool and its tool prompt aligned with effective capabilities."""
+    from AgentCrew.modules.tools.registration import register_tool
+
+    current = agent.tool_definitions.get("craft_skill")
+    owned = (
+        current is not None
+        and current[0] is get_craft_skill_tool_definition
+        and current[1] is get_craft_skill_tool_handler
+    )
+    registered = False
+    if _can_register_craft_skill(service, agent) and (current is None or owned):
+        register_tool(
+            get_craft_skill_tool_definition,
+            get_craft_skill_tool_handler,
+            service,
+            agent,
+        )
+        registered = _matches_registration(
+            agent,
+            "craft_skill",
+            get_craft_skill_tool_definition,
+            get_craft_skill_tool_handler,
+            service,
+        )
+    elif owned:
+        agent.tool_definitions.pop("craft_skill", None)
+
+    prompt = craft_skill_instruction_prompt()
+    if registered:
+        if prompt not in agent.tool_prompts:
+            agent.tool_prompts.append(prompt)
+    else:
+        agent.tool_prompts[:] = [item for item in agent.tool_prompts if item != prompt]
+    return registered
+
+
 def register(service_instance: "SkillsService", agent=None):
     from AgentCrew.modules.tools.registration import register_tool
 
@@ -240,10 +383,5 @@ def register(service_instance: "SkillsService", agent=None):
             service_instance,
             agent,
         )
-    if service_instance.trusted_project:
-        register_tool(
-            get_craft_skill_tool_definition,
-            get_craft_skill_tool_handler,
-            service_instance,
-            agent,
-        )
+    if agent is not None:
+        sync_craft_skill_registration(service_instance, agent)
