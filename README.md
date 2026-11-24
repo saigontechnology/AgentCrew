@@ -363,7 +363,8 @@ url = "http://server-b:41241"
 - **[CONFIGURATION.md](CONFIGURATION.md)** — Deep dive into providers, agents,
   MCP servers, themes, and plugins.
 - **[Project Skills](docs/skills.md)** — Trust, three-skill FIFO activation, and
-  crafting reusable project-local scripts.
+  reusable Python/Bash/PowerShell/JavaScript project scripts, with preferred Linux
+  atomic publication and a portable recoverable create/update backend.
 - **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** — Build plugins with
   EventBus subscriptions and hooks.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — How to build, test, and contribute.

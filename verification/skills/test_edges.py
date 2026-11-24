@@ -75,7 +75,7 @@ def test_update_preserves_read_only_directory_modes_and_cleans_stage(setup):
         assert result["operation"] == "update" and not result["warnings"]
         assert root.stat().st_mode & 0o777 == 0o555
         assert scripts.stat().st_mode & 0o777 == 0o555
-        assert not list(root.parent.glob(".checks-*"))
+        assert not list(root.parent.glob(".skill-checks-*"))
     finally:
         root.chmod(0o755)
         scripts.chmod(0o755)
@@ -94,7 +94,7 @@ def test_merged_limit_is_validated_before_publication(setup):
     with pytest.raises(ValueError, match="Merged skill tree"):
         service.craft_skill(**recipe, update_existing=True)
     assert (root / "SKILL.md").read_bytes() == original
-    assert not list(root.parent.glob(".checks-*"))
+    assert not list(root.parent.glob(".skill-checks-*"))
 
 
 def test_legacy_user_name_fallback_and_truncation_remain_supported(setup):

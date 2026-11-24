@@ -153,12 +153,14 @@ def get_craft_skill_tool_definition():
         "function": {
             "name": "craft_skill",
             "description": (
-                "WRITE-CAPABLE: atomically create/update a trusted project skill in "
+                "WRITE-CAPABLE: publish a validated complete trusted project skill in "
                 ".agents/skills/<name>. Requires instructions and at least one reusable, "
                 "project-self-contained Python, Bash, PowerShell or JavaScript script. Static syntax validation only; "
                 "never executes scripts. Use environment variable names, never credential "
                 "values. Existing updates require update_existing; use the returned whole-tree "
-                "content_hash as expected_existing_hash to protect user edits. Linux renameat2 required."
+                "content_hash as expected_existing_hash to protect user edits. Linux prefers atomic "
+                "directory exchange; other platforms/filesystems use a locked, recoverable staged "
+                "swap with a brief missing-target window for external readers. Never edits final files in place."
             ),
             "parameters": {
                 "type": "object",

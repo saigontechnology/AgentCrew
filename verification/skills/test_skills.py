@@ -304,7 +304,7 @@ def test_craft_create_noop_update_conflict_preserves_files(service, recipe):
     assert (root / "keep.txt").read_text() == "user file"
     assert (root / "empty").is_dir()
     assert (root / "scripts/check.py").stat().st_mode & 0o777 == 0o755
-    assert not list(root.parent.glob(".project-check-*"))
+    assert not list(root.parent.glob(".skill-project-check-*"))
 
 
 @pytest.mark.parametrize(
@@ -386,7 +386,11 @@ def test_symlink_escape_rejected(service, recipe, tmp_path, link_part):
     with pytest.raises(ValueError, match="Symlinks"):
         service.craft_skill(**recipe)
     assert list(outside.iterdir()) == []
-    assert service.get_skill_names() == []
+    if link_part == ".agents/skills":
+        with pytest.raises(ValueError, match="Symlinks"):
+            service.get_skill_names()
+    else:
+        assert service.get_skill_names() == []
 
 
 @pytest.mark.skipif(
@@ -414,7 +418,7 @@ def test_symlink_and_hardlink_in_existing_skill_rejected(service, recipe, tmp_pa
 def test_atomic_failure_and_concurrent_edit_leave_original(
     service, recipe, monkeypatch
 ):
-    from AgentCrew.modules.skills import service as module
+    from AgentCrew.modules.skills import publisher as module
 
     created = service.craft_skill(**recipe)
     root = service.project_root / ".agents/skills/project-check"
@@ -428,11 +432,13 @@ def test_atomic_failure_and_concurrent_edit_leave_original(
     ):
         service.craft_skill(**recipe, update_existing=True)
     assert (root / "SKILL.md").read_bytes() == original
-    assert not list(root.parent.glob(".project-check-*"))
+    assert not list(root.parent.glob(".skill-project-check-*"))
     real_write = Path.write_bytes
 
     def concurrent_write(path, data):
-        if path.name == "SKILL.md" and path.parent.name.startswith(".project-check-"):
+        if path.name == "SKILL.md" and path.parent.name.startswith(
+            ".skill-project-check-"
+        ):
             (root / "user.txt").write_text("concurrent edit")
         return real_write(path, data)
 
@@ -456,13 +462,11 @@ async def test_never_executes_script_and_unavailable_publication(
         f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('executed')\n"
     )
     handler = get_craft_skill_tool_handler(service)
-    with (
-        patch("AgentCrew.modules.skills.service.sys.platform", "unsupported"),
-        pytest.raises(ValueError, match="requires Linux"),
-    ):
-        await handler(**recipe)
+    with patch("AgentCrew.modules.skills.publisher.sys.platform", "unsupported"):
+        result = await handler(**recipe)
+    assert result["publication_backend"] == "portable-journaled-swap"
     assert not sentinel.exists()
-    assert not (service.project_root / ".agents/skills/project-check").exists()
+    assert (service.project_root / ".agents/skills/project-check").exists()
     if sys.platform.startswith("linux"):
         await handler(**recipe)
         assert not sentinel.exists()

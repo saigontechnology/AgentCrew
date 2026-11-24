@@ -21,8 +21,10 @@ This is an intentional compatibility change: formerly project skills were
 loaded without that trust decision. Discovery retains legacy missing-name fallback
 and overlong-name truncation; strict name/directory agreement is enforced for
 newly crafted skills, not retroactively imposed on installed user skills. Non-map
-frontmatter and non-string names/descriptions are safely ignored. Project skill paths
-containing symlinks are ignored. User-scope symlink behavior is unchanged.
+frontmatter and non-string names/descriptions are safely ignored. Linked project
+skill entries are ignored; an unsafe canonical lock/recovery root can instead fail
+closed with an error. Junctions/reparse points are treated conservatively too.
+User-scope symlink behavior is unchanged.
 
 ## Activation and bounded context
 
@@ -93,7 +95,10 @@ Optional fields are `compatibility` (up to 500 characters), string-to-string
 Names use 1–64 lowercase ASCII letters/digits and single internal hyphens;
 descriptions are limited to 1,024 characters. Script paths must be portable,
 relative `scripts/.../file.ext` paths matching the declared language. Absolute paths, traversal, duplicate paths,
-symlinks, hardlinked update files and writes outside the skill tree are rejected.
+symlinks, junctions/reparse points, hardlinked update files and writes outside the
+skill tree are rejected. New skill/script paths also reject reserved Windows
+device names, trailing dots/spaces, ADS/invalid forms, and case/Unicode-normalized
+collisions on every platform so the resulting tree remains portable.
 A skill is limited to 32 scripts, a 1 MB file tree, and a 128 KB `SKILL.md`.
 
 The validator registry deliberately accepts only these four languages:
@@ -139,42 +144,116 @@ interactive approval prompt.** This is intentional. Crafting never executes the
 scripts and does not grant future command approval. No new cross-surface approval
 mechanism is introduced.
 
-### Atomic writes and updates
+### Complete-tree publication on Linux, Windows and macOS
 
-Publication requires **Linux `renameat2`**, libc support, and filesystem support
-for atomic no-replace/exchange operations. Other platforms or unsupported
-filesystems return an explicit error with no published skill change. Discovery
-and activation remain platform-independent. No fallback to partial multi-file
-replacement is used.
+The service uses a `SkillPublisher` strategy rather than requiring Linux APIs.
+Every backend publishes a complete validated hidden sibling tree; **final skill
+files are never updated one by one**. No Transactional NTFS/TxF is used.
 
-All input and syntax checks precede staging. A complete tree is staged in a
-hidden sibling directory; create uses atomic no-replace and update atomically
-exchanges the old/new directories. Identical requested content is a `no-op`.
-Different existing content requires `update_existing=true`. Unrelated existing
-files, empty directories and ordinary permission bits are preserved; updates
-do not delete resources. Skill staging is removed after failure or success; a filesystem cleanup failure
-is logged and returned as a warning rather than misreporting a successful atomic
-publication as a failed write.
-An unsupported publication attempt may leave empty `.agents/skills` parent
-directories, but never a partial published skill.
+| Backend | Create | Update | Result guarantee |
+| --- | --- | --- | --- |
+| `linux-renameat2` (preferred when libc/kernel/filesystem support it) | `RENAME_NOREPLACE` | `RENAME_EXCHANGE` | `atomic-no-replace` / `atomic-exchange` |
+| `portable-journaled-swap` (Windows, macOS, and unsupported Linux capabilities) | Same-parent rename into an absent target | Journaled target-to-backup, stage-to-target renames | `recoverable-staged-swap` |
 
-The result includes `operation` (`create`, `update`, `no-op`), requested file
-`paths`, a whole-tree `content_hash`, per-script static `validation`, and
-`executed=false`, and any staging-cleanup `warnings`. The whole-tree hash includes sorted relative file paths and
-file-content hashes, including unrelated files; it differs from activation's
-single-`SKILL.md` provenance hash. Supply the previous whole-tree hash as
-`expected_existing_hash` on update. User edits cause a conflict rather than
-being overwritten. Without a matching hash, reload/review the skill first.
-The tree is rechecked immediately before publication even when no expected hash
-was supplied. This is optimistic concurrency, not a filesystem transaction
-against a hostile writer changing files in the final check/rename interval;
-external editors should not write concurrently during publication. Atomic
-visibility does not promise crash/power-loss durability or preserve extended
-filesystem attributes. Discovery is invalidated/refreshed after publication.
+The portable path is selected automatically when the Linux capability is absent
+or unsupported. Permission, conflict, and disk errors are not silently treated
+as lack of atomic-exchange support. All artifacts stay in `.agents/skills` on the
+same volume. The target is rechecked under the publication lock immediately
+before a rename; cooperating concurrent creates cannot overwrite each other.
 
-Automatic run-start/post-implementation triggers, validators beyond the four
-listed languages, portable atomic-publication backends and script-execution hooks
-are deferred.
+**Portable updates have a brief missing-target window for external readers**
+between the two directory renames. AgentCrew discovery, catalog/activation reads,
+and publishers share the lock and do not consume that gap. This is recoverable
+publication, not a portable atomic directory exchange. The portable backend also
+journals creation so interrupted publication can be classified consistently.
+
+Identical requested content is a `no-op` (`publication_backend=none`,
+`publication_guarantee=unchanged`). Different existing content requires
+`update_existing=true`. Unrelated files and empty directories are preserved;
+updates do not delete resources. POSIX ordinary permission bits are preserved,
+but extended attributes, ownership, and custom Windows ACLs are not copied.
+New staged objects inherit platform/parent ACL behavior; review project/skill
+permissions if you depend on per-skill ACLs. POSIX mode bits are not a Windows
+security or consistency guarantee. Cleanup may clear read-only attributes only
+on unpublished staging/backup trees; it never changes the live tree's ACL to
+force publication.
+
+### Locking, interruption recovery and limits
+
+A reentrant shared project lock covers recovery, discovery, activation lookups,
+and publication. It uses nonblocking `fcntl.flock` on Unix or a nonblocking
+`msvcrt` byte lock on Windows, with a **5-second acquisition bound**. The lock file
+is `.agents/skills/.skill-publish.lock`; it persists deliberately to prevent
+lock-inode races. **Do not unlink it while AgentCrew processes are running.**
+Trusted project reads require permission to open/create this lock file, even if
+no crafting is requested. When the canonical skill root does not yet exist,
+read-only discovery does not create it. Publication creates it only after input,
+syntax, path, size, and secret checks. An invalid canonical link/reparse root
+fails closed; untrusted projects do not run recovery or acquire project file locks.
+
+Portable transactions use unique `.skill-<name>-<operation-id>.stage`, `.backup`,
+`.journal.json`, and `.journal.tmp` sibling names. The version-1 JSON journal is
+bounded to 8 KB and stores validated relative sibling names, operation/skill
+identity, a captured-project fingerprint, old/new content hashes, and phase.
+It contains no authored script body. Journal updates use a flushed temporary
+file and atomic file replacement, with file/parent-directory fsync where
+supported. Phases are `prepared`, `old_moved`, `new_moved`, `verified`, and, for
+rollback retry, `rolling_back`/`rolled_back`.
+
+Recovery runs before trusted discovery/publication/activation lookups:
+
+- If the old target was moved and the target is missing, a hash-valid backup is
+  restored by default, including when the staged tree has gone missing.
+- If the complete target matches the new hash and staging has been consumed,
+  the committed target is retained and validated backup/journal cleanup finishes.
+- If an uncommitted create/update is aborted, its validated staging tree is
+  removed only after rollback is recorded. Repeated recovery is idempotent.
+- Journal-derived names, root identity, containment, symlinks/junctions/reparse
+  points, hardlinks, and tree hashes are checked before recovery renames/deletes.
+  Conflicting journals, malformed/torn journals, or hash disagreements preserve
+  evidence and block project skill reads/writes with the journal location and
+  actionable recovery guidance. Do not delete a backup or journal blindly:
+  stop writers, inspect the indicated trees, resolve the inconsistency, and let
+  trusted refresh retry. Partial failed cleanup can require this manual review.
+
+Known Windows sharing/access/directory-interference errors get at most **three
+attempts**, with 25 ms and 50 ms backoff. If retries exhaust, the operation rolls
+back where hashes make that safe; otherwise the journal/backup is retained.
+A verified commit with a retryable cleanup problem returns a warning and retains
+its journal for a later cleanup attempt. New writes to that same skill are refused
+until cleanup resolves; unrelated skills and verified reads remain available.
+Hidden artifacts are never skills.
+Orphan staging without a journal (for example a process stopping before journal
+creation, or failed Linux post-swap cleanup) is ignored, not guessed/deleted by
+recovery; inspect it manually before removing it.
+
+These are **local-filesystem, cooperating-AgentCrew guarantees**. Other writers
+and external readers must not rely on the AgentCrew lock: stop editors during
+publication. There remains a hostile external-writer/TOCTOU caveat, including the
+portable final absence-check/rename interval. Network shares, cloud placeholder
+reparse points, unusual filesystems, ACL policies, and open-handle behavior may
+prevent publication or safe automatic recovery. Reparse points are rejected
+conservatively. This is process-interruption recovery, **not a guarantee of
+crash/power-loss durability**: staged file data is not promised durably synced,
+and directory fsync is unavailable on some platforms. Unsupported fsync is
+reported in warnings; unexpected journal I/O failures retain evidence.
+
+Windows/macOS backend-selection and path/adapter behavior are exercised by
+forced-platform/mocked tests on Linux, alongside a real local cross-process lock
+test. **No live Windows/macOS execution is claimed by this validation.**
+
+The result includes `operation`, requested `paths`, whole-tree `content_hash`,
+per-script `validation`, `validation_scope=static_syntax_only`, `executed=false`,
+`publication_backend`, `publication_guarantee`, `recovery_performed`, and cleanup/
+recovery `warnings`. The whole-tree hash covers sorted relative file paths and
+file-content hashes (including unrelated files); it is distinct from activation's
+single-`SKILL.md` hash. Use the previous whole-tree hash as
+`expected_existing_hash`; concurrent content changes cause a conflict. Discovery
+and parsed-entry caches are refreshed after publication/recovery; lookups check
+fingerprints rather than returning stale pre-swap instructions.
+
+Automatic lifecycle triggers, validators beyond the four listed languages, and
+script-execution hooks remain deferred.
 
 ## Verification
 
@@ -190,9 +269,14 @@ The `verification/skills` tests cover FIFO eviction/reactivation, preserved
 protocol envelopes, real inference preprocessing under context shrinking,
 request/scope isolation, reload/fork replay, trust and discovery caching, catalog
 budgets, static syntax validation, create/no-op/update/conflict cases, failed
-atomic publication, path escapes, symlinks, and script non-execution.
+atomic and forced-portable publication, interruption at each journal/cleanup
+phase, idempotent recovery and ambiguity refusal, bounded lock contention and
+sharing retries, Windows path/reparse safeguards, path escapes, and script
+non-execution.
 
 References:
 - [Agent Skills specification](https://agentskills.io/specification)
 - [Python 3.12 AST and compilation checks](https://docs.python.org/3.12/library/ast.html#ast.parse)
 - [Linux renameat2 atomic exchange/no-replace semantics](https://man7.org/linux/man-pages/man2/renameat2.2.html)
+- [Python Windows nonblocking byte locks](https://docs.python.org/3.12/library/msvcrt.html#msvcrt.locking)
+- [Python Unix file locks](https://docs.python.org/3.12/library/fcntl.html#fcntl.flock)

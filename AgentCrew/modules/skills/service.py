@@ -1,13 +1,9 @@
 """Progressive skill discovery and project-local, non-executing skill authoring."""
 
-import ctypes
 import hashlib
 import json
 import os
 import re
-import shutil
-import sys
-import tempfile
 import threading
 from collections import OrderedDict
 from pathlib import Path, PurePosixPath
@@ -15,6 +11,14 @@ from pathlib import Path, PurePosixPath
 import yaml
 from loguru import logger
 
+from .publisher import (
+    DirectorySkillPublisher,
+    RecoveryReport,
+    SkillPublisher,
+    check_project_path,
+    portable_key,
+    validate_relative_names,
+)
 from .validators import validate_script
 
 SKILL_SCAN_DIRS = [".claude/skills", ".agents/skills", ".od-skills", ".codex/skills"]
@@ -42,39 +46,6 @@ def _valid_name(name: object) -> bool:
     return isinstance(name, str) and len(name) <= 64 and bool(_NAME.fullmatch(name))
 
 
-def _atomic_publish(source: Path, target: Path, *, exchange: bool) -> None:
-    """Publish a complete tree without a missing/partial-target window."""
-    if not sys.platform.startswith("linux"):
-        raise ValueError("Atomic skill publication requires Linux renameat2 support")
-    libc = ctypes.CDLL(None, use_errno=True)
-    rename = getattr(libc, "renameat2", None)
-    if rename is None:
-        raise ValueError("Atomic skill publication unavailable: libc has no renameat2")
-    rename.argtypes = [
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_uint,
-    ]
-    rename.restype = ctypes.c_int
-    if rename(
-        -100, os.fsencode(source), -100, os.fsencode(target), 2 if exchange else 1
-    ):
-        error = ctypes.get_errno()
-        raise OSError(error, "Atomic skill publication failed", str(target))
-
-
-def _remove_staging(stage: Path) -> None:
-    """Make only the unpublished, owned staging directories removable."""
-    stage.chmod(stage.stat().st_mode | 0o700)
-    for root, directories, _ in os.walk(stage):
-        for name in directories:
-            path = Path(root) / name
-            path.chmod(path.stat().st_mode | 0o700)
-    shutil.rmtree(stage)
-
-
 class SkillsService:
     def __init__(
         self,
@@ -88,7 +59,10 @@ class SkillsService:
         self.trusted_project = trusted_project
         self._skills: dict[str, dict] = {}
         self._cache: OrderedDict[str, tuple[tuple, dict | None]] = OrderedDict()
-        self._lock = threading.RLock()
+        self._publisher: SkillPublisher = DirectorySkillPublisher(
+            self.project_root, lambda path: self._files_hash(self._tree_files(path))
+        )
+        self._lock = self._publisher.lock if trusted_project else threading.RLock()
         self.refresh()
 
     def _discover(self) -> None:
@@ -98,6 +72,12 @@ class SkillsService:
             roots.append((self.project_root, "project"))
         for root, scope in roots:
             for rel_dir in SKILL_SCAN_DIRS:
+                if (
+                    scope == "project"
+                    and rel_dir == ".agents/skills"
+                    and not self._publisher.lock.file_locked
+                ):
+                    continue
                 base = root / rel_dir
                 try:
                     if scope == "project":
@@ -213,9 +193,16 @@ class SkillsService:
         return result if isinstance(result, dict) else None
 
     def has_skills(self) -> bool:
-        return bool(self._skills)
+        with self._lock:
+            self.refresh()
+            return bool(self._skills)
 
     def get_catalog(self) -> list[dict]:
+        with self._lock:
+            self.refresh()
+            return self._catalog()
+
+    def _catalog(self) -> list[dict]:
         return [
             {"name": s["name"], "description": s["description"]}
             for s in sorted(
@@ -255,12 +242,29 @@ class SkillsService:
         return CATALOG_POLICY + "".join(lines) + diagnostic
 
     def get_skill(self, name: str) -> dict | None:
-        return self._skills.get(name)
+        with self._lock:
+            self.refresh()
+            return self._skills.get(name)
+
+    def _recover_locked(self) -> RecoveryReport:
+        if not self.trusted_project:
+            return RecoveryReport()
+        try:
+            report = self._publisher.recover()
+        except (OSError, ValueError, TimeoutError):
+            self._skills = {}
+            raise
+        for warning in report.warnings:
+            logger.warning("Skills: {}", warning)
+        if report.performed:
+            self._cache.clear()
+        return report
 
     def refresh(self) -> bool:
         """Rescan names, reusing bounded parsed entries for unchanged fingerprints."""
         with self._lock:
             old = self._skills
+            self._recover_locked()
             self._discover()
             return old != self._skills
 
@@ -273,6 +277,14 @@ class SkillsService:
         return [s["name"] for s in self.get_catalog()]
 
     def list_resources(self, skill_dir: str) -> list[str]:
+        with self._lock:
+            self._recover_locked()
+            path = Path(skill_dir)
+            if path.is_relative_to(self.project_root):
+                self._check_project_path(path)
+            return self._list_resources(skill_dir)
+
+    def _list_resources(self, skill_dir: str) -> list[str]:
         resources = []
         root = Path(skill_dir).resolve()
         try:
@@ -292,22 +304,17 @@ class SkillsService:
         return resources[:100]
 
     def _check_project_path(self, path: Path) -> None:
-        relative = path.relative_to(self.project_root)
-        current = self.project_root
-        for part in relative.parts:
-            current = current / part
-            if current.is_symlink():
-                raise ValueError("Symlinks are not allowed in project skill paths")
-        if not path.resolve().is_relative_to(self.project_root):
-            raise ValueError("Skill path escapes project root")
+        check_project_path(self.project_root, path)
 
     def _tree_files(self, root: Path) -> dict[str, bytes]:
         files = {}
+        directories = []
         total = 0
         self._check_project_path(root)
         for path in sorted(root.rglob("*")):
             self._check_project_path(path)
             if path.is_dir():
+                directories.append(path.relative_to(root).as_posix())
                 continue
             if not path.is_file() or path.stat().st_nlink != 1:
                 raise ValueError(
@@ -321,6 +328,7 @@ class SkillsService:
             if len(content) > MAX_CRAFT_BYTES:
                 raise ValueError("Existing skill file exceeds the 1 MB update limit")
             files[path.relative_to(root).as_posix()] = content
+        validate_relative_names(list(files), directories=directories)
         if sum(map(len, files.values())) > MAX_CRAFT_BYTES:
             raise ValueError("Existing skill exceeds the 1 MB update limit")
         return files
@@ -344,13 +352,14 @@ class SkillsService:
         update_existing: bool = False,
         expected_existing_hash: str | None = None,
     ) -> dict:
-        """Validate without execution, then atomically publish a complete skill tree."""
+        """Validate without execution, then publish a complete skill tree with recovery."""
         if not self.trusted_project:
             raise ValueError("Project skills require trusted_project_plugins approval")
         if not _valid_name(name):
             raise ValueError(
                 "Invalid skill name: use 1-64 lowercase letters/digits and single hyphens"
             )
+        validate_relative_names([name])
         if (
             not isinstance(description, str)
             or not 1 <= len(description.strip()) <= 1024
@@ -424,6 +433,7 @@ class SkillsService:
                 raise ValueError("Script exceeds the 1 MB skill limit")
             validation.append(validate_script(path, language, content))
             files[path] = content.encode("utf-8")
+        validate_relative_names(list(files))
         if (
             sum(map(len, files.values())) > MAX_CRAFT_BYTES
             or len(files["SKILL.md"]) > MAX_SKILL_FILE_BYTES
@@ -434,25 +444,58 @@ class SkillsService:
                 "Obvious credential material detected; reference environment variables instead"
             )
         with self._lock:
+            recovery = self._recover_locked()
+            self._discover()
+            self._check_skill_target(name)
+        with self._publisher.lock.hold(create=True):
+            additional = self._recover_locked()
+            recovery.performed |= additional.performed
+            recovery.warnings.extend(additional.warnings)
             return self._publish_skill(
-                name, files, validation, update_existing, expected_existing_hash
+                name,
+                files,
+                validation,
+                update_existing,
+                expected_existing_hash,
+                recovery,
             )
 
-    def _publish_skill(
-        self, name, files, validation, update_existing, expected_existing_hash
-    ):
+    def _check_skill_target(self, name: str) -> Path:
         target = self.project_root / ".agents" / "skills" / name
-        self.refresh()
-        discovered = self.get_skill(name)
-        if (
-            discovered
-            and discovered["scope"] == "project"
-            and discovered["location"] != str(target / "SKILL.md")
-        ):
-            raise ValueError(
-                "Skill name belongs to another project skill root; choose a distinct name"
-            )
+        for skill in self._skills.values():
+            if (
+                skill["scope"] == "project"
+                and portable_key(skill["name"]) == portable_key(name)
+                and Path(skill["location"]) != target / "SKILL.md"
+            ):
+                raise ValueError(
+                    "Skill name belongs to another project skill root; choose a distinct name"
+                )
+        for relative in SKILL_SCAN_DIRS:
+            root = self.project_root / relative
+            try:
+                self._check_project_path(root)
+            except ValueError:
+                if relative == ".agents/skills":
+                    raise
+                continue
+            if root.is_dir():
+                for entry in root.iterdir():
+                    if (
+                        portable_key(entry.name) == portable_key(name)
+                        and entry.as_posix() != target.as_posix()
+                    ):
+                        raise ValueError(
+                            "Case-insensitive project skill-root collision; choose a distinct name"
+                        )
         self._check_project_path(target)
+        return target
+
+    def _publish_skill(
+        self, name, files, validation, update_existing, expected_existing_hash, recovery
+    ):
+        self.refresh()
+        target = self._check_skill_target(name)
         exists = target.exists()
         if exists and not target.is_dir():
             raise ValueError("Existing skill target is not a directory")
@@ -466,11 +509,17 @@ class SkillsService:
                 "Skill hash conflict: existing content changed; reload before updating"
             )
         merged = existing | files
+        validate_relative_names(list(merged))
         if sum(map(len, merged.values())) > MAX_CRAFT_BYTES:
             raise ValueError("Merged skill tree exceeds the 1 MB update limit")
         content_hash = self._files_hash(merged)
         operation = "create"
-        warnings = []
+        warnings = list(recovery.warnings)
+        publication = {
+            "publication_backend": "none",
+            "publication_guarantee": "unchanged",
+            "recovery_performed": recovery.performed,
+        }
         if exists:
             if merged == existing:
                 operation = "no-op"
@@ -481,9 +530,8 @@ class SkillsService:
             else:
                 operation = "update"
         if operation != "no-op":
-            target.parent.mkdir(parents=True, exist_ok=True)
             self._check_project_path(target)
-            stage = Path(tempfile.mkdtemp(prefix=f".{name}-", dir=target.parent))
+            stage = self._publisher.create_stage(target)
             try:
                 directory_modes = {}
                 if exists:
@@ -515,16 +563,13 @@ class SkillsService:
                     raise ValueError(
                         "Skill hash conflict: files changed during staging"
                     )
-                _atomic_publish(stage, target, exchange=exists)
+                publication = self._publisher.publish(
+                    stage, target, previous_hash, content_hash
+                )
+                warnings.extend(publication.pop("warnings"))
+                publication["recovery_performed"] |= recovery.performed
             finally:
-                if stage.exists():
-                    try:
-                        _remove_staging(stage)
-                    except OSError:
-                        warnings.append(f"Could not remove staging directory: {stage}")
-                        logger.warning(
-                            "Skills: could not remove staging directory {}", stage
-                        )
+                self._publisher.discard_stage(stage, warnings)
             self.invalidate()
         return {
             "operation": operation,
@@ -533,5 +578,6 @@ class SkillsService:
             "validation": validation,
             "validation_scope": "static_syntax_only",
             "executed": False,
+            **publication,
             "warnings": warnings,
         }
