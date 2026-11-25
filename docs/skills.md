@@ -1,11 +1,35 @@
 # Project skills and reusable scripts
 
 AgentCrew discovers Agent Skills `SKILL.md` files in `.claude/skills`,
-`.agents/skills`, `.od-skills`, and `.codex/skills`. Within each scope that is
-also the collision order; directory names are scanned in sorted order. Project
-skills override user skills with the same name. `.agents/skills` is the only
-write target for `craft_skill`; a conflicting name in another project root is
-rejected rather than silently shadowed.
+`.agents/skills`, `.od-skills`, and `.codex/skills` under the user home and the
+exact trusted project root. Within each scope that is also the root collision
+order. Each root is scanned shallow-first, up to **four directory levels below
+the root**, with NFC-normalized relative POSIX path ordering within each level
+(raw path breaks normalization ties). Direct skills beat nested same-name skills
+within a root; the first configured root still wins within a scope. Project
+skills override user skills with the same name. Discovery does not search the
+repository for additional roots such as `packages/app/.agents/skills`, nor scan
+singular `.agent/skills` directories.
+
+Only exact `SKILL.md` entries form bundle boundaries: discovery does not descend
+into a bundle's resources, even when its metadata is malformed. The familiar
+skip directories (`.git`, `node_modules`, `__pycache__`, `.venv`, `venv`, `.tox`)
+remain excluded. Hidden grouping directories are not traversed. Direct hidden
+user skills remain supported; hidden project entries in `.agents/skills` remain
+excluded for publication safety.
+
+Discovery visits at most **2,000 candidate directories per configured root** and
+**16,000 across all user/project roots per refresh**. The configured roots
+themselves do not consume this budget. Candidate storage is bounded, but sibling
+names must still be enumerated to choose a deterministic lexical prefix. Warning
+logs identify roots truncated by depth or directory budgets; debug logs identify
+same-name winners/losers and duplicate physical targets.
+
+`.agents/skills` is the only write target for `craft_skill`; a conflicting name
+in another project skill location is rejected rather than silently shadowed.
+An existing nonempty direct target without `SKILL.md` is treated as a grouping
+container and cannot be crafted into, even with `update_existing=true`; nested
+skills cannot accidentally be hidden or overwritten by direct authoring.
 
 ## Trust and compatibility
 
@@ -27,7 +51,13 @@ newly crafted skills, not retroactively imposed on installed user skills. Non-ma
 frontmatter and non-string names/descriptions are safely ignored. Linked project
 skill entries are ignored; an unsafe canonical lock/recovery root can instead fail
 closed with an error. Junctions/reparse points are treated conservatively too.
-User-scope symlink behavior is unchanged.
+Direct user skill-directory and `SKILL.md` links remain supported as leaf
+bundles, with physical targets deduplicated within the scope. Linked grouping
+directories and linked directory/marker entries below the first level are not
+followed. Project links, nonregular skill
+files, and hardlinked skill files remain rejected before recursive descent or
+payload reads. These checks do not provide race-proof isolation from concurrent,
+non-cooperating filesystem changes.
 
 ## Activation and bounded context
 
@@ -69,8 +99,8 @@ also works within a single tool batch and request-only recovery snapshots.
 Bodies above **16,000 characters** (approximately 4,000 tokens at the deterministic
 four-character estimate, not a tokenizer guarantee) are rejected, not truncated.
 Move longer details into reference files. Discovery caches at most 512 parsed
-entries using mtime, ctime, size and inode fingerprints. Every refresh still
-scans immediate skill directories to notice additions, removals and edits.
+entries using mtime, ctime, size and inode fingerprints. Every refresh rescans
+within the discovery bounds above to notice additions, removals and edits.
 
 ## Crafting a project skill
 

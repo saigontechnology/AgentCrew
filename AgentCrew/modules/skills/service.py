@@ -6,7 +6,10 @@ import os
 import re
 import stat
 import threading
+import unicodedata
 from collections import OrderedDict
+from collections.abc import Iterator
+from heapq import nsmallest
 from pathlib import Path, PurePosixPath
 
 import yaml
@@ -30,6 +33,9 @@ MAX_BODY_CHARS = 16000
 MAX_SKILL_FILE_BYTES = 128000
 MAX_CRAFT_BYTES = 1000000
 MAX_CACHE_ENTRIES = 512
+MAX_DISCOVERY_DEPTH = 4
+MAX_DISCOVERY_DIRS_PER_ROOT = 2000
+MAX_DISCOVERY_DIRS_TOTAL = 16000
 CATALOG_POLICY = (
     "## Available Skills\n"
     "Call activate_skill for matching instructions. At most 3 distinct skills are "
@@ -73,6 +79,8 @@ class SkillsService:
         roots = [(self.user_root, "user")]
         if self.trusted_project:
             roots.append((self.project_root, "project"))
+        budget = {"remaining": MAX_DISCOVERY_DIRS_TOTAL}
+        physical_targets: dict[tuple, Path] = {}
         for root, scope in roots:
             for rel_dir in SKILL_SCAN_DIRS:
                 if (
@@ -82,35 +90,176 @@ class SkillsService:
                 ):
                     continue
                 base = root / rel_dir
-                try:
-                    if scope == "project":
-                        self._check_project_path(base)
-                    entries = sorted(base.iterdir(), key=lambda p: p.name)
-                except (OSError, ValueError):
-                    continue
-                for entry in entries:
-                    if entry.name in _SKIP_DIRS or (
-                        scope == "project"
-                        and rel_dir == ".agents/skills"
-                        and entry.name.startswith(".")
-                    ):
-                        continue
-                    path = entry / "SKILL.md"
+                for path in self._discovery_paths(base, scope, budget):
                     try:
-                        if not entry.is_dir():
+                        metadata = path.stat()
+                        identity = (
+                            (metadata.st_dev, metadata.st_ino)
+                            if metadata.st_ino
+                            else (str(path.resolve()),)
+                        )
+                        key = (scope, *identity)
+                        previous = physical_targets.get(key)
+                        if previous is not None:
+                            logger.debug(
+                                "Skills: duplicate physical target; winner={}, loser={}",
+                                previous,
+                                path,
+                            )
                             continue
-                        if scope == "project":
-                            self._check_project_path(path)
                         skill = self._load_skill(path, scope)
                     except (OSError, ValueError, UnicodeError, RecursionError):
                         continue
                     if not skill:
                         continue
+                    physical_targets[key] = path
                     existing = skills.get(skill["name"])
-                    if existing and existing["scope"] == scope:
-                        continue
+                    if existing:
+                        winner, loser = (
+                            (existing, skill)
+                            if existing["scope"] == scope
+                            else (skill, existing)
+                        )
+                        logger.debug(
+                            "Skills: shadowed name {!r}; winner={}, loser={}",
+                            skill["name"],
+                            winner["location"],
+                            loser["location"],
+                        )
+                        if existing["scope"] == scope:
+                            continue
                     skills[skill["name"]] = skill
         self._skills = skills
+
+    @staticmethod
+    def _is_discovery_link(path: Path, metadata: os.stat_result) -> bool:
+        return bool(
+            stat.S_ISLNK(metadata.st_mode)
+            or getattr(metadata, "st_file_attributes", 0)
+            & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            or path.is_junction()
+        )
+
+    def _discovery_entries(
+        self, directory: Path, base: Path, scope: str, depth: int
+    ) -> Iterator[Path]:
+        """Validate directory candidates before any recursive descent."""
+        try:
+            if scope == "project":
+                inspect_skill_entry(self.project_root, directory)
+            with os.scandir(directory) as children:
+                for child in children:
+                    entry = directory / child.name
+                    if entry.name in _SKIP_DIRS or (
+                        scope == "project"
+                        and base == self.project_root / ".agents/skills"
+                        and entry.name.startswith(".")
+                    ):
+                        continue
+                    try:
+                        metadata = child.stat(follow_symlinks=False)
+                        if scope == "project":
+                            metadata = inspect_skill_entry(
+                                self.project_root, entry, metadata
+                            )
+                        else:
+                            if self._is_discovery_link(entry, metadata):
+                                if depth != 1:
+                                    continue
+                                metadata = entry.stat()
+                        if stat.S_ISDIR(metadata.st_mode):
+                            yield entry
+                    except (OSError, ValueError):
+                        continue
+        except (OSError, ValueError):
+            return
+
+    def _discovery_paths(
+        self, base: Path, scope: str, budget: dict[str, int]
+    ) -> Iterator[Path]:
+        """Yield bundle boundaries shallow-first with bounded frontier storage."""
+        pending = [base]
+        visited = 0
+        for depth in range(1, MAX_DISCOVERY_DEPTH + 1):
+            remaining = min(MAX_DISCOVERY_DIRS_PER_ROOT - visited, budget["remaining"])
+            candidates = (
+                entry
+                for directory in pending
+                for entry in self._discovery_entries(directory, base, scope, depth)
+            )
+            entries = nsmallest(
+                remaining + 1,
+                candidates,
+                key=lambda path: (
+                    unicodedata.normalize("NFC", path.relative_to(base).as_posix()),
+                    path.relative_to(base).as_posix(),
+                ),
+            )
+            truncated = len(entries) > remaining
+            if truncated:
+                logger.warning(
+                    "Skills: directory budget truncation at {} "
+                    "(per-root limit={}, total limit={})",
+                    base,
+                    MAX_DISCOVERY_DIRS_PER_ROOT,
+                    MAX_DISCOVERY_DIRS_TOTAL,
+                )
+            pending = []
+            for entry in entries[:remaining]:
+                visited += 1
+                budget["remaining"] -= 1
+                path = entry / "SKILL.md"
+                try:
+                    if scope == "project":
+                        self._check_project_path(entry)
+                    marker = None
+                    try:
+                        path.lstat()
+                        with os.scandir(entry) as children:
+                            marker = next(
+                                (
+                                    child
+                                    for child in children
+                                    if child.name == "SKILL.md"
+                                ),
+                                None,
+                            )
+                    except FileNotFoundError:
+                        pass
+                    if marker is None:
+                        if not entry.name.startswith(
+                            "."
+                        ) and not self._is_discovery_link(entry, entry.lstat()):
+                            pending.append(entry)
+                        continue
+                    metadata = marker.stat(follow_symlinks=False)
+                    if scope == "project":
+                        metadata = inspect_skill_entry(
+                            self.project_root, path, metadata
+                        )
+                    elif self._is_discovery_link(path, metadata):
+                        if depth != 1:
+                            continue
+                        metadata = path.stat()
+                    if stat.S_ISREG(metadata.st_mode):
+                        yield path
+                except (OSError, ValueError):
+                    continue
+            if truncated or not pending:
+                return
+            if depth == MAX_DISCOVERY_DEPTH and any(
+                next(
+                    self._discovery_entries(directory, base, scope, depth + 1),
+                    None,
+                )
+                is not None
+                for directory in pending
+            ):
+                logger.warning(
+                    "Skills: depth truncation at {} (depth limit={})",
+                    base,
+                    MAX_DISCOVERY_DEPTH,
+                )
 
     def _load_skill(self, path: Path, scope: str) -> dict | None:
         stat = path.stat()
@@ -490,6 +639,14 @@ class SkillsService:
                             "Case-insensitive project skill-root collision; choose a distinct name"
                         )
         self._check_project_path(target)
+        if (
+            target.is_dir()
+            and not (target / "SKILL.md").exists()
+            and next(target.iterdir(), None) is not None
+        ):
+            raise ValueError(
+                "Skill target is a grouping container; choose a distinct name"
+            )
         return target
 
     def _publish_skill(
