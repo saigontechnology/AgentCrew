@@ -9,11 +9,14 @@ import threading
 import unicodedata
 from collections import OrderedDict
 from collections.abc import Iterator
+from contextlib import nullcontext
 from heapq import nsmallest
 from pathlib import Path, PurePosixPath
 
 import yaml
 from loguru import logger
+
+from AgentCrew.modules.config.project_config import validate_project_roots
 
 from .publisher import (
     DirectorySkillPublisher,
@@ -62,74 +65,112 @@ class SkillsService:
         project_root: str | Path | None = None,
         user_root: str | Path | None = None,
         trusted_project: bool = False,
+        project_roots: list[str | Path] | None = None,
     ) -> None:
         self.project_root = Path(project_root or os.getcwd()).resolve()
         self.user_root = Path(user_root or Path.home()).resolve()
         self.trusted_project = trusted_project
+        self._project_roots = (
+            [self.project_root]
+            if project_roots is None
+            else validate_project_roots(self.project_root, project_roots, resolved=True)
+            if trusted_project
+            else []
+        )
         self._skills: dict[str, dict] = {}
         self._cache: OrderedDict[str, tuple[tuple, dict | None]] = OrderedDict()
         self._publisher: SkillPublisher = DirectorySkillPublisher(
             self.project_root, lambda path: self._files_hash(self._tree_files(path))
         )
-        self._lock = self._publisher.lock if trusted_project else threading.RLock()
+        self._project_publishers: dict[Path, SkillPublisher] = {
+            root: self._publisher
+            if root == self.project_root
+            else DirectorySkillPublisher(
+                root, lambda path: self._files_hash(self._tree_files(path))
+            )
+            for root in self._project_roots
+        }
+        self._lock = (
+            self._publisher.lock
+            if trusted_project and self.project_root in self._project_roots
+            else threading.RLock()
+        )
         self.refresh()
 
     def _discover(self) -> None:
         skills: dict[str, dict] = {}
-        roots = [(self.user_root, "user")]
-        if self.trusted_project:
-            roots.append((self.project_root, "project"))
         budget = {"remaining": MAX_DISCOVERY_DIRS_TOTAL}
         physical_targets: dict[tuple, Path] = {}
-        for root, scope in roots:
-            for rel_dir in SKILL_SCAN_DIRS:
-                if (
-                    scope == "project"
-                    and rel_dir == ".agents/skills"
-                    and not self._publisher.lock.file_locked
-                ):
-                    continue
-                base = root / rel_dir
-                for path in self._discovery_paths(base, scope, budget):
-                    try:
-                        metadata = path.stat()
-                        identity = (
-                            (metadata.st_dev, metadata.st_ino)
-                            if metadata.st_ino
-                            else (str(path.resolve()),)
-                        )
-                        key = (scope, *identity)
-                        previous = physical_targets.get(key)
-                        if previous is not None:
-                            logger.debug(
-                                "Skills: duplicate physical target; winner={}, loser={}",
-                                previous,
-                                path,
-                            )
-                            continue
-                        skill = self._load_skill(path, scope)
-                    except (OSError, ValueError, UnicodeError, RecursionError):
-                        continue
-                    if not skill:
-                        continue
-                    physical_targets[key] = path
-                    existing = skills.get(skill["name"])
-                    if existing:
-                        winner, loser = (
-                            (existing, skill)
-                            if existing["scope"] == scope
-                            else (skill, existing)
-                        )
-                        logger.debug(
-                            "Skills: shadowed name {!r}; winner={}, loser={}",
-                            skill["name"],
-                            winner["location"],
-                            loser["location"],
-                        )
-                        if existing["scope"] == scope:
-                            continue
-                    skills[skill["name"]] = skill
+        self._discover_root(self.user_root, "user", budget, physical_targets, skills)
+        if self.trusted_project:
+            roots = validate_project_roots(
+                self.project_root, self._project_roots, resolved=True
+            )
+            for root in roots:
+                publisher = self._project_publishers[root]
+                with publisher.lock:
+                    self._recover_locked(publisher)
+                    self._discover_root(
+                        root, "project", budget, physical_targets, skills, publisher
+                    )
         self._skills = skills
+
+    def _discover_root(
+        self,
+        root: Path,
+        scope: str,
+        budget: dict[str, int],
+        physical_targets: dict[tuple, Path],
+        skills: dict[str, dict],
+        publisher: SkillPublisher | None = None,
+    ) -> None:
+        for rel_dir in SKILL_SCAN_DIRS:
+            if (
+                scope == "project"
+                and rel_dir == ".agents/skills"
+                and (publisher is None or not publisher.lock.file_locked)
+            ):
+                continue
+            base = root / rel_dir
+            for path in self._discovery_paths(base, scope, budget):
+                try:
+                    metadata = path.stat()
+                    identity = (
+                        (metadata.st_dev, metadata.st_ino)
+                        if metadata.st_ino
+                        else (str(path.resolve()),)
+                    )
+                    key = (scope, *identity)
+                    previous = physical_targets.get(key)
+                    if previous is not None:
+                        logger.debug(
+                            "Skills: duplicate physical target; winner={}, loser={}",
+                            previous,
+                            path,
+                        )
+                        continue
+                    skill = self._load_skill(path, scope)
+                except (OSError, ValueError, UnicodeError, RecursionError):
+                    continue
+                if not skill:
+                    continue
+                physical_targets[key] = path
+                existing = skills.get(skill["name"])
+                if existing:
+                    winner, loser = (
+                        (existing, skill)
+                        if existing["scope"] == scope
+                        else (skill, existing)
+                    )
+                    logger.debug(
+                        "Skills: shadowed name {!r}; winner={}, loser={}",
+                        skill["name"],
+                        winner["location"],
+                        loser["location"],
+                    )
+                    if existing["scope"] == scope:
+                        continue
+                skills[skill["name"]] = skill
 
     @staticmethod
     def _is_discovery_link(path: Path, metadata: os.stat_result) -> bool:
@@ -152,7 +193,8 @@ class SkillsService:
                     entry = directory / child.name
                     if entry.name in _SKIP_DIRS or (
                         scope == "project"
-                        and base == self.project_root / ".agents/skills"
+                        and base.name == "skills"
+                        and base.parent.name == ".agents"
                         and entry.name.startswith(".")
                     ):
                         continue
@@ -398,11 +440,13 @@ class SkillsService:
             self.refresh()
             return self._skills.get(name)
 
-    def _recover_locked(self) -> RecoveryReport:
+    def _recover_locked(
+        self, publisher: SkillPublisher | None = None
+    ) -> RecoveryReport:
         if not self.trusted_project:
             return RecoveryReport()
         try:
-            report = self._publisher.recover()
+            report = (publisher or self._publisher).recover()
         except (OSError, ValueError, TimeoutError):
             self._skills = {}
             raise
@@ -416,7 +460,6 @@ class SkillsService:
         """Rescan names, reusing bounded parsed entries for unchanged fingerprints."""
         with self._lock:
             old = self._skills
-            self._recover_locked()
             self._discover()
             return old != self._skills
 
@@ -430,11 +473,23 @@ class SkillsService:
 
     def list_resources(self, skill_dir: str) -> list[str]:
         with self._lock:
-            self._recover_locked()
             path = Path(skill_dir)
             if path.is_relative_to(self.project_root):
                 self._check_project_path(path)
-            return self._list_resources(skill_dir)
+            publisher = None
+            if self.trusted_project:
+                for root in sorted(
+                    self._project_publishers,
+                    key=lambda root: len(root.parts),
+                    reverse=True,
+                ):
+                    if path.is_relative_to(root / ".agents/skills"):
+                        publisher = self._project_publishers[root]
+                        break
+            with publisher.lock if publisher else nullcontext():
+                if publisher:
+                    self._recover_locked(publisher)
+                return self._list_resources(skill_dir)
 
     def _list_resources(self, skill_dir: str) -> list[str]:
         resources = []
@@ -593,7 +648,7 @@ class SkillsService:
             raise ValueError(
                 "Obvious credential material detected; reference environment variables instead"
             )
-        with self._lock:
+        with self._publisher.lock, self._lock:
             recovery = self._recover_locked()
             self._discover()
             self._check_skill_target(name)

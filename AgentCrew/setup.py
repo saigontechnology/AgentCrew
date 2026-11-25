@@ -661,10 +661,16 @@ class ApplicationSetup:
             command_execution_service = None
 
         try:
+            from AgentCrew.modules.config.project_config import load_project_skill_roots
             from AgentCrew.modules.skills import SkillsService
 
+            project_skill_roots = load_project_skill_roots(
+                self._project_root, trusted_project=self._trusted_project
+            )
             skills_service = SkillsService(
-                project_root=self._project_root, trusted_project=self._trusted_project
+                project_root=self._project_root,
+                trusted_project=self._trusted_project,
+                project_roots=project_skill_roots,
             )
         except Exception as e:
             click.echo(f"\u26a0\ufe0f Skills service not available: {e!s}")

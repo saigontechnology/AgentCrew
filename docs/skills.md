@@ -2,14 +2,15 @@
 
 AgentCrew discovers Agent Skills `SKILL.md` files in `.claude/skills`,
 `.agents/skills`, `.od-skills`, and `.codex/skills` under the user home and the
-exact trusted project root. Within each scope that is also the root collision
-order. Each root is scanned shallow-first, up to **four directory levels below
+selected trusted project roots (the launch root by default). Within each project
+root and the user scope, that is also the standard-root collision order. Each
+standard skill root is scanned shallow-first, up to **four directory levels below
 the root**, with NFC-normalized relative POSIX path ordering within each level
 (raw path breaks normalization ties). Direct skills beat nested same-name skills
-within a root; the first configured root still wins within a scope. Project
-skills override user skills with the same name. Discovery does not search the
-repository for additional roots such as `packages/app/.agents/skills`, nor scan
-singular `.agent/skills` directories.
+within a standard skill root; the first selected project root wins across
+projects. Project skills override user skills with the same name. Discovery does
+not search the repository for additional roots such as
+`packages/app/.agents/skills`, nor scan singular `.agent/skills` directories.
 
 Only exact `SKILL.md` entries form bundle boundaries: discovery does not descend
 into a bundle's resources, even when its metadata is malformed. The familiar
@@ -18,7 +19,7 @@ remain excluded. Hidden grouping directories are not traversed. Direct hidden
 user skills remain supported; hidden project entries in `.agents/skills` remain
 excluded for publication safety.
 
-Discovery visits at most **2,000 candidate directories per configured root** and
+Discovery visits at most **2,000 candidate directories per standard skill root** and
 **16,000 across all user/project roots per refresh**. The configured roots
 themselves do not consume this budget. Candidate storage is bounded, but sibling
 names must still be enumerated to choose a deterministic lexical prefix. Warning
@@ -30,6 +31,57 @@ in another project skill location is rejected rather than silently shadowed.
 An existing nonempty direct target without `SKILL.md` is treated as a grouping
 container and cannot be crafted into, even with `update_existing=true`; nested
 skills cannot accidentally be hidden or overwritten by direct authoring.
+
+## Selecting project roots
+
+A trusted launch project may configure discovery in
+`<launch-project>/.agentcrew/config.json`:
+
+```json
+{
+  "skills": {
+    "project_roots": [".", "services/api"]
+  }
+}
+```
+
+Each entry is a **project directory**, not a skills directory. AgentCrew scans
+only the four standard skill roots listed above beneath each selected project.
+It never searches arbitrary descendants for additional projects. For example,
+`["services/api"]` excludes launch-root skills and loads only that subproject's
+standard skill roots; `[".", "services/api"]` includes both, with the launch
+project winning same-name collisions. List order takes precedence over the
+standard-root order within each project. All project skills still override
+same-name user skills.
+
+- Missing config, missing `skills`, or missing `skills.project_roots` defaults to
+  `["."]`, preserving launch-root discovery.
+- An explicit list is authoritative. `[]` disables **all project discovery** but
+  does not disable user skills. Duplicate canonical directories keep their first
+  position. Missing directories are skipped with a warning, never replaced with
+  the launch root.
+- Entries must be relative paths inside the canonical launch project. Absolute
+  paths, drive-qualified paths, backslashes, `..` components, external roots,
+  and symlink/junction/reparse components are rejected. Selected existing roots
+  must be directories, and safety is rechecked on refresh.
+- The config is limited to **64 KiB** and **32 root entries** (before deduplication).
+  It must be a JSON object, with an object-valued `skills` and a list of strings
+  for `project_roots`, when present. A linked, reparse, nonregular, or hardlinked
+  config file is rejected. Invalid/unsafe config or any invalid path entry
+  disables project discovery with a warning; user discovery remains available.
+- Config is read **only after exact launch-project trust is approved**. Untrusted
+  launches ignore the file and all project roots, discovering user skills only.
+  Config cannot grant trust or extend it outside the launch project.
+- Config changes require **restart**. Normal skill refreshes use the roots
+  captured at startup; a missing directory skipped at startup also needs restart.
+  Each selected project's `.agents/skills` is scanned under its own publication
+  lock after recovery. Additional project locks are released before the next
+  additional project is scanned; one shared 16,000-directory budget remains.
+
+This setting controls **discovery only**. `craft_skill` still writes exclusively
+into the canonical launch project's `.agents/skills`, even when `.` is omitted
+or the list is empty. Skills authored there will not be discovered until the
+launch project is included again. Authoring and activation APIs are unchanged.
 
 ## Trust and compatibility
 
