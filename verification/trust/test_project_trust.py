@@ -293,8 +293,10 @@ def test_cross_process_read_modify_write(roots, store):
     "arguments, expected",
     [
         ([], None),
-        (["--trusted-project-plugins"], True),
-        (["--no-trusted-project-plugins"], False),
+        (["--trusted-project"], True),
+        (["--no-trusted-project"], False),
+        (["--trusted-project", "--no-trusted-project"], False),
+        (["--no-trusted-project", "--trusted-project"], True),
     ],
 )
 def test_common_cli_flag_is_tri_state(arguments, expected):

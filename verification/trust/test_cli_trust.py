@@ -20,6 +20,18 @@ def cli_module(request, monkeypatch):
     return import_module(request.param)
 
 
+@pytest.fixture(
+    params=[
+        ("chat", "run_console"),
+        ("job", "run_job"),
+        ("acp", "run_acp"),
+        ("a2a-server", "run_server"),
+    ]
+)
+def entrypoint(request):
+    return request.param
+
+
 def test_cli_exposes_revoke_but_no_grant_endpoint(cli_module):
     result = CliRunner().invoke(cli_module.cli, ["--help"])
     assert result.exit_code == 0, result.output
@@ -46,12 +58,14 @@ def test_cli_revokes_without_starting_application(cli_module, tmp_path, monkeypa
     ("arguments", "expected"),
     [
         ([], None),
-        (["--trusted-project-plugins"], True),
-        (["--no-trusted-project-plugins"], False),
+        (["--trusted-project"], True),
+        (["--no-trusted-project"], False),
+        (["--trusted-project", "--no-trusted-project"], False),
+        (["--no-trusted-project", "--trusted-project"], True),
     ],
 )
-def test_chat_forwards_tristate_without_granting(
-    cli_module, tmp_path, monkeypatch, arguments, expected
+def test_entrypoint_forwards_tristate_without_granting(
+    cli_module, entrypoint, tmp_path, monkeypatch, arguments, expected
 ):
     monkeypatch.chdir(tmp_path)
     application = Mock()
@@ -69,11 +83,46 @@ def test_chat_forwards_tristate_without_granting(
         )
     if hasattr(cli_module, "check_and_update"):
         monkeypatch.setattr(cli_module, "check_and_update", Mock())
-    command = ["chat"]
-    if cli_module.__name__ == "AgentCrew.main":
+    command_name, method_name = entrypoint
+    command = [command_name]
+    if command_name == "chat" and cli_module.__name__ == "AgentCrew.main":
         command.append("--console")
+    if command_name == "job":
+        command.append("Task")
     result = CliRunner().invoke(cli_module.cli, [*command, *arguments])
     assert result.exit_code == 0, result.output
     factory.assert_called_once_with(expected)
-    application.run_console.assert_called_once()
+    getattr(application, method_name).assert_called_once()
     assert not (tmp_path / ".AgentCrew" / "project-trust.json").exists()
+
+
+def test_entrypoint_help_describes_project_plugins_and_skills(cli_module, entrypoint):
+    command_name, _ = entrypoint
+    result = CliRunner().invoke(cli_module.cli, [command_name, "--help"])
+    assert result.exit_code == 0, result.output
+    assert "--trusted-project / --no-trusted-project" in result.output
+    assert "project plugins and skills" in " ".join(result.output.split())
+    option = next(
+        option
+        for option in cli_module.cli.commands[command_name].params
+        if option.name == "trusted_project_plugins"
+    )
+    assert option.opts == ["--trusted-project"]
+    assert option.secondary_opts == ["--no-trusted-project"]
+    assert option.default is None
+
+
+@pytest.mark.parametrize(
+    "old_option", ["--trusted-project-plugins", "--no-trusted-project-plugins"]
+)
+def test_entrypoint_rejects_old_trust_options(
+    cli_module, entrypoint, monkeypatch, old_option
+):
+    command_name, _ = entrypoint
+    factory = Mock(side_effect=AssertionError("Application must not start"))
+    monkeypatch.setattr(app_code, "AgentCrewApplication", factory)
+    result = CliRunner().invoke(cli_module.cli, [command_name, old_option])
+    assert result.exit_code == 2, result.output
+    assert "No such option" in result.output
+    assert old_option in result.output
+    factory.assert_not_called()

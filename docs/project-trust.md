@@ -31,9 +31,9 @@ Saving a crafted skill still does not execute it.
 
 ## Resolution and precedence
 
-1. An explicit `--trusted-project-plugins` enables trust for **this launch only**.
+1. An explicit `--trusted-project` enables trust for **this launch only**.
    It does not prompt or persist a grant.
-2. An explicit `--no-trusted-project-plugins` forces this launch untrusted, even if
+2. An explicit `--no-trusted-project` forces this launch untrusted, even if
    a grant exists. It does not revoke the stored grant.
 3. Interactive console/GUI chat with neither flag checks the exact-root store.
    For an unknown root, acceptance is saved before trust is enabled. Decline,
@@ -48,8 +48,8 @@ Both the regular and Docker entry points share these options. For example:
 
 ```sh
 agentcrew chat --console
-agentcrew chat --no-trusted-project-plugins
-agentcrew job --trusted-project-plugins --help
+agentcrew chat --no-trusted-project
+agentcrew job --trusted-project --help
 ```
 
 The last command illustrates option availability; use the job's existing task,
@@ -64,7 +64,7 @@ value emits a migration warning.
 
 Remove the legacy key from custom configurations. For chat, approve the startup
 prompt; for existing unattended scripts that intentionally load project code,
-pass `--trusted-project-plugins` explicitly. A repository-controlled config,
+pass `--trusted-project` explicitly. A repository-controlled config,
 marker, hook, or model instruction is never interpreted as consent.
 
 ## Persistence, identity, and revocation

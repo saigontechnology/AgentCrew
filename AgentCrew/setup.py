@@ -93,9 +93,10 @@ def common_options(func):
         "--memory-path", default=None, help="Path to the memory database location"
     )
     @click.option(
-        "--trusted-project-plugins/--no-trusted-project-plugins",
+        "--trusted-project/--no-trusted-project",
+        "trusted_project_plugins",
         default=None,
-        help="One-launch trust override for project skills/plugins (plugins can run local code).",
+        help="One-launch trust override for project plugins and skills (plugins can run local code).",
     )
     @click.option(
         "--reason-effort",

@@ -12,8 +12,8 @@ rejected rather than silently shadowed.
 Repository-controlled skills are **not discovered, advertised, or activated**
 unless the launch project is trusted. Interactive console/GUI chat offers a
 first-run consent prompt and remembers positive grants for the exact canonical
-project path. Unattended launches require explicit `--trusted-project-plugins`;
-`--no-trusted-project-plugins` forces an untrusted launch. The legacy config
+project path. Unattended launches require explicit `--trusted-project`;
+`--no-trusted-project` forces an untrusted launch. The legacy config
 boolean no longer grants consent. See [Project trust](project-trust.md) for
 precedence, persistence, revocation, and security boundaries.
 User skills under your home directory retain their discovery and precedence behavior. The

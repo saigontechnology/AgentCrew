@@ -318,7 +318,7 @@ The complete template shows all active settings and their defaults:
   shrunk.
 - `trusted_project_plugins`: legacy key, no longer an authorization source.
   Interactive chat uses exact-project startup consent; unattended launches require
-  explicit `--trusted-project-plugins`. An explicit `--no-trusted-project-plugins`
+  explicit `--trusted-project`. An explicit `--no-trusted-project`
   disables trust for one launch. See [Project trust](docs/project-trust.md) for
   migration and revocation.
 - `agent_mode`: `"transfer"` by default. Allowed values are `"transfer"`,

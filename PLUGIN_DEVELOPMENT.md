@@ -15,7 +15,7 @@ subdirectory containing `main.py` (project plugin).
 > **Security**: Project plugins can run local code as your user. Interactive
 > chat asks before trusting an unknown exact project directory and saves positive
 > consent outside the checkout. Unattended launches require explicit
-> `--trusted-project-plugins`; config cannot grant trust. Symlinked plugin entries
+> `--trusted-project`; config cannot grant trust. Symlinked plugin entries
 > are rejected and resolved source paths are logged before import. See
 > [Project trust](docs/project-trust.md) for boundaries and revocation.
 
@@ -174,8 +174,8 @@ Interactive console/GUI chat offers **Trust this project** and default-safe
 Only positive consent is saved for the exact canonical launch path, and it can be
 revoked with `agentcrew revoke-project-trust /exact/project/path`.
 
-For a one-launch operator override, use `--trusted-project-plugins`; use
-`--no-trusted-project-plugins` to force an untrusted launch. Unattended jobs,
+For a one-launch operator override, use `--trusted-project`; use
+`--no-trusted-project` to force an untrusted launch. Unattended jobs,
 ACP, and A2A/server launches never prompt or inherit interactive grants.
 `global_settings.trusted_project_plugins` is deprecated and ignored for consent,
 even when set in a user-selected configuration. See
