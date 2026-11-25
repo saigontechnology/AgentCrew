@@ -26,7 +26,13 @@ def canonical_project_root(path: str | Path | None = None, *, exists=True) -> Pa
 
 
 def _project_key(root: Path) -> str:
-    return os.path.normcase(str(root))
+    """Key a captured canonical root without folding case or resolving it again."""
+    return str(root)
+
+
+def project_root_is_unchanged(root: Path) -> bool:
+    """Compare canonical spellings exactly, not Windows Path equality."""
+    return str(canonical_project_root(root)) == str(root)
 
 
 def _display_root(root: Path) -> str:
@@ -110,7 +116,7 @@ class ProjectTrustStore:
             self._check_owner(info, path, file=True)
 
     def _outside_project(self, root: Path):
-        if canonical_project_root(root) != root:
+        if not project_root_is_unchanged(root):
             raise ProjectTrustError(
                 "The launch project path changed; restart before trusting it"
             )
@@ -198,11 +204,22 @@ class ProjectTrustStore:
         try:
             record = json.loads(raw)
             if (
+                isinstance(record, dict)
+                and type(record.get("version")) is int
+                and record["version"] == 1
+            ):
+                raise ProjectTrustError(
+                    f"Version 1 project trust records are invalidated: {self.path}. "
+                    "Their original path spelling cannot be recovered safely. "
+                    "Stop AgentCrew, quarantine or remove this file locally, then "
+                    "restart and approve each exact project again. No trust was granted."
+                )
+            if (
                 len(raw) > 65536
                 or not isinstance(record, dict)
                 or set(record) != {"version", "projects"}
                 or type(record["version"]) is not int
-                or record["version"] != 1
+                or record["version"] != 2
                 or not isinstance(record["projects"], list)
                 or len(record["projects"]) > 1024
             ):
@@ -219,6 +236,8 @@ class ProjectTrustStore:
             ) or len(set(projects)) != len(projects):
                 raise ValueError("Invalid project paths")
             return set(projects)
+        except ProjectTrustError:
+            raise
         except (ValueError, TypeError, UnicodeError) as exc:
             raise ProjectTrustError(
                 f"Corrupt project trust store: {self.path}. "
@@ -227,7 +246,7 @@ class ProjectTrustStore:
 
     def _write(self, projects: set[str]):
         raw = json.dumps(
-            {"version": 1, "projects": sorted(projects)}, indent=2
+            {"version": 2, "projects": sorted(projects)}, indent=2
         ).encode()
         if len(raw) > 65536 or len(projects) > 1024:
             raise ProjectTrustError("Project trust store is full; revoke unused grants")
@@ -279,6 +298,7 @@ class ProjectTrustStore:
             self._write(projects)
 
     def revoke(self, root: Path) -> bool:
+        root = canonical_project_root(root, exists=False)
         if not self.directory.exists():
             return False
         with self._locked():

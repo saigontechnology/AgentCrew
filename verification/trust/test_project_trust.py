@@ -136,9 +136,9 @@ def test_closed_or_unavailable_prompt_fails_closed(roots, store, error):
         "not json",
         "[]",
         json.dumps({"version": True, "projects": []}),
-        json.dumps({"version": 2, "projects": []}),
-        json.dumps({"version": 1, "projects": ["relative/path"]}),
-        json.dumps({"version": 1, "projects": [], "trust_all": True}),
+        json.dumps({"version": 3, "projects": []}),
+        json.dumps({"version": 2, "projects": ["relative/path"]}),
+        json.dumps({"version": 2, "projects": [], "trust_all": True}),
         " " * 65537,
     ],
 )

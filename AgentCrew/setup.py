@@ -153,12 +153,14 @@ class ApplicationSetup:
 
     def resolve_interactive_project_trust(self, *, interactive, prompt, diagnostic):
         """Resolve launch consent before project-sensitive services or plugins start."""
+        from AgentCrew.modules.config.project_trust import project_root_is_unchanged
+
         if self.services is not None or self._plugins_initialized:
             raise RuntimeError("Project trust must be resolved before startup services")
         trusted = self._project_trust_resolver.resolve(
             interactive=interactive, prompt=prompt, diagnostic=diagnostic
         )
-        if self._project_root.resolve(strict=True) != self._project_root:
+        if not project_root_is_unchanged(self._project_root):
             raise RuntimeError(
                 "Launch project path changed; restart from the intended directory"
             )

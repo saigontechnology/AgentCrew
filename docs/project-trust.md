@@ -86,13 +86,30 @@ native ACL inheritance; custom profile ACLs are not audited here. File and
 supported directory fsync are used, without claiming universal power-loss or
 network-filesystem durability. Lock waits are bounded.
 
-Records match canonical paths exactly. Symlink aliases to the same directory
-share a grant; siblings, children, parents, and other clones do not inherit one.
+Version 2 records match **case-preserving canonical path strings exactly**. No
+case folding is used, including on Windows volumes with case-sensitive
+directories. Aliases share a grant only when canonical resolution produces the
+same spelling; otherwise it is safer to ask again. Siblings, children, parents,
+and other clones do not inherit a grant.
 The key is **path-based**, not a pinned Git commit or repository identity. If you
 replace a repository at an already granted path, its grant still applies: revoke
 before repurposing a path. Moving a project to a new canonical path requires a
 new decision. Startup aborts if the captured directory is redirected to another
 canonical path while consent is pending.
+
+### Pre-release version 1 records
+
+Version 1 folded path spelling on Windows, so the original approved checkout
+cannot be recovered reliably from those records. All version-1 stores are
+rejected, including otherwise valid-looking entries; there is no automatic
+migration or reuse of grants. Startup remains untrusted and reports the store
+path. Per-root revocation cannot safely infer the lost spelling either.
+
+Stop AgentCrew processes, move `~/.AgentCrew/project-trust.json` to a private
+backup such as `project-trust.v1-backup.json`, then restart interactive chat and
+approve each exact displayed path again. The new file uses version 2. Keep the
+backup private. An explicit launch override remains available without reading or
+rewriting the legacy file; it still does not persist approval.
 
 Revoke locally without starting chat or loading plugins:
 
