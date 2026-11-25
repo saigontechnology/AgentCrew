@@ -37,13 +37,13 @@ def check_ruff(root: Path, files: list[Path]) -> bool:
     targets = [path.relative_to(root).as_posix() for path in files]
     prefix = ["uvx", "ruff", "check", "--no-cache"]
     statistics = run_tool([*prefix, "--statistics", "--", *targets], root)
-    diagnostics = run_tool(
-        [*prefix, "--output-format", "json", "--", *targets], root
-    )
+    diagnostics = run_tool([*prefix, "--output-format", "json", "--", *targets], root)
     if statistics is None or diagnostics is None:
         return False
     if statistics.returncode not in (0, 1) or diagnostics.returncode not in (0, 1):
-        print("FAIL Ruff invocation; inspect tool availability/configuration separately")
+        print(
+            "FAIL Ruff invocation; inspect tool availability/configuration separately"
+        )
         return False
     print("Ruff statistics:")
     print(statistics.stdout.strip() or "(no statistics emitted)")
@@ -111,7 +111,13 @@ def main() -> int:
         print("SKIP Ruff (request --ruff)")
     for module in args.modules:
         result = run_tool(
-            [sys.executable, "-B", "-c", "import importlib, sys; importlib.import_module(sys.argv[1])", module],
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                "import importlib, sys; importlib.import_module(sys.argv[1])",
+                module,
+            ],
             root,
         )
         success = result is not None and result.returncode == 0

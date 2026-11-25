@@ -13,7 +13,7 @@ from pathlib import Path
 
 MARKER = "AGENTCREW_IMPORT_PROFILE_V1 "
 IMPORT_ROW = re.compile(r"^import time:\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\S+)\s*$")
-CHILD = '''import importlib
+CHILD = """import importlib
 import json
 import sys
 import time
@@ -31,12 +31,14 @@ print("AGENTCREW_IMPORT_PROFILE_V1 " + json.dumps({
     "first_import_ms": first_ns / 1_000_000,
     "cached_import_ms": cached_ns / 1_000_000,
 }), flush=True)
-'''
+"""
 
 
 def parse_measurement(output: str) -> dict:
     """Accept timing fields without forwarding unrelated module output."""
-    lines = [line[len(MARKER):] for line in output.splitlines() if line.startswith(MARKER)]
+    lines = [
+        line[len(MARKER) :] for line in output.splitlines() if line.startswith(MARKER)
+    ]
     if len(lines) != 1:
         raise ValueError("Expected one measurement")
     value = json.loads(lines[0])
@@ -61,11 +63,13 @@ def parse_importtime(output: str, top: int) -> list[dict]:
     for line in output.splitlines():
         match = IMPORT_ROW.fullmatch(line)
         if match:
-            rows.append({
-                "module": match[3],
-                "self_us": int(match[1]),
-                "cumulative_us": int(match[2]),
-            })
+            rows.append(
+                {
+                    "module": match[3],
+                    "self_us": int(match[1]),
+                    "cumulative_us": int(match[2]),
+                }
+            )
     return sorted(rows, key=lambda row: row["self_us"], reverse=True)[:top]
 
 
@@ -154,8 +158,17 @@ def main() -> int:
                 measure(module, root, args.timeout, args.importtime, args.top)
                 for _ in range(args.repeat)
             ]
-        except (OSError, RuntimeError, ValueError, TypeError, subprocess.TimeoutExpired):
-            print(f"FAIL import profiling: {module}; child output suppressed", file=sys.stderr)
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            subprocess.TimeoutExpired,
+        ):
+            print(
+                f"FAIL import profiling: {module}; child output suppressed",
+                file=sys.stderr,
+            )
             return 1
         report["modules"][module] = {
             "samples": samples,

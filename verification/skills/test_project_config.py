@@ -54,6 +54,44 @@ def configured_service(layout, *, trusted=True):
     )
 
 
+@pytest.mark.parametrize("binary_available", [False, True])
+def test_existing_config_opens_with_portable_flags(
+    layout, monkeypatch, binary_available
+):
+    project, _ = layout
+    path = write_config(project, {"skills": {"project_roots": ["services/api"]}})
+    real_open = os.open
+    native_binary = getattr(os, "O_BINARY", 0)
+    original_flags = {
+        name: getattr(os, name, None) for name in ("O_NONBLOCK", "O_BINARY")
+    }
+    simulated_binary = 1 << 29
+    expected = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    if binary_available:
+        expected |= simulated_binary
+    calls = []
+
+    def open_config(target, flags):
+        assert target == path
+        assert flags == expected
+        calls.append(flags)
+        return real_open(target, (flags & ~simulated_binary) | native_binary)
+
+    with monkeypatch.context() as platform:
+        platform.delattr(os, "O_NONBLOCK", raising=False)
+        if binary_available:
+            platform.setattr(os, "O_BINARY", simulated_binary, raising=False)
+        else:
+            platform.delattr(os, "O_BINARY", raising=False)
+        platform.setattr(os, "open", open_config)
+        assert load_project_skill_roots(project, trusted_project=True) == [
+            project / "services/api"
+        ]
+    assert calls == [expected]
+    assert os.open is real_open
+    assert {name: getattr(os, name, None) for name in original_flags} == original_flags
+
+
 @pytest.mark.parametrize("config", [None, {}, {"skills": {}}])
 def test_missing_settings_preserve_current_root(layout, config):
     project, _ = layout

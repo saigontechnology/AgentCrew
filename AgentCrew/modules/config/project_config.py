@@ -92,7 +92,10 @@ def load_project_skill_roots(
             raise ValueError("Project config exceeds 64 KiB")
         fd = os.open(
             path,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_BINARY", 0),
         )
         with os.fdopen(fd, "rb") as source:
             opened = os.fstat(source.fileno())
