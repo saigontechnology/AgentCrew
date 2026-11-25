@@ -648,13 +648,14 @@ def adaptive_instruction_prompt():
     - Positive feedback on specific approaches
     - Repeated requests indicating preferred workflows
     - Successful problem-solving patterns
+    - A specific rule or workflow in project need to follow
     - Specific "when.[condition].do.[actions]." instructions from the user
-    - Use `project` scope for behaviors relevant only to current project
   </Learn_Behavior_Triggers>
   <Behavior_Format>
     Use the `learn_behavior` tool with:
     - condition: The triggering condition (e.g., "user asks about debugging")
     - action_steps: Array of action steps to execute when the condition is met
+    - Use `project` scope for behaviors relevant only to current project
     
     Examples:
     - condition: "user asks about code"
