@@ -20,7 +20,7 @@ def configured_setup(monkeypatch, tmp_path):
     "config_value,override,expected",
     [
         (False, None, False),
-        (True, None, True),
+        (True, None, False),
         (True, False, False),
         (False, True, True),
     ],
@@ -37,15 +37,19 @@ def test_trust_flag_is_shared(config_value, override, expected):
             config_manager=Mock(), trusted_project_plugins=override
         )
     assert instance._trusted_project is expected
-    plugins.assert_called_once_with(trusted_project_plugins=expected)
+    plugins.assert_called_once_with(
+        project_plugins_dir=str(instance._project_root / ".agentcrew/plugins"),
+        trusted_project_plugins=expected,
+    )
 
 
 @pytest.mark.parametrize("trusted", [False, True])
 def test_service_setup_receives_the_resolved_trust(
-    configured_setup, monkeypatch, trusted
+    configured_setup, monkeypatch, tmp_path, trusted
 ):
     instance, _, _, settings = configured_setup
     instance._trusted_project = trusted
+    instance._project_root = tmp_path
     settings["global_settings"]["tool_result_summary_enabled"] = False
     factory = Mock()
     monkeypatch.setattr(
@@ -55,5 +59,5 @@ def test_service_setup_receives_the_resolved_trust(
         RuntimeModelInput("openai_codex", True, "gpt-6.1-sol", None),
         need_memory=False,
     )
-    factory.assert_called_once_with(trusted_project=trusted)
+    factory.assert_called_once_with(project_root=tmp_path, trusted_project=trusted)
     assert services["skills"] is factory.return_value

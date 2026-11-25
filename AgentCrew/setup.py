@@ -93,10 +93,9 @@ def common_options(func):
         "--memory-path", default=None, help="Path to the memory database location"
     )
     @click.option(
-        "--trusted-project-plugins",
-        is_flag=True,
-        default=False,
-        help="Enable project plugins from .agentcrew/plugins/ (disabled by default)",
+        "--trusted-project-plugins/--no-trusted-project-plugins",
+        default=None,
+        help="One-launch trust override for project skills/plugins (plugins can run local code).",
     )
     @click.option(
         "--reason-effort",
@@ -124,23 +123,54 @@ class ApplicationSetup:
         self.services: dict[str, Any] | None = None
         self.agent_manager: AgentManager | None = None
 
-        # Read config early (before setup_services) so PluginManager can
-        # respect the user's trust decision for project plugins.
-        # CLI --trusted-project-plugins flag overrides config.json value.
-        if trusted_project_plugins is None:
-            _global_config = GlobalConfig().read()
-            _trusted = _global_config.get("global_settings", {}).get(
-                "trusted_project_plugins", False
-            )
-        else:
-            _trusted = trusted_project_plugins
+        from AgentCrew.modules.config.project_trust import (
+            ProjectTrustResolver,
+            canonical_project_root,
+        )
 
-        # Initialize events infrastructure
-        self.plugin_manager = PluginManager(trusted_project_plugins=_trusted)
-        self._trusted_project = bool(_trusted)
+        self._project_root = canonical_project_root()
+        self._project_trust_resolver = ProjectTrustResolver(
+            self._project_root, trusted_project_plugins
+        )
+        self._trusted_project = trusted_project_plugins is True
+        if (
+            GlobalConfig()
+            .read()
+            .get("global_settings", {})
+            .get("trusted_project_plugins")
+        ):
+            logger.warning(
+                "The legacy trusted_project_plugins config setting is ignored. "
+                "Use interactive project consent or an explicit one-launch trust flag."
+            )
+        self.plugin_manager = PluginManager(
+            project_plugins_dir=str(self._project_root / ".agentcrew" / "plugins"),
+            trusted_project_plugins=self._trusted_project,
+        )
         self._plugins_initialized = False
         self._standalone_llm_services: list[Any] = []
         self._run_async = None
+
+    def resolve_interactive_project_trust(self, *, interactive, prompt, diagnostic):
+        """Resolve launch consent before project-sensitive services or plugins start."""
+        if self.services is not None or self._plugins_initialized:
+            raise RuntimeError("Project trust must be resolved before startup services")
+        trusted = self._project_trust_resolver.resolve(
+            interactive=interactive, prompt=prompt, diagnostic=diagnostic
+        )
+        if self._project_root.resolve(strict=True) != self._project_root:
+            raise RuntimeError(
+                "Launch project path changed; restart from the intended directory"
+            )
+        if trusted != self._trusted_project:
+            from AgentCrew.modules.events import PluginManager
+
+            self._trusted_project = trusted
+            self.plugin_manager = PluginManager(
+                project_plugins_dir=str(self._project_root / ".agentcrew" / "plugins"),
+                trusted_project_plugins=trusted,
+            )
+        return trusted
 
     async def initialize_plugins(self) -> None:
         """Discover and load all plugins transactionally."""
@@ -630,7 +660,9 @@ class ApplicationSetup:
         try:
             from AgentCrew.modules.skills import SkillsService
 
-            skills_service = SkillsService(trusted_project=self._trusted_project)
+            skills_service = SkillsService(
+                project_root=self._project_root, trusted_project=self._trusted_project
+            )
         except Exception as e:
             click.echo(f"\u26a0\ufe0f Skills service not available: {e!s}")
             skills_service = None

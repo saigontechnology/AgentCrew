@@ -7,6 +7,7 @@ import threading
 import click
 import requests
 
+from AgentCrew.modules.config.project_trust import revoke_project_trust
 from AgentCrew.modules.unraisable_hook import custom_unraisable_hook
 from AgentCrew.setup import PROVIDER_LIST, common_options
 
@@ -699,6 +700,9 @@ def create_agent_command(
     success = onboarding.create_agent(name=name, description=description)
     if not success:
         raise SystemExit(1)
+
+
+cli.add_command(revoke_project_trust)
 
 
 if __name__ == "__main__":

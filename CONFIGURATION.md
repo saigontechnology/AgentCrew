@@ -72,7 +72,6 @@ the full file shape.
     "auto_context_shrink": true,
     "tool_result_summary_enabled": true,
     "shrink_excluded": [],
-    "trusted_project_plugins": false,
     "agent_mode": "transfer"
   },
   "last_used": {
@@ -317,8 +316,11 @@ The complete template shows all active settings and their defaults:
   summaries used by context shrinking.
 - `shrink_excluded`: empty by default; names tools whose results must not be
   shrunk.
-- `trusted_project_plugins`: `false` by default; enables discovered project
-  plugins only when explicitly trusted.
+- `trusted_project_plugins`: legacy key, no longer an authorization source.
+  Interactive chat uses exact-project startup consent; unattended launches require
+  explicit `--trusted-project-plugins`. An explicit `--no-trusted-project-plugins`
+  disables trust for one launch. See [Project trust](docs/project-trust.md) for
+  migration and revocation.
 - `agent_mode`: `"transfer"` by default. Allowed values are `"transfer"`,
   `"delegate"`, and `"none"`.
 
@@ -334,10 +336,12 @@ tool-result placeholder instead.
 ### Plugins
 
 AgentCrew discovers project plugins in `.agentcrew/plugins/` and global plugins
-in `~/.AgentCrew/plugins/`. Project plugins are not activated unless
-`global_settings.trusted_project_plugins` is true. See
-[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for lifecycle and security
-details.
+in `~/.AgentCrew/plugins/`. Project skills and plugins require project trust:
+interactive console/GUI chat offers a default-safe startup prompt and saves
+positive grants outside the checkout. The legacy config key cannot grant consent.
+See [Project trust](docs/project-trust.md) for startup, explicit overrides,
+headless behavior, and revocation, and [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)
+for lifecycle details.
 
 ### Auto-Approval Tools and Last-Used State
 

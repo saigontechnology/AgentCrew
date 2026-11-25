@@ -362,6 +362,8 @@ url = "http://server-b:41241"
   for common scenarios with decision trees and best practices.
 - **[CONFIGURATION.md](CONFIGURATION.md)** — Deep dive into providers, agents,
   MCP servers, themes, and plugins.
+- **[Project Trust](docs/project-trust.md)** — First-run consent, saved exact-path
+  grants, explicit launch overrides, and local revocation.
 - **[Project Skills](docs/skills.md)** — Trust, three-skill FIFO activation, and
   reusable Python/Bash/PowerShell/JavaScript project scripts, with preferred Linux
   atomic publication and a portable recoverable create/update backend.

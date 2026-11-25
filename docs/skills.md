@@ -10,12 +10,15 @@ rejected rather than silently shadowed.
 ## Trust and compatibility
 
 Repository-controlled skills are **not discovered, advertised, or activated**
-unless project plugins are trusted. The existing `--trusted-project-plugins`
-option (or `global_settings.trusted_project_plugins` in config) now gates both
-project plugins and project skills. Only enable this for repositories you trust.
+unless the launch project is trusted. Interactive console/GUI chat offers a
+first-run consent prompt and remembers positive grants for the exact canonical
+project path. Unattended launches require explicit `--trusted-project-plugins`;
+`--no-trusted-project-plugins` forces an untrusted launch. The legacy config
+boolean no longer grants consent. See [Project trust](project-trust.md) for
+precedence, persistence, revocation, and security boundaries.
 User skills under your home directory retain their discovery and precedence behavior. The
-project root is captured when the skills service is created (normally the
-application's startup working directory).
+project root is captured at application startup and shared with the plugin
+manager, rather than following later working-directory changes.
 
 This is an intentional compatibility change: formerly project skills were
 loaded without that trust decision. Discovery retains legacy missing-name fallback

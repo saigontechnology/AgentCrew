@@ -12,11 +12,12 @@ discovered by scanning two filesystem directories:
 Each entry in these directories may be a `.py` file (single-file plugin) or a
 subdirectory containing `main.py` (project plugin).
 
-> **Security**: Project plugins are **not activated automatically** unless
-> `--trusted-project-plugins` argument is passed or config via `config.json`
-> file. This prevents automatic code execution when AgentCrew is run from an
-> untrusted project directory. Symlinked plugin entries are rejected. All
-> resolved source paths are logged before import.
+> **Security**: Project plugins can run local code as your user. Interactive
+> chat asks before trusting an unknown exact project directory and saves positive
+> consent outside the checkout. Unattended launches require explicit
+> `--trusted-project-plugins`; config cannot grant trust. Symlinked plugin entries
+> are rejected and resolved source paths are logged before import. See
+> [Project trust](docs/project-trust.md) for boundaries and revocation.
 
 > **When to build a plugin:**
 >
@@ -168,17 +169,17 @@ Project plugins execute arbitrary Python code. To prevent automatic code
 execution from untrusted directories, project plugins are **not activated** by
 default when stored in `.agentcrew/plugins/`.
 
-You can enable project plugins by passing `--trusted_project_plugins` via run
-command or adding the following to `~/.AgentCrew/config.json` (or
-`./config.json`):
+Interactive console/GUI chat offers **Trust this project** and default-safe
+**Continue without trust** before project skills or plugins are initialized.
+Only positive consent is saved for the exact canonical launch path, and it can be
+revoked with `agentcrew revoke-project-trust /exact/project/path`.
 
-```json
-{
-  "global_settings": {
-    "trusted_project_plugins": true
-  }
-}
-```
+For a one-launch operator override, use `--trusted-project-plugins`; use
+`--no-trusted-project-plugins` to force an untrusted launch. Unattended jobs,
+ACP, and A2A/server launches never prompt or inherit interactive grants.
+`global_settings.trusted_project_plugins` is deprecated and ignored for consent,
+even when set in a user-selected configuration. See
+[Project trust](docs/project-trust.md) for migration and security limitations.
 
 When a project plugin is skipped, AgentCrew logs a message explaining how to
 enable them. Global plugins (in `~/.AgentCrew/plugins/`) are always trusted and

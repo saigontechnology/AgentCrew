@@ -3,6 +3,7 @@ import sys
 
 import click
 
+from AgentCrew.modules.config.project_trust import revoke_project_trust
 from AgentCrew.modules.unraisable_hook import custom_unraisable_hook
 from AgentCrew.setup import common_options
 
@@ -291,6 +292,9 @@ def copilot_auth():
     from AgentCrew.setup import ApplicationSetup
 
     ApplicationSetup.login()
+
+
+cli.add_command(revoke_project_trust)
 
 
 if __name__ == "__main__":

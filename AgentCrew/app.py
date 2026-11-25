@@ -17,6 +17,24 @@ from AgentCrew.modules.runtime import InteractiveAsyncRuntime
 from AgentCrew.setup import ApplicationSetup
 
 
+def _gui_application():
+    """Create the native application once, before trust or other startup windows."""
+    from PySide6.QtCore import QCoreApplication, Qt
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is not None:
+        return app
+    if sys.platform.startswith("linux") and not any(
+        os.environ.get(key) for key in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM")
+    ):
+        raise RuntimeError(
+            "GUI display unavailable; use --console. Project trust was not granted."
+        )
+    QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_UseOpenGLES)
+    return QApplication(sys.argv)
+
+
 class AgentCrewApplication:
     def __init__(self, trusted_project_plugins: bool | None = None):
         self.config_manager = ConfigManagement()
@@ -104,6 +122,16 @@ class AgentCrewApplication:
         self.interactive_runtime = InteractiveAsyncRuntime()
         interactive_runtime = self.interactive_runtime
         try:
+            from AgentCrew.modules.config.project_trust import (
+                confirm_project_trust_console,
+                console_can_prompt,
+            )
+
+            self.setup.resolve_interactive_project_trust(
+                interactive=console_can_prompt(),
+                prompt=confirm_project_trust_console,
+                diagnostic=lambda message: click.echo(message, err=True),
+            )
             interactive_runtime.start()
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
@@ -176,19 +204,25 @@ class AgentCrewApplication:
     ) -> None:
         import asyncio
 
-        from PySide6.QtCore import QCoreApplication, Qt
-        from PySide6.QtWidgets import QApplication
-
         from AgentCrew.modules.chat import MessageHandler
+        from AgentCrew.modules.config.project_trust import (
+            confirm_project_trust_qt,
+            report_project_trust_qt,
+        )
         from AgentCrew.modules.gui import ChatWindow
         from AgentCrew.modules.mcpclient import MCPSessionManager
 
         try:
+            app = _gui_application()
+            self.setup.resolve_interactive_project_trust(
+                interactive=True,
+                prompt=confirm_project_trust_qt,
+                diagnostic=report_project_trust_qt,
+            )
             runtime_model = self.setup.resolve_runtime_model(provider, model_id)
             if runtime_model.provider is None:
                 from AgentCrew.modules.gui.widgets.config_window import ConfigWindow
 
-                app = QApplication(sys.argv)
                 config_window = ConfigWindow()
                 config_window.tab_widget.setCurrentIndex(3)
                 config_window.show()
@@ -242,8 +276,6 @@ class AgentCrewApplication:
                         f"Failed to pre-initialize memory service on main thread: {e}"
                     )
 
-            QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_UseOpenGLES)
-            app = QApplication(sys.argv)
             chat_window = ChatWindow(message_handler)
             chat_window.show()
             sys.exit(app.exec())

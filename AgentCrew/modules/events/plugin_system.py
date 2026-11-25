@@ -506,7 +506,7 @@ class PluginManager:
             logger.info(
                 "Skipping project plugin %r (%s) — "
                 "trusted_project_plugins is not enabled. "
-                "Set trusted_project_plugins=True to activate project plugins.",
+                "Use interactive project trust or --trusted-project-plugins for this launch.",
                 name,
                 meta.resolved_path,
             )
