@@ -211,6 +211,7 @@ class CursorAgent(BaseAgent):
         self._cwd_claimed = False
         self._sdk_agent: Any = None
         self._sdk_agent_id: str | None = None
+        self._sdk_resume_required = False
         self._active_run: Any = None
         self._sdk_lock = threading.Lock()
         self._pending_transfer: dict[str, Any] | None = None
@@ -337,6 +338,7 @@ class CursorAgent(BaseAgent):
             self._active_run = None
             self._sdk_agent = None
             self._sdk_agent_id = None
+            self._sdk_resume_required = False
             claimed = self._cwd_claimed
             self._cwd_claimed = False
         self._cancel_run(run)
@@ -381,7 +383,7 @@ class CursorAgent(BaseAgent):
             yield (error, error, None)
             return
 
-        holder: dict[str, Any] = {"run": None, "thread": None}
+        holder: dict[str, Any] = {"agent": None, "run": None, "thread": None}
         response = ""
         try:
             if not self._announced_cwd:
@@ -407,16 +409,32 @@ class CursorAgent(BaseAgent):
             error = f"Cursor agent error: {exc}"
             authentication_error = _is_authentication_error(exc)
             if authentication_error:
-                error += (
-                    "\nCheck CURSOR_API_KEY and Cursor account access in the Cursor "
-                    "dashboard. If you update the key, restart AgentCrew to load it. "
-                    "The task was not automatically retried; inspect any partial "
-                    "changes before submitting it again."
+                sdk = _load_cursor_sdk()
+                permission_denied = isinstance(
+                    exc, getattr(sdk, "PermissionDeniedError", ())
                 )
-            if authentication_error or getattr(holder.get("run"), "status", None) in {
-                "error",
-                "expired",
-            }:
+                with self._sdk_lock:
+                    if (
+                        not permission_denied
+                        and self._sdk_agent is holder.get("agent")
+                        and self._sdk_agent_id
+                    ):
+                        self._sdk_resume_required = True
+                    reconnect = self._sdk_resume_required
+                if reconnect:
+                    error += (
+                        "\nOn your next submitted message, AgentCrew will reconnect "
+                        "the same Cursor transcript before sending that new message. "
+                        "The failed task was not automatically retried; inspect any "
+                        "partial changes before deciding what to submit."
+                    )
+                else:
+                    error += "\nCheck CURSOR_API_KEY and Cursor account access."
+            if (
+                authentication_error
+                or self._sdk_resume_required
+                or getattr(holder.get("run"), "status", None) in {"error", "expired"}
+            ):
                 raise CursorAgentError(error) from exc
             combined = f"{response}\n{error}".strip() if response else error
             yield (combined, error, None)
@@ -427,7 +445,9 @@ class CursorAgent(BaseAgent):
             if thread is not None:
                 await asyncio.to_thread(thread.join, 30)
             with self._sdk_lock:
-                if self._active_run is holder.get("run"):
+                if self._active_run is holder.get("run") and (
+                    thread is None or not thread.is_alive()
+                ):
                     self._active_run = None
 
     def _task_text(self, user_text: str) -> str:
@@ -488,6 +508,8 @@ class CursorAgent(BaseAgent):
 
     def _ensure_sdk_agent(self) -> Any:
         with self._sdk_lock:
+            if self._sdk_resume_required:
+                return self._resume_sdk_agent()
             if self._sdk_agent is not None:
                 return self._sdk_agent
         blocker = _claim_cwd(self.cwd, self._cwd_owner)
@@ -498,16 +520,7 @@ class CursorAgent(BaseAgent):
         self._cwd_claimed = True
         try:
             sdk = _load_cursor_sdk()
-            agent = sdk.Agent.create(
-                name=self.name,
-                model=self._sdk_model_selection(sdk),
-                api_key=os.environ.get("CURSOR_API_KEY"),
-                local=sdk.LocalAgentOptions(
-                    cwd=self.cwd,
-                    setting_sources=["project", "user"],
-                    custom_tools=self._custom_tools(sdk),
-                ),
-            )
+            agent = sdk.Agent.create(**self._sdk_options(sdk))
         except Exception:
             self._cwd_claimed = False
             _release_cwd(self.cwd, self._cwd_owner)
@@ -516,6 +529,47 @@ class CursorAgent(BaseAgent):
             self._sdk_agent = agent
             self._sdk_agent_id = str(getattr(agent, "agent_id", "") or "")
         return agent
+
+    def _sdk_options(self, sdk: Any) -> dict[str, Any]:
+        """Reapply model, settings, and custom tools on both create and resume."""
+        return {
+            "name": self.name,
+            "model": self._sdk_model_selection(sdk),
+            "api_key": os.environ.get("CURSOR_API_KEY"),
+            "local": sdk.LocalAgentOptions(
+                cwd=self.cwd,
+                setting_sources=["project", "user"],
+                custom_tools=self._custom_tools(sdk),
+            ),
+        }
+
+    def _resume_sdk_agent(self) -> Any:
+        """Renew the local runtime under the SDK lock without starting a run."""
+        try:
+            if self._active_run is not None or not self._sdk_agent_id:
+                raise CursorAgentError("Previous Cursor run cleanup is incomplete.")
+            sdk = _load_cursor_sdk()
+            if self._sdk_agent is not None:
+                self._sdk_agent.close()
+                self._sdk_agent = None
+            agent = sdk.Agent.resume(
+                self._sdk_agent_id, sdk.AgentOptions(**self._sdk_options(sdk))
+            )
+            if str(agent.agent_id) != self._sdk_agent_id:
+                agent.close()
+                raise CursorAgentError("Cursor resumed a different agent ID.")
+            self._sdk_agent = agent
+            self._sdk_resume_required = False
+            return agent
+        except Exception as exc:
+            raise CursorAgentError(
+                "Could not reconnect the saved Cursor session. No new prompt was "
+                "sent and no fresh conversation was created. The saved agent ID "
+                "has been retained. You can submit another message to try reconnecting, "
+                "or explicitly start a new conversation to discard its context. "
+                "If a fresh conversation also fails, check CURSOR_API_KEY and "
+                "account access."
+            ) from exc
 
     def _custom_tools(self, sdk: Any) -> dict[str, Any]:
         names = ", ".join(self._other_agent_names()) or "(none)"
@@ -740,6 +794,7 @@ class CursorAgent(BaseAgent):
         def worker() -> None:
             try:
                 agent = self._ensure_sdk_agent()
+                holder["agent"] = agent
                 run = agent.send(prompt)
                 holder["run"] = run
                 with self._sdk_lock:

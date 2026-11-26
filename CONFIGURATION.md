@@ -402,16 +402,27 @@ and automatic storage of completed chat turns. When behavior persistence is
 available, it also enables behavior learning. Persisted behaviors are included
 in Cursor task context even without memory enabled.
 
-If a Cursor turn ends with an authentication error, AgentCrew reports it as a
-Cursor agent error and marks the stream failed rather than retrying the task as
-an empty response. Check `CURSOR_API_KEY` and the key's account access in the
-[Cursor dashboard](https://cursor.com/dashboard/api); restart AgentCrew after
-updating the key so the SDK agent receives the new credential. IDE/CLI login
-alone does not replace the API key used by this integration. Inspect any partial
-workspace changes before manually resubmitting a failed task. AgentCrew does not
-automatically replay these failed tasks or discard healthy Cursor sessions
-after idle time. An authentication error alone does not establish whether
-credentials expired or an upstream runtime became stale.
+If a Cursor turn ends with an authentication error, AgentCrew marks the stream
+failed and does not replay the task. On the next message you manually submit,
+AgentCrew closes the affected SDK handle and uses `Agent.resume()` with the same
+saved agent ID, model, settings, and custom tools before sending only that new
+message. This renews the agent's local runtime while retaining its saved Cursor
+transcript. Healthy sessions continue to reuse their existing handle; there is
+no idle timer or keepalive.
+
+Inspect partial workspace changes before deciding what to submit next. If close
+or resume fails, no new prompt is sent and no fresh conversation is silently
+created. The saved agent ID is retained for another reconnect attempt. Starting
+a new conversation explicitly discards that context and creates a fresh Cursor
+agent instead. A whole-process restart or API-key change is not required merely
+to request this session recovery.
+
+This recovery targets the observed case where a new conversation restores access
+with the same `CURSOR_API_KEY` after a long idle. It does not establish which
+upstream state expired or guarantee every authentication failure is recoverable.
+If a fresh conversation also fails, check the key and account access in the
+[Cursor dashboard](https://cursor.com/dashboard/api). IDE/CLI login alone does
+not replace the API key used by this integration.
 
 For `model_id = "auto-smart"`, set `optimize_for` to `"cost"`, `"balanced"`,
 or `"intelligence"` to select **Cost**, **Balance**, or **Intelligence**.
