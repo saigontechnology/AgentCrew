@@ -364,6 +364,8 @@ url = "http://server-b:41241"
   MCP servers, themes, and plugins.
 - **[Project Trust](docs/project-trust.md)** — First-run consent, saved exact-path
   grants, explicit launch overrides, and local revocation.
+- **[SQLite ActionTrace](docs/action-trace.md)** — Bounded runtime action evidence,
+  on-demand memory hydration, legacy-backend behavior, and validation results.
 - **[Project Skills](docs/skills.md)** — Trust, three-skill FIFO activation, and
   reusable Python/Bash/PowerShell/JavaScript project scripts, with preferred Linux
   atomic publication and a portable recoverable create/update backend.

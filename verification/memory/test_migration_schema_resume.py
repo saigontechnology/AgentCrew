@@ -27,6 +27,7 @@ from AgentCrew.modules.memory import engine_selection
 from AgentCrew.modules.memory import migrate_chroma_memory_to_sqlite as migration
 from AgentCrew.modules.memory import sqlite_repository as repository_module
 from AgentCrew.modules.memory.sqlite_repository import (
+    SCHEMA_VERSION,
     SQLiteMemoryError,
     SQLiteMemoryRepository,
 )
@@ -108,6 +109,12 @@ def state(path):
 
 
 def partial_destination(tmp_path, monkeypatch, kind, version=2):
+    package_version = migration.importlib.metadata.version
+    monkeypatch.setattr(
+        migration.importlib.metadata,
+        "version",
+        lambda name: "fictional-sdk" if name == "chromadb" else package_version(name),
+    )
     source = tmp_path / "source"
     source.mkdir()
     with closing(sqlite3.connect(source / "chroma.sqlite3")) as connection:
@@ -302,9 +309,11 @@ def test_cross_release_partial_resume_upgrades_only_under_destination_lock(
     assert report["status"] == "verified"
     assert (report["inserted"], report["skipped"], report["verified"]) == (2, 1, 3)
     assert observations[0] == (True, version, version)
-    assert [row for row in observations if not row[0]] == [(False, version, 3)]
+    assert [row for row in observations if not row[0]] == [
+        (False, version, SCHEMA_VERSION)
+    ]
     after = state(case.destination)
-    assert after[0] == 3
+    assert after[0] == SCHEMA_VERSION
     assert after[2]["memopad"] == after[2]["memopad_evidence"] == []
     assert after[2]["memory_record"][0] == case.before[2]["memory_record"][0]
     assert after[2]["migration_ledger"][0] == case.before[2]["migration_ledger"][0]
@@ -431,7 +440,7 @@ def test_legacy_compatibility_does_not_ignore_current_parser_drift(
     identity = json.loads((case.work / "snapshot.json").read_text())["identity"]
     expected = {
         **identity,
-        "schema_version": 3,
+        "schema_version": SCHEMA_VERSION,
         "mapping_tool_sha256": "f" * 64,
         "repository_sha256": "e" * 64,
     }

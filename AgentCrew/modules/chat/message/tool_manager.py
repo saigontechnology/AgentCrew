@@ -244,6 +244,9 @@ class ToolManager:
                 )
                 tool_result = f"Tool: {tool_name} with {tool_id} has been rejected and nothing has been changed. {reason_message}"
                 if tool_name == "transfer":
+                    self.message_handler.agent._memory_coordinator.observe_action_result(
+                        {"tool_use": tool_use, "is_rejected": True}
+                    )
                     error_message = {
                         "role": "user",
                         "agent": self.message_handler.agent.name,

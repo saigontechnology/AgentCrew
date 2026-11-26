@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from AgentCrew.modules.memory.context_persistent import ContextPersistenceService
 
 
+_trace_collector: Any = None
+
+
 _current_inference_scope: ContextVar[str | None] = ContextVar(
     "agentcrew_tool_result_summary_scope", default=None
 )
@@ -624,18 +627,26 @@ def current_inference_scope() -> str | None:
     return _current_inference_scope.get()
 
 
-def bind_inference_scope(scope_id: str) -> tuple[Token, Token] | None:
+def bind_inference_scope(scope_id: str) -> tuple[Token, Token, Any] | None:
     if current_inference_scope() is not None:
         return None
     from AgentCrew.modules.memory.resources import bind_resources
 
-    return _current_inference_scope.set(scope_id), bind_resources()
+    trace_binding = (
+        (_trace_collector, _trace_collector.bind(scope_id))
+        if _trace_collector is not None
+        else None
+    )
+    return _current_inference_scope.set(scope_id), bind_resources(), trace_binding
 
 
-def reset_inference_scope(token: tuple[Token, Token] | None) -> None:
+def reset_inference_scope(token: tuple[Token, Token, Any] | None) -> None:
     if token is not None:
         from AgentCrew.modules.memory.resources import reset_resources
 
-        scope_token, resource_token = token
+        scope_token, resource_token, trace_binding = token
+        if trace_binding is not None:
+            collector, trace_token = trace_binding
+            collector.reset(trace_token)
         reset_resources(resource_token)
         _current_inference_scope.reset(scope_token)

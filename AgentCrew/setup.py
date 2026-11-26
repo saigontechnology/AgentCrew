@@ -122,6 +122,9 @@ class ApplicationSetup:
 
         self.config_manager = config_manager or ConfigManagement()
         self.services: dict[str, Any] | None = None
+        self._memory_service: Any = None
+        self._memory_llm_service: Any = None
+        self._memory_shutdown_task: asyncio.Task | None = None
         self.agent_manager: AgentManager | None = None
 
         from AgentCrew.modules.config.project_trust import (
@@ -206,24 +209,58 @@ class ApplicationSetup:
             await self.shutdown_plugins()
         finally:
             try:
-                await self._close_tool_result_summary_service()
+                await self._close_memory_service()
             finally:
-                if self.agent_manager is not None:
-                    try:
-                        await self.agent_manager.close_all_remote_agents()
-                    finally:
+                try:
+                    await self._close_tool_result_summary_service()
+                finally:
+                    if self.agent_manager is not None:
                         try:
-                            await self.agent_manager.close_all_cursor_agents()
+                            await self.agent_manager.close_all_remote_agents()
                         finally:
                             try:
-                                await self._close_dedicated_llm_services()
+                                await self.agent_manager.close_all_cursor_agents()
                             finally:
-                                await self._close_app_owned_standalone_llms()
-                else:
-                    from AgentCrew.modules.llm.service_manager import ServiceManager
+                                try:
+                                    await self._close_dedicated_llm_services()
+                                finally:
+                                    await self._close_app_owned_standalone_llms()
+                    else:
+                        from AgentCrew.modules.llm.service_manager import ServiceManager
 
-                    await self._close_app_owned_standalone_llms()
-                    await ServiceManager.get_instance().drain_pending_closes()
+                        await self._close_app_owned_standalone_llms()
+                        await ServiceManager.get_instance().drain_pending_closes()
+
+    async def _close_memory_service(self) -> None:
+        """Close owned memory even before publication, off the event-loop thread."""
+        memory_service = getattr(self, "_memory_service", None)
+        memory_llm = getattr(self, "_memory_llm_service", None)
+        if memory_service is not None or memory_llm is not None:
+            self._memory_service = None
+            self._memory_llm_service = None
+            if self.services and self.services.get("memory") is memory_service:
+                self.services["memory"] = None
+
+            async def close() -> None:
+                try:
+                    if memory_service is not None:
+                        await asyncio.to_thread(memory_service.shutdown)
+                finally:
+                    if memory_llm is not None:
+                        from AgentCrew.modules.llm.service_manager import ServiceManager
+
+                        manager = ServiceManager.get_instance()
+                        manager.close_service(memory_llm)
+                        await manager.drain_pending_closes()
+
+            self._memory_shutdown_task = asyncio.create_task(close())
+        task = getattr(self, "_memory_shutdown_task", None)
+        if task is not None:
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
 
     async def _close_tool_result_summary_service(self) -> None:
         if not self.services:
@@ -450,6 +487,13 @@ class ApplicationSetup:
     ) -> dict[str, Any]:
         from AgentCrew.modules.llm.service_manager import ServiceManager
 
+        pending_close = getattr(self, "_memory_shutdown_task", None)
+        if getattr(self, "_memory_service", None) is not None or (
+            pending_close is not None and not pending_close.done()
+        ):
+            raise RuntimeError(
+                "Shut down owned memory before setting up services again"
+            )
         self._run_async = run_async
         own_llms = interactive or application_owned_llms
         if own_llms:
@@ -523,6 +567,7 @@ class ApplicationSetup:
                 llm_service, memory_llm
             )
 
+            self._memory_llm_service = memory_llm_svc
             try:
                 memory_engine = resolve_memory_engine(global_settings)
                 if memory_engine == "sqlite":
@@ -543,9 +588,12 @@ class ApplicationSetup:
                         SQLiteMemoryService,
                     )
 
-                    memory_service = SQLiteMemoryService(
+                    memory_service = self._memory_service = SQLiteMemoryService(
                         db_path=memory_db_path, llm_service=memory_llm_svc
                     )
+                    from AgentCrew.modules.events.hooks import HookRegistry
+
+                    memory_service.enable_action_trace(HookRegistry.get_instance())
                     logger.info("SQLite memory service initialized")
                 else:
                     from AgentCrew.modules.memory.engine_selection import (
@@ -557,11 +605,15 @@ class ApplicationSetup:
                         ChromaMemoryService,
                     )
 
-                    memory_service = ChromaMemoryService(llm_service=memory_llm_svc)
+                    memory_service = self._memory_service = ChromaMemoryService(
+                        llm_service=memory_llm_svc
+                    )
                     logger.info("Chroma memory service initialized")
 
-            except Exception:
-                llm_manager.close_service(memory_llm_svc)
+            except BaseException:
+                if self._memory_service is None:
+                    self._memory_llm_service = None
+                    llm_manager.close_service(memory_llm_svc)
                 raise
 
             context_service = ContextPersistenceService()
