@@ -37,6 +37,8 @@ class LocalAgent(BaseAgent):
     #: Bounded wait for background MCP discovery before the first LLM request.
     MCP_DISCOVERY_WAIT_SECONDS: float = 30.0
 
+    runtime_tool_trace_supported = True
+
     def __init__(
         self,
         name: str,
@@ -443,6 +445,8 @@ class LocalAgent(BaseAgent):
         self, message_type: MessageType, message_data: dict[str, Any]
     ) -> dict[str, Any] | None:
         """Route message formatting through the ToolResult coordinator."""
+        if message_type == MessageType.ToolResult:
+            self._memory_coordinator.observe_action_result(message_data)
         return self._tool_result_coordinator.format_message(message_type, message_data)
 
     def configure_think(self, think_setting):
@@ -474,12 +478,17 @@ class LocalAgent(BaseAgent):
             "tool_name": tool_name,
             "tool_input": copy.deepcopy(tool_input),
         }
-        context_result = await hooks.run_before(
-            HookPoints.TOOL_EXECUTE,
-            **before_payload,
-        )
+        try:
+            context_result = await hooks.run_before(
+                HookPoints.TOOL_EXECUTE,
+                **before_payload,
+            )
+        except asyncio.CancelledError:
+            self._memory_coordinator.observe_action_outcome(before_payload, "canceled")
+            raise
 
         if context_result is None:
+            self._memory_coordinator.observe_action_outcome(before_payload, "rejected")
             raise CancelOperation(
                 f"Tool {tool_name} was cancelled by a tool.execute hook"
             )
@@ -488,11 +497,23 @@ class LocalAgent(BaseAgent):
         resolved_name = context.get("tool_name", tool_name)
         resolved_input = context.get("tool_input", tool_input)
 
-        result = (
-            await self.llm.execute_tool(resolved_name, resolved_input)
-            if self.llm
-            else None
-        )
+        try:
+            result = (
+                await self.llm.execute_tool(resolved_name, resolved_input)
+                if self.llm
+                else None
+            )
+        except (Exception, asyncio.CancelledError) as error:
+            failure_context = {**before_payload, "tool_name": resolved_name}
+            self._memory_coordinator.observe_action_outcome(
+                failure_context,
+                "canceled"
+                if isinstance(error, asyncio.CancelledError)
+                else "rejected"
+                if isinstance(error, CancelOperation)
+                else "failed",
+            )
+            raise
 
         # Run after hooks — can modify the result
         after_context: ToolExecuteContext = {

@@ -5,6 +5,9 @@ from typing import Any
 
 from AgentCrew.modules.events.hooks import CancelOperation
 
+_trace_collector: Any = None
+
+
 SEQUENTIAL_TOOLS = frozenset(
     {
         "transfer",
@@ -40,6 +43,18 @@ async def execute_tools_in_parallel(
     tool_uses: list[dict[str, Any]],
     executor: Callable[[dict], Awaitable[Any]],
 ) -> list[ToolResult]:
+    if _trace_collector is not None:
+        collector = _trace_collector
+        batch = collector.next_batch()
+        executions = [
+            collector.execute_in_batch(
+                lambda tool: _safe_execute(executor, tool), tool, batch, ordinal
+            )
+            for ordinal, tool in enumerate(tool_uses)
+        ]
+        if len(executions) == 1:
+            return [await executions[0]]
+        return list(await asyncio.gather(*executions))
     if len(tool_uses) == 1:
         return [await _safe_execute(executor, tool_uses[0])]
 
@@ -51,6 +66,16 @@ async def execute_tool_tasks_in_parallel(
     tool_uses: list[dict[str, Any]],
     executor: Callable[[dict[str, Any]], Awaitable[ToolResult]],
 ) -> list[ToolResult]:
+    if _trace_collector is not None:
+        collector = _trace_collector
+        batch = collector.next_batch()
+        executions = [
+            collector.execute_in_batch(executor, tool, batch, ordinal)
+            for ordinal, tool in enumerate(tool_uses)
+        ]
+        if len(executions) == 1:
+            return [await executions[0]]
+        return list(await asyncio.gather(*executions))
     if len(tool_uses) == 1:
         return [await executor(tool_uses[0])]
 

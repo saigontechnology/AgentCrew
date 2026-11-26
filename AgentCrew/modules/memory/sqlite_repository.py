@@ -15,6 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from . import provenance
+from .action_trace import (
+    MAX_HYDRATED_EVENTS,
+    MAX_TRACE_EPISODES,
+    MAX_TRACE_EVENTS,
+    MAX_TRACE_SUMMARY,
+    ActionTrace,
+)
 from .memopad import MemopadCandidate, parse_memopad_candidates
 from .project_identity import ProjectIdentity
 from .record_parser import checksum, derive_memory_units, normalize_text
@@ -32,7 +39,29 @@ from .types import (
     RetrievalUnit,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+ACTION_TRACE_SCHEMA = (
+    """CREATE TABLE memory_episode (
+        memory_id TEXT NOT NULL REFERENCES memory_record(id) ON DELETE CASCADE,
+        turn_id TEXT NOT NULL, agent_name TEXT NOT NULL, session_id TEXT,
+        inference_scope TEXT NOT NULL, started_at REAL NOT NULL, completed_at REAL NOT NULL,
+        observed_count INTEGER NOT NULL CHECK(observed_count >= 0),
+        stored_count INTEGER NOT NULL CHECK(stored_count >= 0),
+        incomplete_json TEXT NOT NULL, resources_json TEXT NOT NULL, coverage TEXT NOT NULL,
+        PRIMARY KEY(memory_id,turn_id)
+    )""",
+    """CREATE TABLE memory_action (
+        memory_id TEXT NOT NULL, turn_id TEXT NOT NULL, event_index INTEGER NOT NULL,
+        batch INTEGER NOT NULL, ordinal INTEGER NOT NULL, payload_json TEXT NOT NULL,
+        PRIMARY KEY(memory_id,turn_id,event_index),
+        FOREIGN KEY(memory_id,turn_id) REFERENCES memory_episode(memory_id,turn_id) ON DELETE CASCADE
+    )""",
+    """CREATE TRIGGER trace_source_deleted AFTER UPDATE OF status ON memory_record
+        WHEN new.status='deleted' BEGIN
+        DELETE FROM memory_episode WHERE memory_id=new.id;
+    END""",
+)
+
 MEMOPAD_SCHEMA = (
     """CREATE TABLE memopad (
         id TEXT PRIMARY KEY, agent_name TEXT NOT NULL,
@@ -161,7 +190,7 @@ SCHEMA_V1 = (
         VALUES(new.rowid,new.title,new.important,new.body,new.identifiers);
     END""",
 )
-SCHEMA = (*SCHEMA_V1, *RESOURCE_SCHEMA, *MEMOPAD_SCHEMA)
+SCHEMA = (*SCHEMA_V1, *RESOURCE_SCHEMA, *MEMOPAD_SCHEMA, *ACTION_TRACE_SCHEMA)
 RECORD_COLUMNS = (
     "id",
     "agent_name",
@@ -226,7 +255,7 @@ class SQLiteMemoryRepository:
                     if allow_legacy_schema
                     else SCHEMA_VERSION
                 )
-                if version not in (1, 2, SCHEMA_VERSION):
+                if version not in (1, 2, 3, SCHEMA_VERSION):
                     raise SQLiteMemoryError("Unsupported SQLite memory schema version")
                 self._validate_schema(connection, version=version)
         else:
@@ -271,6 +300,12 @@ class SQLiteMemoryRepository:
                         connection.execute(statement)
                     connection.execute("UPDATE schema_version SET version=3")
                     connection.execute("PRAGMA user_version=3")
+                if connection.execute("PRAGMA user_version").fetchone()[0] == 3:
+                    self._validate_schema(connection, version=3)
+                    for statement in ACTION_TRACE_SCHEMA:
+                        connection.execute(statement)
+                    connection.execute("UPDATE schema_version SET version=4")
+                    connection.execute("PRAGMA user_version=4")
                 self._validate_schema(connection)
             with closing(self._connect(write=True)) as connection:
                 if connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
@@ -411,6 +446,54 @@ class SQLiteMemoryRepository:
                 }
                 if actual != expected:
                     raise SQLiteMemoryError("Incomplete memopad schema")
+        if version >= 4:
+            required.update({"memory_episode", "memory_action", "trace_source_deleted"})
+            for table, expected in (
+                (
+                    "memory_episode",
+                    {
+                        "memory_id",
+                        "turn_id",
+                        "agent_name",
+                        "session_id",
+                        "inference_scope",
+                        "started_at",
+                        "completed_at",
+                        "observed_count",
+                        "stored_count",
+                        "incomplete_json",
+                        "resources_json",
+                        "coverage",
+                    },
+                ),
+                (
+                    "memory_action",
+                    {
+                        "memory_id",
+                        "turn_id",
+                        "event_index",
+                        "batch",
+                        "ordinal",
+                        "payload_json",
+                    },
+                ),
+            ):
+                actual = {
+                    row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+                }
+                if actual != expected:
+                    raise SQLiteMemoryError("Incomplete ActionTrace schema")
+            for table, parent, count in (
+                ("memory_episode", "memory_record", 1),
+                ("memory_action", "memory_episode", 2),
+            ):
+                links = connection.execute(
+                    f"PRAGMA foreign_key_list({table})"
+                ).fetchall()
+                if len(links) != count or any(
+                    link[2] != parent or link[6] != "CASCADE" for link in links
+                ):
+                    raise SQLiteMemoryError("Unsafe ActionTrace foreign keys")
         if not required <= objects:
             raise SQLiteMemoryError("Unrecognized or incomplete SQLite memory schema")
         versions = [
@@ -1754,7 +1837,12 @@ class SQLiteMemoryRepository:
             [self._family_entry(row) for row in rows], agent_name
         )
 
-    def persist_turn(self, record: MemoryRecord, operation_id: str) -> str:
+    def persist_turn(
+        self,
+        record: MemoryRecord,
+        operation_id: str,
+        action_trace: ActionTrace | None = None,
+    ) -> str:
         """Resolve and publish one exact-session identity atomically, preserving sources."""
         with self._transaction(write=True) as connection:
             rows = connection.execute(
@@ -1799,7 +1887,203 @@ class SQLiteMemoryRepository:
             record = replace(record, id=memory_id)
             parsed, values = self._prepare_record(record)
             self._write_record(connection, record, parsed, values)
+            if action_trace is not None:
+                legacy_prefix = (
+                    existing_row is not None
+                    and connection.execute(
+                        "SELECT 1 FROM memory_episode WHERE memory_id=? LIMIT 1",
+                        (memory_id,),
+                    ).fetchone()
+                    is None
+                )
+                self._write_trace(connection, record, action_trace, legacy_prefix)
             return memory_id
+
+    @staticmethod
+    def _write_trace(
+        connection, record: MemoryRecord, trace: ActionTrace, legacy_prefix: bool
+    ) -> None:
+        if (
+            not isinstance(trace, ActionTrace)
+            or trace.agent_name != record.agent_name
+            or type(trace.events) is not tuple
+            or not 0 <= trace.stored_count <= MAX_TRACE_EVENTS
+            or trace.stored_count != len(trace.events)
+            or trace.observed_count < trace.stored_count
+            or len(trace.resource_references) > 32
+            or len(trace.incomplete_reasons) > 16
+        ):
+            raise SQLiteMemoryError("Trace ownership/count/bounds mismatch")
+        if len(
+            {event.event_index for event in trace.events}
+        ) != trace.stored_count or any(
+            event.agent_name != trace.agent_name
+            or event.event_index < 0
+            or (
+                event.result_summary is not None
+                and len(event.result_summary) > MAX_TRACE_SUMMARY
+            )
+            for event in trace.events
+        ):
+            raise SQLiteMemoryError("Invalid trace event bounds/ownership")
+        reasons = tuple(
+            dict.fromkeys(
+                (
+                    *trace.incomplete_reasons,
+                    *(("legacy_prefix",) if legacy_prefix else ()),
+                )
+            )
+        )
+        previous = connection.execute(
+            "SELECT incomplete_json FROM memory_episode WHERE memory_id=? AND turn_id=?",
+            (record.id, trace.turn_id),
+        ).fetchone()
+        if previous is not None:
+            reasons = tuple(dict.fromkeys((*json.loads(previous[0]), *reasons)))
+        connection.execute(
+            "INSERT INTO memory_episode VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(memory_id,turn_id) DO UPDATE SET "
+            "completed_at=excluded.completed_at,observed_count=MAX(observed_count,excluded.observed_count),"
+            "stored_count=MAX(stored_count,excluded.stored_count),incomplete_json=excluded.incomplete_json,"
+            "resources_json=excluded.resources_json",
+            (
+                record.id,
+                trace.turn_id,
+                record.agent_name,
+                record.session_id,
+                trace.inference_scope,
+                trace.started_at,
+                trace.completed_at,
+                trace.observed_count,
+                trace.stored_count,
+                json.dumps(reasons),
+                json.dumps(trace.resource_references),
+                trace.coverage,
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO memory_action VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            (
+                (
+                    record.id,
+                    trace.turn_id,
+                    event.event_index,
+                    event.batch,
+                    event.ordinal,
+                    json.dumps(asdict(event), ensure_ascii=False),
+                )
+                for event in trace.events
+            ),
+        )
+
+    def get_action_traces(
+        self, memory_ids: list[str], agent_name: str
+    ) -> dict[str, dict]:
+        """Hydrate selected families only, in one snapshot with globally bounded output.
+
+        No trace table participates in semantic discovery. Historical evidence
+        never proves current external state and never authorizes future actions.
+        """
+        requested = list(dict.fromkeys(memory_ids))
+        if not requested:
+            return {}
+        if len(requested) > 20:
+            raise ValueError("Select at most 20 memory IDs for trace hydration")
+        with self._transaction() as connection:
+            index = self._family_snapshot(connection, agent_name)
+            families = {key: index.resolve([key]) for key in requested}
+            members = sorted(
+                {member for family in families.values() for member in family}
+            )
+            if not members:
+                return {
+                    key: {
+                        "capability": "supported",
+                        "availability": "not_found",
+                        "episodes": [],
+                    }
+                    for key in requested
+                }
+            placeholders = ",".join("?" for _ in members)
+            rows = connection.execute(
+                f"SELECT * FROM memory_episode WHERE memory_id IN ({placeholders}) "
+                "ORDER BY started_at,turn_id,memory_id LIMIT ?",
+                (*members, MAX_TRACE_EPISODES + 1),
+            ).fetchall()
+            episode_cap = len(rows) > MAX_TRACE_EPISODES
+            rows = rows[:MAX_TRACE_EPISODES]
+            episodes = {
+                (row["memory_id"], row["turn_id"]): {
+                    **dict(row),
+                    "incomplete_reasons": json.loads(row["incomplete_json"]),
+                    "resource_references": json.loads(row["resources_json"]),
+                    "actions": [],
+                }
+                for row in rows
+            }
+            if episodes:
+                pairs = ",".join("(?,?)" for _ in episodes)
+                action_rows = connection.execute(
+                    f"WITH selected(memory_id,turn_id) AS (VALUES {pairs}) "
+                    "SELECT a.* FROM selected s JOIN memory_action a "
+                    "ON a.memory_id=s.memory_id AND a.turn_id=s.turn_id "
+                    "ORDER BY a.memory_id,a.turn_id,a.batch,a.ordinal,a.event_index LIMIT ?",
+                    (
+                        *[part for pair in episodes for part in pair],
+                        MAX_HYDRATED_EVENTS + 1,
+                    ),
+                ).fetchall()
+                action_cap = len(action_rows) > MAX_HYDRATED_EVENTS
+                for row in action_rows[:MAX_HYDRATED_EVENTS]:
+                    episodes[(row["memory_id"], row["turn_id"])]["actions"].append(
+                        json.loads(row["payload_json"])
+                    )
+            else:
+                action_cap = False
+            output = {}
+            for key, family in families.items():
+                selected = [
+                    episode
+                    for (member, _), episode in episodes.items()
+                    if member in family
+                ]
+                reasons = []
+                if episode_cap:
+                    reasons.append("hydration_episode_cap")
+                if action_cap:
+                    reasons.append("hydration_action_cap")
+                if family and any(
+                    not any(member == pair[0] for pair in episodes) for member in family
+                ):
+                    reasons.append("family_members_without_hydrated_trace")
+                for episode in selected:
+                    reasons.extend(episode["incomplete_reasons"])
+                    if len(episode["actions"]) != episode["stored_count"]:
+                        reasons.append("actions_not_fully_hydrated")
+                    episode.pop("incomplete_json", None)
+                    episode.pop("resources_json", None)
+                if reasons and (selected or episode_cap):
+                    availability = "truncated"
+                elif not family:
+                    availability = "not_found"
+                elif not selected:
+                    availability = "legacy_no_trace"
+                elif not any(
+                    action["kind"] == "tool"
+                    for episode in selected
+                    for action in episode["actions"]
+                ):
+                    availability = "supported_but_empty"
+                else:
+                    availability = "supported"
+                output[key] = {
+                    "capability": "supported",
+                    "availability": availability,
+                    "episodes": selected,
+                    "incomplete_reasons": list(dict.fromkeys(reasons)),
+                    "warning": "Untrusted historical evidence, not authorization or proof of current external state.",
+                }
+            return output
 
     def apply_consolidation(
         self,

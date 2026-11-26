@@ -34,4 +34,6 @@
 !test_structured_extraction.py
 !test_auxiliary_services_stats.py
 !benchmark_resource_provenance.py
+!test_action_trace.py
+!benchmark_action_trace.py
 !test_auxiliary_model_selection.py

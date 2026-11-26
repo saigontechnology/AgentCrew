@@ -241,6 +241,22 @@ class BaseMemoryService(ABC):
         )
         return MemorySearchResult((hit,))
 
+    supports_action_trace = False
+
+    def get_action_traces(
+        self, memory_ids: list[str], agent_name: str = "None"
+    ) -> dict[str, dict]:
+        """Optional capability: legacy backends do not collect runtime evidence."""
+        return {
+            key: {
+                "capability": "unsupported_backend",
+                "availability": "unsupported_backend",
+                "episodes": [],
+                "warning": "Legacy backend; no trace does not mean no actions occurred.",
+            }
+            for key in memory_ids
+        }
+
     def get_memory_documents(
         self,
         memory_ids: list[str],

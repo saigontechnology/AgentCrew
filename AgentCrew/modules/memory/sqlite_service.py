@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from . import provenance
+from .action_trace import ActionTrace, ActionTraceCollector
 from .base_service import BaseMemoryService
 from .memory_record_builder import BuiltMemoryRecord, build_consolidation_query
 from .memory_worker import MemoryWorker
@@ -66,7 +67,9 @@ class SQLiteMemoryPersistence:
             header=built.header,
         )
         memory_id = self._repository.persist_turn(
-            memory_record, operation_data["operation_id"]
+            memory_record,
+            operation_data["operation_id"],
+            operation_data.get("action_trace"),
         )
         try:
             candidates = getattr(built, "memopad_candidates", ())
@@ -134,6 +137,8 @@ class SQLiteMemoryPersistence:
 class SQLiteMemoryService(BaseMemoryService):
     """SQLite/FTS5 memory service fulfilling the full BaseMemoryService contract."""
 
+    supports_action_trace = True
+
     def __init__(
         self,
         db_path: str | Path,
@@ -150,6 +155,23 @@ class SQLiteMemoryService(BaseMemoryService):
             thread_name=SQLITE_MEMORY_WORKER_THREAD_NAME,
         )
         self._worker.start()
+        self.action_trace_collector: ActionTraceCollector | None = None
+        self.trace_storage_receipts: dict[str, dict[str, str]] = {}
+
+    def enable_action_trace(self, hooks: Any) -> None:
+        """Application-owned SQLite-only wiring; construction alone registers nothing."""
+        from AgentCrew.modules.agents import tool_result_summary
+        from AgentCrew.modules.tools import parallel_executor
+
+        if self.action_trace_collector is not None:
+            return
+        if tool_result_summary._trace_collector is not None:
+            raise RuntimeError("ActionTrace already belongs to another memory service")
+        collector = ActionTraceCollector(hooks)
+        collector.register()
+        self.action_trace_collector = collector
+        tool_result_summary._trace_collector = collector
+        parallel_executor._trace_collector = collector
 
     def store_conversation(
         self,
@@ -157,9 +179,15 @@ class SQLiteMemoryService(BaseMemoryService):
         assistant_messages: list[str],
         agent_name: str = "None",
         session_id: str | None = None,
+        *,
+        action_trace: ActionTrace | None = None,
     ) -> list[str]:
         from .resources import snapshot_resources
 
+        collector = getattr(self, "action_trace_collector", None)
+        if action_trace is None and collector is not None:
+            collector.complete(agent_name)
+            action_trace = collector.snapshot(agent_name)
         operation_id = str(uuid.uuid4())
         operation_data = {
             "type": "store_conversation",
@@ -172,9 +200,22 @@ class SQLiteMemoryService(BaseMemoryService):
             "timestamp": datetime.now(UTC).isoformat(),
             "cwd": os.getcwd(),
         }
+        receipt = {"operation_id": operation_id, "status": "queued"}
+        if action_trace is not None:
+            operation_data["action_trace"] = action_trace
+            operation_data["storage_receipt"] = receipt
+            if len(self.trace_storage_receipts) >= 32:
+                del self.trace_storage_receipts[next(iter(self.trace_storage_receipts))]
+            self.trace_storage_receipts[action_trace.turn_id] = receipt
         if self._worker.queue_store(operation_data):
             return [operation_id]
+        receipt["status"] = "queue_rejected"
         return []
+
+    def get_action_traces(
+        self, memory_ids: list[str], agent_name: str = "None"
+    ) -> dict[str, dict]:
+        return self._repository.get_action_traces(memory_ids, agent_name)
 
     def get_memopad_stats(
         self, agent_name: str | None = None, project_key: str | None = None
@@ -385,6 +426,16 @@ class SQLiteMemoryService(BaseMemoryService):
     def shutdown(self):
         logger.info("Shutting down SQLite memory service...")
         self._worker.stop()
+        collector = getattr(self, "action_trace_collector", None)
+        if collector is not None:
+            from AgentCrew.modules.agents import tool_result_summary
+            from AgentCrew.modules.tools import parallel_executor
+
+            collector.close()
+            if tool_result_summary._trace_collector is collector:
+                tool_result_summary._trace_collector = None
+            if parallel_executor._trace_collector is collector:
+                parallel_executor._trace_collector = None
         logger.info("SQLite memory service shutdown complete")
 
     def __del__(self):

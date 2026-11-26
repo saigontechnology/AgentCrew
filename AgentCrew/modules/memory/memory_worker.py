@@ -334,7 +334,10 @@ class MemoryWorker:
 
     def queue_store(self, operation_data: dict) -> bool:
         try:
-            self._conversation_queue.put(operation_data, timeout=1.0)
+            if "action_trace" in operation_data:
+                self._conversation_queue.put_nowait(operation_data)
+            else:
+                self._conversation_queue.put(operation_data, timeout=1.0)
             logger.debug(
                 f"Queued conversation storage: {operation_data.get('operation_id', '')}"
             )
@@ -375,12 +378,19 @@ class MemoryWorker:
                     logger.error(f"Memory worker error: {e}")
 
     async def _store_conversation_internal(self, operation_data: dict[str, Any]):
+        receipt = operation_data.get("storage_receipt")
+        if receipt is not None:
+            receipt["status"] = "processing"
         try:
             if self._persistence is None:
+                if receipt is not None:
+                    receipt["status"] = "failed"
                 logger.error("Memory worker: persistence backend not set")
                 return
             readiness = self._persistence.readiness_error()
             if readiness:
+                if receipt is not None:
+                    receipt["status"] = "failed"
                 logger.error(readiness)
                 return
 
@@ -390,12 +400,17 @@ class MemoryWorker:
                 self.current_conversation_context.get(session_id, ""),
             )
             if built is None:
+                if receipt is not None:
+                    receipt["status"] = "skipped"
                 return
             memory_id = self._persistence.persist(operation_data, built)
             if not isinstance(memory_id, str) or not memory_id.strip():
                 raise provenance.MemoryFamilyError(
                     "Persistence returned no canonical identity"
                 )
+            if receipt is not None:
+                receipt["status"] = "stored"
+                receipt["memory_id"] = memory_id
             self.current_conversation_context[session_id] = built.document
 
             logger.debug(f"Stored conversation: {operation_data['operation_id']}")
@@ -408,6 +423,8 @@ class MemoryWorker:
             self._store_count_by_session[session_id] = count + 1
 
         except Exception as e:
+            if receipt is not None:
+                receipt["status"] = "failed"
             logger.error(
                 f"Failed to store conversation {operation_data.get('operation_id')}: {e}"
             )

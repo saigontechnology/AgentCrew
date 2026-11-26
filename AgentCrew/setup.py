@@ -546,6 +546,9 @@ class ApplicationSetup:
                     memory_service = SQLiteMemoryService(
                         db_path=memory_db_path, llm_service=memory_llm_svc
                     )
+                    from AgentCrew.modules.events.hooks import HookRegistry
+
+                    memory_service.enable_action_trace(HookRegistry.get_instance())
                     logger.info("SQLite memory service initialized")
                 else:
                     from AgentCrew.modules.memory.engine_selection import (

@@ -264,6 +264,7 @@ def _format_memory_hits(
     result: MemorySearchResult,
     detail: str,
     documents: dict[str, str],
+    traces: dict[str, dict] | None = None,
 ) -> str:
     lines = [
         "Found relevant memories:",
@@ -305,6 +306,11 @@ def _format_memory_hits(
                         },
                         ensure_ascii=False,
                     )
+                )
+            if traces is not None and hit.memory_id in traces:
+                block.append(
+                    "   ActionTrace: "
+                    + json.dumps(traces[hit.memory_id], ensure_ascii=False)
                 )
             matched = "; ".join(reason.detail for reason in hit.reasons)
             block.append(f"   Matched because: {matched}")
@@ -515,7 +521,23 @@ def get_memory_retrieve_tool_handler(
                 documents = memory_service.get_memory_documents(
                     [hit.memory_id for hit in result.hits], context.agent_name
                 )
-            return _format_memory_hits(result, detail, documents)
+            traces = None
+            if detail in ("evidence", "full") and memory_ids:
+                selected_ids = list(dict.fromkeys(hit.memory_id for hit in result.hits))
+                try:
+                    traces = memory_service.get_action_traces(
+                        selected_ids, context.agent_name
+                    )
+                except Exception:
+                    traces = {
+                        key: {
+                            "availability": "unavailable",
+                            "episodes": [],
+                            "warning": "Trace hydration failed; do not infer that no actions occurred.",
+                        }
+                        for key in selected_ids
+                    }
+            return _format_memory_hits(result, detail, documents, traces)
 
         except Exception as e:
             return f"Memory search failed: {e!s}"

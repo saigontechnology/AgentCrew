@@ -238,6 +238,21 @@ class AgentMemoryCoordinator:
             assistant_messages.append(normalized_current_response)
         return assistant_messages
 
+    def observe_action_outcome(self, context: dict, status: str) -> None:
+        """Report failures to the optional collaborator, not legacy after hooks."""
+        collector = getattr(
+            self.agent.services.get("memory"), "action_trace_collector", None
+        )
+        if collector is not None:
+            collector.observe_result(context, status)
+
+    def observe_action_result(self, data: dict) -> None:
+        """Observe rejected/unperformed results without inspecting tool payloads."""
+        service = self.agent.services.get("memory")
+        collector = getattr(service, "action_trace_collector", None)
+        if collector is not None:
+            collector.observe_formatted_result(self.agent.name, data)
+
     def store_memory_if_available(
         self,
         user_message: str,
@@ -254,6 +269,36 @@ class AgentMemoryCoordinator:
             messages, current_response
         )
         try:
+            collector = getattr(memory_service, "action_trace_collector", None)
+            if collector is not None:
+                from .tool_result_summary import current_inference_scope
+
+                collector.complete(self.agent.name)
+                trace = collector.snapshot(
+                    self.agent.name,
+                    self.agent.services.get("tool_result_summary"),
+                    current_inference_scope(),
+                )
+                if trace is not None and not getattr(
+                    self.agent, "runtime_tool_trace_supported", False
+                ):
+                    from dataclasses import replace
+
+                    trace = replace(
+                        trace,
+                        incomplete_reasons=(
+                            *trace.incomplete_reasons,
+                            "external_agent_tools_unobserved",
+                        ),
+                    )
+                memory_service.store_conversation(
+                    user_message,
+                    assistant_messages,
+                    self.agent.name,
+                    session_id=session_id,
+                    action_trace=trace,
+                )
+                return
             memory_service.store_conversation(
                 user_message,
                 assistant_messages,

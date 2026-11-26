@@ -40,6 +40,12 @@ CONTRACT_VERSION = 1
 LEGACY_CHECKPOINT_CODE_IDENTITIES = frozenset(
     {
         (
+            3,
+            "3cb38dc7fab6d8a07347ad1358abf16a4f9afce3323cc4675ddfbe8439235122",
+            "be6e3a43376aa075b8ababc859de8c6a5f1cbe0ee639eb7d056e7135ddd5b2af",
+            "072ad8e8801e9187e7758c493eaaf0ceda2e3e1eb5680eb6a60217e9f9b08b2d",
+        ),
+        (
             2,
             "1fee25d8ad1be159a5d693f4727f87db37466972bfd1eba398de4726e8c312bb",
             "8209c0912d9e4cd779922ed598b3059ac4f627c6460c8e7e5de304b506db887b",
@@ -325,8 +331,9 @@ def _snapshot_identity_matches(identity, expected: dict, *, allow_legacy: bool) 
     """Accept audited predecessor code only; all non-code checkpoint fields match.
 
     The pinned tuples are schema/mapper/repository/parser identities from commits
-    661df4b0 (schema 2) and 407606ab (initial schema 3). Their canonical mapping and
-    parser are unchanged. Unknown code drift still requires a fresh migration.
+    661df4b0 (schema 2), 407606ab (initial schema 3), and 42fe4ccf (pre-trace
+    schema 3). Their canonical mapping and parser are unchanged. Unknown code
+    drift still requires a fresh migration.
     """
     if identity == expected:
         return True
