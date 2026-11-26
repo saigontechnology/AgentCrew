@@ -402,6 +402,17 @@ and automatic storage of completed chat turns. When behavior persistence is
 available, it also enables behavior learning. Persisted behaviors are included
 in Cursor task context even without memory enabled.
 
+If a Cursor turn ends with an authentication error, AgentCrew reports it as a
+Cursor agent error and marks the stream failed rather than retrying the task as
+an empty response. Check `CURSOR_API_KEY` and the key's account access in the
+[Cursor dashboard](https://cursor.com/dashboard/api); restart AgentCrew after
+updating the key so the SDK agent receives the new credential. IDE/CLI login
+alone does not replace the API key used by this integration. Inspect any partial
+workspace changes before manually resubmitting a failed task. AgentCrew does not
+automatically replay these failed tasks or discard healthy Cursor sessions
+after idle time. An authentication error alone does not establish whether
+credentials expired or an upstream runtime became stale.
+
 For `model_id = "auto-smart"`, set `optimize_for` to `"cost"`, `"balanced"`,
 or `"intelligence"` to select **Cost**, **Balance**, or **Intelligence**.
 **Balance** is the default for existing configurations without this field.

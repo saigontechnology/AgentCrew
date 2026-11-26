@@ -35,7 +35,7 @@ _cwd_owners: dict[str, str] = {}
 
 
 class CursorAgentError(RuntimeError):
-    """Raised when a Cursor agent cannot be constructed from config."""
+    """Raised when Cursor agent setup or a run fails."""
 
 
 def _load_cursor_sdk():
@@ -405,6 +405,19 @@ class CursorAgent(BaseAgent):
         except Exception as exc:
             logger.exception(f"Cursor agent '{self.name}' failed")
             error = f"Cursor agent error: {exc}"
+            authentication_error = _is_authentication_error(exc)
+            if authentication_error:
+                error += (
+                    "\nCheck CURSOR_API_KEY and Cursor account access in the Cursor "
+                    "dashboard. If you update the key, restart AgentCrew to load it. "
+                    "The task was not automatically retried; inspect any partial "
+                    "changes before submitting it again."
+                )
+            if authentication_error or getattr(holder.get("run"), "status", None) in {
+                "error",
+                "expired",
+            }:
+                raise CursorAgentError(error) from exc
             combined = f"{response}\n{error}".strip() if response else error
             yield (combined, error, None)
         finally:
@@ -731,8 +744,20 @@ class CursorAgent(BaseAgent):
                 holder["run"] = run
                 with self._sdk_lock:
                     self._active_run = run
+                status_message = ""
                 for message in run.stream():
+                    if (
+                        _message_type(message) == "status"
+                        and run.status in {"error", "expired"}
+                    ):
+                        status_message = _field(message, "message")
                     enqueue(message)
+                if run.status in {"error", "expired"}:
+                    detail = status_message or str(run.result or "")
+                    raise CursorAgentError(
+                        f"Cursor run ended with status '{run.status}'"
+                        + (f": {detail}" if detail else ".")
+                    )
             except Exception as exc:
                 enqueue(exc)
             finally:
@@ -798,6 +823,17 @@ class CursorAgent(BaseAgent):
             cancel()
         except Exception:
             logger.debug("Cursor run cancel skipped")
+
+
+def _is_authentication_error(exc: Exception) -> bool:
+    """Recognize typed SDK auth failures and the runtime's status-only message."""
+    if "authentication error" in str(exc).casefold():
+        return True
+    try:
+        from cursor_sdk.errors import AuthenticationError
+    except ImportError:
+        return False
+    return isinstance(exc, AuthenticationError)
 
 
 def _message_type(message: Any) -> str:
