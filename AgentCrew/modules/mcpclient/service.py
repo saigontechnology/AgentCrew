@@ -180,6 +180,38 @@ class MCPService:
         self._acp_server_configs: dict[str, MCPServerConfig] = {}
         self._oauth_locks: dict[tuple[str, int], asyncio.Lock] = {}
 
+    def get_server_statuses(self) -> dict[str, str]:
+        """Describe known servers from in-memory configuration and discovery caches.
+
+        Discovery is cached even when a server exposes no tools. These labels
+        are not live health checks: sessions are on-demand, and a server with
+        no cached discovery may be unattempted or may have failed discovery.
+        No configuration reload or connection is performed.
+        """
+        configs: dict[str, MCPServerConfig] = {}
+        if self._config_manager is not None:
+            configs.update(
+                (config.name, config)
+                for config in self._config_manager.configs.copy().values()
+            )
+        configs.update(
+            (config.name, config)
+            for config in self._acp_server_configs.copy().values()
+        )
+        discovered = (
+            set(self.tools_cache) | set(self.server_prompts) | set(self.server_resources)
+        )
+        statuses: dict[str, str] = {}
+        for name in sorted(configs.keys() | discovered):
+            config = configs.get(name)
+            if config is not None and not config.enabledForAgents:
+                statuses[name] = "disabled"
+            elif name in discovered:
+                statuses[name] = "discovered (on-demand)"
+            else:
+                statuses[name] = "not discovered"
+        return statuses
+
     def _get_file_handler(self) -> FileHandler:
         if self.file_handler is None:
             from AgentCrew.modules.utils.file_handler import FileHandler

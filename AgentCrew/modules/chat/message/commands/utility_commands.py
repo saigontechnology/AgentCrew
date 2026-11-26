@@ -379,6 +379,23 @@ class UtilityCommands:
             lines.append(f"  {row['role']}: {identity}{suffix}")
         return "\n".join(lines)
 
+    def _format_mcp_servers(self) -> str:
+        """Format the live MCP service's read-only discovery-status snapshot."""
+        heading = "MCP servers:"
+        try:
+            manager = getattr(self.message_handler, "mcp_manager", None)
+            service = getattr(manager, "mcp_service", None)
+            if service is None:
+                return f"{heading}\n  Status unavailable."
+            statuses = service.get_server_statuses()
+            if not statuses:
+                return f"{heading}\n  No MCP servers configured."
+            return "\n".join(
+                [heading, *(f"  {name}: {status}" for name, status in statuses.items())]
+            )
+        except Exception:
+            return f"{heading}\n  Status unavailable."
+
     def handle_memopad(self, user_input: str) -> CommandResult:
         """Inspect local database-wide collection counts without querying the LLM."""
         from AgentCrew.modules.memory.memopad import format_memopad_stats
@@ -402,11 +419,11 @@ class UtilityCommands:
         return CommandResult(handled=True, clear_flag=True)
 
     def handle_stats(self, user_input: str) -> CommandResult:
-        """Handle /stats: instantiated LLM identities, token usage and cost.
+        """Handle /stats: LLM identities, usage, cost and MCP discovery status.
 
         Reports service roles and cumulative per-agent token/cost usage for the active
-        conversation, per-local-agent context-window occupancy/remaining, and
-        the aggregate current-conversation total.
+        conversation, per-local-agent context-window occupancy/remaining,
+        the aggregate current-conversation total, and cached MCP discovery status.
         """
         agent_manager = self.message_handler.agent_manager
         agents = getattr(agent_manager, "agents", None) or {}
@@ -422,7 +439,11 @@ class UtilityCommands:
             memory=getattr(self.message_handler, "memory_service", None),
         )
         message = (
-            llm_status + "\n\n" + self._format_stats_message(agents, current_agent_name)
+            llm_status
+            + "\n\n"
+            + self._format_stats_message(agents, current_agent_name)
+            + "\n\n"
+            + self._format_mcp_servers()
         )
         self.message_handler.bus.emit_sync(AppEvents.SYSTEM_MESSAGE, message=message)
         return CommandResult(handled=True, clear_flag=True)
