@@ -10,6 +10,122 @@
   `UV_PROJECT_ENVIRONMENT=/home/quytruong/source/github.com/daltonnyx/AgentCrew/.venv`;
   every command below ran from the isolated worktree with `--no-sync`.
 
+## Architect-review corrections
+
+Review parent: `0fa7bd8808c246f7bec3f3c9b2d5ad79fc811a72`. Corrections were made on
+`feat/sqlite-actiontrace` in a new isolated worktree,
+`/tmp/agentcrew-actiontrace-fixes`, leaving main at `42fe4ccf` and its four existing
+untracked files untouched. Results below are Engineer-run; independent Architect
+rereview/sign-off is still pending.
+
+Changed files for this correction only:
+
+| File | Correction |
+| --- | --- |
+| `AgentCrew/setup.py` | Immediate private ownership of memory and its auxiliary LLM; shielded/idempotent async cleanup off the event loop; cleanup before owning LLM close; partial-publication cleanup through host shutdown; reject reinitialization that would overwrite live ownership. |
+| `AgentCrew/modules/memory/action_trace.py` | Central background-only structural/bounds/timing/enum validation, strict bounded JSON decoding, per-agent snapshot indices, and bounded summary-control sanitization at snapshot time. |
+| `AgentCrew/modules/memory/sqlite_repository.py` | Validate before atomic persistence, validate merged reasons, size-gate and validate hydration, check session/row/payload association, fail closed with explicit corruption reasons and missing-evidence warning. |
+| `verification/memory/test_action_trace.py` | Application-level real worker/global/hook cleanup, partial failures, restart/idempotence, invalid writes and injected/corrupt hydration cases, upper-bound valid roundtrip and no hook-path validator calls. |
+| `docs/action-trace.md` | Application ownership, validation bounds and corrupt-evidence behavior. |
+| `docs/action-trace-validation.md` | This correction and verification record. |
+
+### Exact correction commands and results
+
+All commands below ran from `/tmp/agentcrew-actiontrace-fixes` with:
+
+```bash
+export UV_PROJECT_ENVIRONMENT=/home/quytruong/source/github.com/daltonnyx/AgentCrew/.venv
+```
+
+The existing functional regression command in the next section was rerun unchanged,
+including all new tests in `test_action_trace.py`:
+
+```bash
+uv run --no-sync python -B -m pytest \
+  verification/memory/test_action_trace.py \
+  verification/memory/test_migration_schema_resume.py \
+  verification/memory/test_worker_shutdown.py \
+  verification/memory/test_resource_provenance.py::test_concurrent_scope_isolation_and_cleanup \
+  verification/memory/test_resource_provenance.py::test_collector_bounds_dedup_and_no_io \
+  -q -p no:cacheprovider --tb=short
+```
+
+Final result: **221 passed in 10.00s**, exit 0. Newly covered cases include invalid
+enums, controls/oversized identifiers, booleans/floats/negative positions, NaN/Inf
+and reversed timing, malformed resource references, noncontiguous indices,
+unknown/missing/duplicate JSON fields, excessive size/depth, invalid UTF-8, corrupt
+episode metadata, missing/mismatched action rows and canonical-text preservation.
+Maximum-size valid metadata roundtrips. Application-level tests use real disposable
+SQLite/Chroma workers without live providers and verify memory LLM close ordering,
+hook/global cleanup, partial failures before public service publication, concurrent
+and repeated shutdown, and subsequent SQLite setup in the same process.
+
+The focused-validation skill was activated and used on every corrected Python file:
+
+```bash
+uv run --no-sync python -B \
+  .agents/skills/agentcrew-focused-validation/scripts/validate.py \
+  AgentCrew/setup.py \
+  AgentCrew/modules/memory/action_trace.py \
+  AgentCrew/modules/memory/sqlite_repository.py \
+  verification/memory/test_action_trace.py \
+  --ruff \
+  --import-module AgentCrew.setup \
+  --import-module AgentCrew.modules.memory.action_trace \
+  --import-module AgentCrew.modules.memory.sqlite_repository
+git diff --check
+```
+
+Result: **four syntax PASS, three imports PASS, Ruff 0.17.6 PASS with zero findings**
+(no rule/file/fix-risk groups), exit 0. Whitespace check passed. No unsafe lint
+fixes, configuration exclusions, dependency/lockfile changes, deprecated `tests/`,
+production memory, or live-provider integrations were used.
+
+```bash
+uv run --no-sync python -B -m verification.memory.benchmark_action_trace
+```
+
+Exit 0, Python 3.12.10 / SQLite 3.47.1, same five samples of 2,560 tool lifecycles
+and 100 writes of 129 events. Final independent corrective-run measurements:
+
+| Operation | Corrected implementation |
+| --- | ---: |
+| Hooks without trace, median/tool | 4.05652 µs |
+| Hooks with trace, median/tool | 49.44046 µs |
+| Hooks with trace and 5 MB result, median/tool | 49.47066 µs |
+| Added hook time, median/tool | 45.38394 µs |
+| 129-event snapshot, mean | 0.02413 ms |
+| Canonical write without trace, median | 2.88896 ms |
+| Canonical + validated trace write, median | 7.84207 ms |
+| Hydrate and validate 6 memories / 774 events, mean | 39.55010 ms |
+| Normal search without / with trace, mean | 11.24467 / 11.52699 ms |
+
+The collector hook-method ASTs match the review parent. Validation is outside those
+methods; snapshot changes are bounded finalization work. The benchmark was rerun
+anyway to measure background validation. Compared with the original reported run,
+hydration increased from 14.82 ms to 39.55 ms and traced writes from 6.99 ms to
+7.84 ms. This is a real validation cost, not claimed as zero overhead. Individual
+action fields are checked once per hydration, followed by sequence/count checks;
+merged write reasons are checked without revalidating all event fields. The query
+plan still uses the existing action primary-key index. Search timing differences
+are small on this fictional corpus and are not a production-size performance claim.
+
+### Remaining limitations
+
+- The existing worker stop/join timeout is unchanged; blocked live providers and
+  full application startup/shutdown were not exercised. Ownership cleanup follows
+  the existing host `finally` shutdown path, which embedding callers must also use.
+- Validation bounds structure and metadata; it does not cryptographically prove
+  historical observations. Corrupt episodes are not repaired or reconstructed.
+  Strict validation may suppress older incomplete/noncontiguous trace rows, with
+  explicit `truncated`/corruption reasons rather than silently treating them as empty.
+- Specialized delegate/transfer correlations, external-agent tool visibility,
+  ephemeral non-stored turns and production-scale profiling remain original MVP
+  follow-ups. No extra LLM calls were introduced.
+- SQLite schema v4, normal search, memopad, migration allowlist and Chroma service
+  source are unchanged by this correction. Chroma receives only the allowed
+  application lifecycle cleanup of its existing worker/LLM, never trace behavior.
+
 ## Functional regression command
 
 ```bash

@@ -15,15 +15,21 @@ data must never be interpreted as evidence that no actions occurred.
 
 Application setup enables `SQLiteMemoryService.enable_action_trace(hooks)` only in
 the SQLite branch. It registers three owner-scoped hooks in the application-owned
-registry. Shutdown unregisters only that owner and clears its optional inference
-and batch collaborators. Merely constructing a SQLite service does not register
+registry. `ApplicationSetup` owns the memory service immediately after construction,
+including before public service publication. Application shutdown closes memory
+on a worker thread before its owning memory LLM, unregisters only that trace owner,
+and clears its optional inference and batch collaborators. Cleanup is idempotent
+and shared across concurrent shutdown calls; normal host `finally` cleanup also
+covers partial startup after trace enablement. Merely constructing a SQLite service does not register
 hooks; embedded applications should enable it explicitly with their registry.
 
 The existing inference-scope binding creates a fresh request-local trace turn ID
 before execution. Chat, jobs, A2A, and ACP retain their existing scope identifiers;
 repeated turns in the same conversation still receive different trace turn IDs.
 Nested inference inherits the active turn; action evidence is filtered to the
-agent whose memory is stored. The existing storage `operation_id` remains separate.
+agent whose memory is stored. Snapshot creation renumbers only the filtered
+indices that need it, producing contiguous per-agent episode indices without
+changing runtime batch/ordinal or action identities. The existing storage `operation_id` remains separate.
 No additional surface-specific tool loops or storage workers are introduced.
 
 Events record:
@@ -117,6 +123,34 @@ Nothing reconstructs their
 history using an LLM. Appending the first observed turn to an existing no-trace
 record records a `legacy_prefix` gap rather than implying complete history.
 
+## Background validation and corrupt evidence
+
+Storage and selected-ID hydration share a non-LLM validation contract in
+`action_trace.py`; foreground hooks never call it. It requires exact ownership,
+bounded control-free strings, supported kinds/statuses/provenance/summary states,
+non-boolean integer counts and positions, finite nonnegative timing ordered within
+the episode, contiguous full-episode indices, and bounded references. Protocol
+identifiers, agent names and session associations are capped at 160 characters;
+request/result references at 192. Resource references must be 64 lowercase hex
+characters, not raw URLs. Up to 16 distinct 80-character reason codes are allowed.
+Response events retain their supported empty tool fields. Ready-summary control
+characters are replaced only at snapshot time, never by inspecting tool results.
+
+Hydration size-gates action JSON at **16 KiB** and each episode metadata JSON list
+at **4 KiB** in SQL before transferring it to Python. UTF-8 decoding and schema
+validation reject duplicate keys, nonstandard NaN/Infinity constants, invalid
+fields/types/enums, unknown fields, oversized bodies and row/payload mismatches.
+Canonical session association is checked against the already-selected family
+snapshot. Known hydration caps permit an explicitly partial index set, never an
+uncapped claim of a complete episode.
+
+An invalid action suppresses the affected episode's action list and yields
+`truncated` with `invalid_persisted_action`; an invalid episode is omitted with
+`invalid_persisted_episode`. Canonical memory text remains available. Invalid
+incoming traces roll back the turn's canonical/trace write together. This does
+not repair corrupt data, reconstruct missing actions, or authenticate historical
+claims: missing/incomplete evidence still does not mean no actions occurred.
+
 ## Discover → Select → Hydrate
 
 Normal semantic search is unchanged: no action-table joins or reads, no action
@@ -177,6 +211,10 @@ before relying on historical completion.
 - Production-scale, cold-start and end-to-end UI measurements remain follow-ups.
 
 ## Verification and local measurements
+
+The table below records the original implementation run. Corrective-review
+validation and the newer background-validation benchmark are recorded in
+[action-trace-validation.md](action-trace-validation.md#architect-review-corrections).
 
 From the repository root (no deprecated `tests/`, no remote providers):
 

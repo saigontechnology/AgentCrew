@@ -16,11 +16,17 @@ from typing import Any
 
 from . import provenance
 from .action_trace import (
+    MAX_ACTION_JSON_BYTES,
     MAX_HYDRATED_EVENTS,
     MAX_TRACE_EPISODES,
-    MAX_TRACE_EVENTS,
-    MAX_TRACE_SUMMARY,
+    MAX_TRACE_METADATA_JSON_BYTES,
     ActionTrace,
+    ActionTraceValidationError,
+    decode_action_event,
+    decode_trace_list,
+    validate_action_sequence,
+    validate_action_trace,
+    validate_incomplete_reasons,
 )
 from .memopad import MemopadCandidate, parse_memopad_candidates
 from .project_identity import ProjectIdentity
@@ -1903,29 +1909,12 @@ class SQLiteMemoryRepository:
     def _write_trace(
         connection, record: MemoryRecord, trace: ActionTrace, legacy_prefix: bool
     ) -> None:
-        if (
-            not isinstance(trace, ActionTrace)
-            or trace.agent_name != record.agent_name
-            or type(trace.events) is not tuple
-            or not 0 <= trace.stored_count <= MAX_TRACE_EVENTS
-            or trace.stored_count != len(trace.events)
-            or trace.observed_count < trace.stored_count
-            or len(trace.resource_references) > 32
-            or len(trace.incomplete_reasons) > 16
-        ):
-            raise SQLiteMemoryError("Trace ownership/count/bounds mismatch")
-        if len(
-            {event.event_index for event in trace.events}
-        ) != trace.stored_count or any(
-            event.agent_name != trace.agent_name
-            or event.event_index < 0
-            or (
-                event.result_summary is not None
-                and len(event.result_summary) > MAX_TRACE_SUMMARY
+        try:
+            validate_action_trace(
+                trace, record.agent_name, session_id=record.session_id
             )
-            for event in trace.events
-        ):
-            raise SQLiteMemoryError("Invalid trace event bounds/ownership")
+        except ActionTraceValidationError as error:
+            raise SQLiteMemoryError("Invalid ActionTrace") from error
         reasons = tuple(
             dict.fromkeys(
                 (
@@ -1935,11 +1924,18 @@ class SQLiteMemoryRepository:
             )
         )
         previous = connection.execute(
-            "SELECT incomplete_json FROM memory_episode WHERE memory_id=? AND turn_id=?",
-            (record.id, trace.turn_id),
+            "SELECT CASE WHEN length(CAST(incomplete_json AS BLOB))<=? THEN CAST(incomplete_json AS BLOB) END "
+            "FROM memory_episode WHERE memory_id=? AND turn_id=?",
+            (MAX_TRACE_METADATA_JSON_BYTES, record.id, trace.turn_id),
         ).fetchone()
-        if previous is not None:
-            reasons = tuple(dict.fromkeys((*json.loads(previous[0]), *reasons)))
+        try:
+            if previous is not None:
+                reasons = tuple(
+                    dict.fromkeys((*decode_trace_list(previous[0]), *reasons))
+                )
+            validate_incomplete_reasons(reasons)
+        except (ValueError, TypeError) as error:
+            raise SQLiteMemoryError("Invalid existing ActionTrace metadata") from error
         connection.execute(
             "INSERT INTO memory_episode VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(memory_id,turn_id) DO UPDATE SET "
@@ -1956,8 +1952,8 @@ class SQLiteMemoryRepository:
                 trace.completed_at,
                 trace.observed_count,
                 trace.stored_count,
-                json.dumps(reasons),
-                json.dumps(trace.resource_references),
+                json.dumps(reasons, allow_nan=False),
+                json.dumps(trace.resource_references, allow_nan=False),
                 trace.coverage,
             ),
         )
@@ -1970,7 +1966,7 @@ class SQLiteMemoryRepository:
                     event.event_index,
                     event.batch,
                     event.ordinal,
-                    json.dumps(asdict(event), ensure_ascii=False),
+                    json.dumps(asdict(event), ensure_ascii=False, allow_nan=False),
                 )
                 for event in trace.events
             ),
@@ -2006,40 +2002,117 @@ class SQLiteMemoryRepository:
                 }
             placeholders = ",".join("?" for _ in members)
             rows = connection.execute(
-                f"SELECT * FROM memory_episode WHERE memory_id IN ({placeholders}) "
+                "SELECT memory_id,"
+                "CASE WHEN length(turn_id)<=160 THEN turn_id END AS turn_id,"
+                "CASE WHEN length(agent_name)<=160 THEN agent_name END AS agent_name,"
+                "CASE WHEN session_id IS NULL THEN NULL WHEN length(session_id)<=160 "
+                "THEN session_id ELSE '' END AS session_id,"
+                "CASE WHEN length(inference_scope)<=160 THEN inference_scope END AS inference_scope,"
+                "started_at,completed_at,observed_count,stored_count,"
+                "CASE WHEN length(CAST(incomplete_json AS BLOB))<=? THEN CAST(incomplete_json AS BLOB) END AS incomplete_json,"
+                "CASE WHEN length(CAST(resources_json AS BLOB))<=? THEN CAST(resources_json AS BLOB) END AS resources_json,"
+                "CASE WHEN length(coverage)<=80 THEN coverage END AS coverage "
+                f"FROM memory_episode WHERE memory_id IN ({placeholders}) "
                 "ORDER BY started_at,turn_id,memory_id LIMIT ?",
-                (*members, MAX_TRACE_EPISODES + 1),
+                (
+                    MAX_TRACE_METADATA_JSON_BYTES,
+                    MAX_TRACE_METADATA_JSON_BYTES,
+                    *members,
+                    MAX_TRACE_EPISODES + 1,
+                ),
             ).fetchall()
             episode_cap = len(rows) > MAX_TRACE_EPISODES
             rows = rows[:MAX_TRACE_EPISODES]
-            episodes = {
-                (row["memory_id"], row["turn_id"]): {
+            episodes = {}
+            headers = {}
+            invalid_members = set()
+            for row in rows:
+                try:
+                    header = ActionTrace(
+                        row["turn_id"],
+                        row["inference_scope"],
+                        row["agent_name"],
+                        row["started_at"],
+                        row["completed_at"],
+                        (),
+                        row["observed_count"],
+                        row["stored_count"],
+                        decode_trace_list(row["incomplete_json"]),
+                        decode_trace_list(row["resources_json"]),
+                        row["coverage"],
+                    )
+                    validate_action_trace(
+                        header, agent_name, partial=True, session_id=row["session_id"]
+                    )
+                    if row["session_id"] != index.records[row["memory_id"]].session:
+                        raise ActionTraceValidationError("Episode session mismatch")
+                except (ValueError, TypeError):
+                    invalid_members.add(row["memory_id"])
+                    continue
+                pair = (row["memory_id"], row["turn_id"])
+                headers[pair] = header
+                episodes[pair] = {
                     **dict(row),
-                    "incomplete_reasons": json.loads(row["incomplete_json"]),
-                    "resource_references": json.loads(row["resources_json"]),
+                    "incomplete_reasons": list(header.incomplete_reasons),
+                    "resource_references": list(header.resource_references),
                     "actions": [],
                 }
-                for row in rows
-            }
+            invalid_actions = set()
+            decoded_events = {pair: [] for pair in episodes}
             if episodes:
                 pairs = ",".join("(?,?)" for _ in episodes)
                 action_rows = connection.execute(
                     f"WITH selected(memory_id,turn_id) AS (VALUES {pairs}) "
-                    "SELECT a.* FROM selected s JOIN memory_action a "
+                    "SELECT a.memory_id,a.turn_id,a.event_index,a.batch,a.ordinal,"
+                    "CASE WHEN length(CAST(a.payload_json AS BLOB))<=? THEN CAST(a.payload_json AS BLOB) END AS payload_json "
+                    "FROM selected s JOIN memory_action a "
                     "ON a.memory_id=s.memory_id AND a.turn_id=s.turn_id "
                     "ORDER BY a.memory_id,a.turn_id,a.batch,a.ordinal,a.event_index LIMIT ?",
                     (
                         *[part for pair in episodes for part in pair],
+                        MAX_ACTION_JSON_BYTES,
                         MAX_HYDRATED_EVENTS + 1,
                     ),
                 ).fetchall()
                 action_cap = len(action_rows) > MAX_HYDRATED_EVENTS
                 for row in action_rows[:MAX_HYDRATED_EVENTS]:
-                    episodes[(row["memory_id"], row["turn_id"])]["actions"].append(
-                        json.loads(row["payload_json"])
-                    )
+                    pair = (row["memory_id"], row["turn_id"])
+                    try:
+                        event = decode_action_event(row["payload_json"], headers[pair])
+                        for key in ("event_index", "batch", "ordinal"):
+                            if type(row[key]) is not int or row[key] != getattr(
+                                event, key
+                            ):
+                                raise ActionTraceValidationError(
+                                    "Action row/payload mismatch"
+                                )
+                    except (ValueError, TypeError):
+                        invalid_actions.add(pair)
+                        continue
+                    decoded_events[pair].append(event)
             else:
                 action_cap = False
+            for pair, episode in episodes.items():
+                if pair not in invalid_actions:
+                    try:
+                        events = tuple(
+                            sorted(
+                                decoded_events[pair],
+                                key=lambda event: event.event_index,
+                            )
+                        )
+                        validate_action_sequence(
+                            events, headers[pair].stored_count, partial=action_cap
+                        )
+                    except (ValueError, TypeError):
+                        invalid_actions.add(pair)
+                if pair in invalid_actions:
+                    episode["actions"] = []
+                    episode["incomplete_reasons"].append("invalid_persisted_action")
+                else:
+                    episode["actions"] = [
+                        asdict(event) for event in decoded_events[pair]
+                    ]
             output = {}
             for key, family in families.items():
                 selected = [
@@ -2048,6 +2121,8 @@ class SQLiteMemoryRepository:
                     if member in family
                 ]
                 reasons = []
+                if invalid_members.intersection(family):
+                    reasons.append("invalid_persisted_episode")
                 if episode_cap:
                     reasons.append("hydration_episode_cap")
                 if action_cap:
@@ -2062,7 +2137,9 @@ class SQLiteMemoryRepository:
                         reasons.append("actions_not_fully_hydrated")
                     episode.pop("incomplete_json", None)
                     episode.pop("resources_json", None)
-                if reasons and (selected or episode_cap):
+                if reasons and (
+                    selected or episode_cap or invalid_members.intersection(family)
+                ):
                     availability = "truncated"
                 elif not family:
                     availability = "not_found"
@@ -2081,7 +2158,10 @@ class SQLiteMemoryRepository:
                     "availability": availability,
                     "episodes": selected,
                     "incomplete_reasons": list(dict.fromkeys(reasons)),
-                    "warning": "Untrusted historical evidence, not authorization or proof of current external state.",
+                    "warning": (
+                        "Untrusted historical evidence, not authorization or proof of current external state. "
+                        "Missing or incomplete trace does not mean no actions occurred."
+                    ),
                 }
             return output
 

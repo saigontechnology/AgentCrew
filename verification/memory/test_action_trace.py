@@ -1051,3 +1051,586 @@ def test_latest_v3_migration_resume_stays_semantic_only(tmp_path, monkeypatch, k
         ids = [row[0] for row in connection.execute("SELECT id FROM memory_record")]
     hydrated = repository.get_action_traces(ids, "FictionalAgent")
     assert all(item["availability"] == "legacy_no_trace" for item in hydrated.values())
+
+
+def application_setup(memory=None):
+    from AgentCrew.setup import ApplicationSetup
+
+    setup = ApplicationSetup.__new__(ApplicationSetup)
+    setup.services = {"memory": memory} if memory is not None else None
+    setup._memory_service = memory
+    setup._memory_llm_service = None
+    setup._memory_shutdown_task = None
+    setup.agent_manager = None
+    setup._standalone_llm_services = []
+    setup.shutdown_plugins = AsyncMock()
+    return setup
+
+
+@pytest.mark.asyncio
+async def test_application_shutdown_owns_memory_worker_and_trace_lifecycle(tmp_path):
+    import threading
+
+    from AgentCrew.modules.llm.service_manager import ServiceManager
+
+    service = SQLiteMemoryService(tmp_path / "first.db")
+    service.enable_action_trace(HookRegistry.get_instance())
+    setup = application_setup(service)
+    memory_llm = object()
+    setup._memory_llm_service = memory_llm
+    owner = service.action_trace_collector._owner
+    close_threads = []
+    original_shutdown = service.shutdown
+
+    def shutdown():
+        close_threads.append(threading.get_ident())
+        original_shutdown()
+
+    def close_llm(client):
+        assert client is memory_llm
+        assert not service._worker._memory_thread.is_alive()
+        assert tool_result_summary._trace_collector is None
+        assert parallel_executor._trace_collector is None
+
+    manager = SimpleNamespace(
+        close_service=Mock(side_effect=close_llm), drain_pending_closes=AsyncMock()
+    )
+    try:
+        with (
+            patch.object(service, "shutdown", side_effect=shutdown) as close,
+            patch.object(ServiceManager, "get_instance", return_value=manager),
+        ):
+            await asyncio.gather(setup.shutdown(), setup.shutdown())
+            await setup.shutdown()
+            close.assert_called_once()
+            manager.close_service.assert_called_once_with(memory_llm)
+        assert close_threads != [threading.get_ident()]
+        assert setup._memory_service is None
+        assert setup._memory_llm_service is None
+        assert setup.services["memory"] is None
+        assert not any(
+            hook.owner == owner for hook in HookRegistry.get_instance().get_hooks()
+        )
+        second = SQLiteMemoryService(tmp_path / "second.db")
+        second.enable_action_trace(HookRegistry.get_instance())
+        second_setup = application_setup(second)
+        with patch.object(ServiceManager, "get_instance", return_value=manager):
+            await second_setup.shutdown()
+        assert not second._worker._memory_thread.is_alive()
+        assert tool_result_summary._trace_collector is None
+    finally:
+        service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["enable_trace", "context_publication"])
+async def test_application_shutdown_cleans_partial_memory_setup(
+    tmp_path, monkeypatch, failure
+):
+    from AgentCrew import setup as setup_module
+    from AgentCrew.modules.llm.service_manager import ServiceManager
+    from AgentCrew.modules.memory import context_persistent, engine_selection
+
+    setup = application_setup()
+    primary, memory_llm = object(), object()
+    manager = SimpleNamespace(
+        get_service_for_selection=Mock(return_value=primary),
+        initialize_auxiliary_service=Mock(return_value=memory_llm),
+        close_service=Mock(),
+        drain_pending_closes=AsyncMock(),
+    )
+    monkeypatch.setattr(ServiceManager, "get_instance", lambda: manager)
+    monkeypatch.setattr(
+        setup_module,
+        "GlobalConfig",
+        lambda: SimpleNamespace(
+            read=lambda: {"global_settings": {}},
+            get_last_used_model=lambda: None,
+            get_last_used_provider=lambda: None,
+        ),
+    )
+    monkeypatch.setattr(
+        setup_module,
+        "resolve_model_selection",
+        lambda *args, **kwargs: SimpleNamespace(
+            source=setup_module.ModelSelectionSource.DEFAULT
+        ),
+    )
+    monkeypatch.setattr(
+        setup_module,
+        "resolve_reasoning_selection",
+        lambda *args: SimpleNamespace(level="none"),
+    )
+    monkeypatch.setattr(setup_module, "default_reasoning_for_service", lambda _: "none")
+    monkeypatch.setattr(setup_module, "apply_reasoning_to_service", Mock())
+    monkeypatch.setattr(engine_selection, "resolve_memory_engine", lambda _: "sqlite")
+    monkeypatch.setattr(
+        engine_selection,
+        "ensure_sqlite_store",
+        lambda *args, **kwargs: tmp_path / "partial.db",
+    )
+    for attribute in (
+        "sqlite_store_path",
+        "chroma_source_path",
+        "sqlite_migration_work_path",
+    ):
+        monkeypatch.setattr(engine_selection, attribute, lambda: tmp_path)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("fictional partial setup failure")
+
+    if failure == "enable_trace":
+        enable = SQLiteMemoryService.enable_action_trace
+
+        def enable_then_fail(service, hooks):
+            enable(service, hooks)
+            fail()
+
+        monkeypatch.setattr(
+            SQLiteMemoryService, "enable_action_trace", enable_then_fail
+        )
+    else:
+        monkeypatch.setattr(context_persistent, "ContextPersistenceService", fail)
+    try:
+        with pytest.raises(RuntimeError, match="fictional partial setup failure"):
+            setup.setup_services(SimpleNamespace(provider="fictional"))
+        assert setup.services is None
+        service = setup._memory_service
+        assert service._worker._memory_thread.is_alive()
+        assert tool_result_summary._trace_collector is service.action_trace_collector
+        manager.close_service.assert_not_called()
+    finally:
+        await setup.shutdown()
+    assert not service._worker._memory_thread.is_alive()
+    assert setup._memory_service is None
+    assert tool_result_summary._trace_collector is None
+    assert parallel_executor._trace_collector is None
+    assert not any(
+        hook.owner and hook.owner.startswith("action_trace:")
+        for hook in HookRegistry.get_instance().get_hooks()
+    )
+    manager.close_service.assert_called_once_with(memory_llm)
+
+
+@pytest.mark.asyncio
+async def test_application_shutdown_closes_legacy_worker_without_trace(
+    tmp_path, monkeypatch
+):
+    from AgentCrew.modules.llm.service_manager import ServiceManager
+    from AgentCrew.modules.memory.chroma_service import ChromaMemoryService
+
+    monkeypatch.setenv("MEMORYDB_PATH", str(tmp_path / "legacy" / "memory"))
+    service = ChromaMemoryService()
+    setup = application_setup(service)
+    manager = SimpleNamespace(drain_pending_closes=AsyncMock())
+    try:
+        assert service._worker._memory_thread.is_alive()
+        with patch.object(ServiceManager, "get_instance", return_value=manager):
+            await setup.shutdown()
+            await setup.shutdown()
+        assert not service._worker._memory_thread.is_alive()
+        assert tool_result_summary._trace_collector is None
+        assert parallel_executor._trace_collector is None
+        assert not hasattr(service, "action_trace_collector")
+    finally:
+        service.shutdown()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("turn_id", "x" * 161),
+        ("turn_id", "turn\ncontrol"),
+        ("inference_scope", "x" * 161),
+        ("inference_scope", "job:\x7fcontrol"),
+        ("agent_name", "Engineer\u202e"),
+        ("coverage", "invented_coverage"),
+        ("started_at", float("nan")),
+        ("started_at", float("inf")),
+        ("started_at", -1),
+        ("started_at", True),
+        ("completed_at", float("inf")),
+        ("completed_at", -1),
+        ("observed_count", True),
+        ("stored_count", True),
+        ("observed_count", -1),
+        ("observed_count", 2**63),
+        ("incomplete_reasons", ("x" * 81,)),
+        ("incomplete_reasons", ("bad\nreason",)),
+        ("incomplete_reasons", ("bad\u0085reason",)),
+        ("incomplete_reasons", ("gap", "gap")),
+        ("resource_references", ("https://fictional.invalid/secret",)),
+        ("resource_references", ("a" * 63,)),
+        ("resource_references", ("A" * 64,)),
+        ("resource_references", ("b" * 64, "b" * 64)),
+    ],
+)
+def test_trace_contract_rejects_invalid_header_atomically(service, field, value):
+    repository = service._repository
+    repository.persist_turn(record(), "initial")
+    snapshot = replace(trace(service.action_trace_collector), **{field: value})
+    with pytest.raises(SQLiteMemoryError):
+        repository.persist_turn(
+            replace(record(), document=DOCUMENT.replace("saved", "changed")),
+            "bad",
+            snapshot,
+        )
+    assert repository.get_record("memory", "Engineer").document == DOCUMENT
+    assert counts(repository) == (1, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("action_id", "x" * 161),
+        ("action_id", "action\ncontrol"),
+        ("tool_name", "x" * 161),
+        ("tool_name", "tool\tcontrol"),
+        ("tool_call_id", "x" * 161),
+        ("tool_call_id", "call\x7fcontrol"),
+        ("parent_action_id", "x" * 161),
+        ("parent_action_id", "parent\u202e"),
+        ("request_reference", "x" * 193),
+        ("request_reference", "invented_reference"),
+        ("result_reference", "tool_result:wrong_call"),
+        ("result_reference", "bad\nreference"),
+        ("kind", "thought"),
+        ("status", "invented_status"),
+        ("provenance", "model_reported"),
+        ("summary_availability", "invented_summary_state"),
+        ("summary_provenance", "runtime_observed"),
+        ("summary_truncated", 1),
+        ("result_summary", "x" * 1025),
+        ("event_index", True),
+        ("event_index", 5),
+        ("batch", True),
+        ("batch", -1),
+        ("batch", 2**31),
+        ("batch", 1.5),
+        ("ordinal", -1),
+        ("ordinal", float("inf")),
+        ("ordinal", True),
+        ("started_at", float("nan")),
+        ("started_at", -1),
+        ("completed_at", float("inf")),
+        ("completed_at", -1),
+        ("completed_at", True),
+        ("duration_ms", float("nan")),
+        ("duration_ms", float("inf")),
+        ("duration_ms", -1),
+        ("duration_ms", True),
+        ("duration_ms", None),
+    ],
+)
+def test_trace_contract_rejects_invalid_event_atomically(service, field, value):
+    snapshot = trace(service.action_trace_collector)
+    events = list(snapshot.events)
+    events[1] = replace(events[1], **{field: value})
+    with pytest.raises(SQLiteMemoryError):
+        service._repository.persist_turn(
+            record(), "invalid", replace(snapshot, events=tuple(events))
+        )
+    assert counts(service._repository) == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "noncontiguous",
+        "episode_order",
+        "event_order",
+        "outside_episode",
+        "summary_controls",
+        "self_parent",
+    ],
+)
+def test_trace_contract_cross_field_invariants(service, case):
+    snapshot = trace(service.action_trace_collector)
+    events = list(snapshot.events)
+    if case == "noncontiguous":
+        events = [
+            replace(event, event_index=index + 1) for index, event in enumerate(events)
+        ]
+    elif case == "episode_order":
+        snapshot = replace(snapshot, started_at=snapshot.completed_at + 1)
+    elif case == "event_order":
+        events[1] = replace(events[1], completed_at=events[1].started_at - 1)
+    elif case == "outside_episode":
+        events[1] = replace(events[1], completed_at=snapshot.completed_at + 1)
+    elif case == "summary_controls":
+        events[1] = replace(
+            events[1],
+            result_summary="unsafe\u0085summary",
+            summary_availability="ready",
+            summary_provenance="model_reported",
+        )
+    else:
+        events[1] = replace(events[1], parent_action_id=events[1].action_id)
+    with pytest.raises(SQLiteMemoryError):
+        service._repository.persist_turn(
+            record(), "invalid", replace(snapshot, events=tuple(events))
+        )
+    assert counts(service._repository) == (0, 0, 0)
+
+
+def corrupted_action_payload(snapshot, case):
+    payload = asdict(snapshot.events[1])
+    if case == "oversized":
+        return json.dumps({"leaked": "fictional_persisted_leak" * 2000})
+    if case == "invalid_utf8":
+        return b"\xfffictional_persisted_leak"
+    if case == "deep_json":
+        return "[" * 1500 + '"fictional_persisted_leak"' + "]" * 1500
+    if case == "duplicate_key":
+        return json.dumps(payload)[:-1] + ',"status":"fictional_persisted_leak"}'
+    if case == "unknown_field":
+        payload["hidden_reasoning"] = "fictional_persisted_leak"
+    elif case == "invalid_enum":
+        payload["status"] = "fictional_persisted_leak"
+    elif case == "controls":
+        payload["tool_name"] = "fictional_persisted_leak\n"
+    elif case == "oversized_id":
+        payload["action_id"] = "fictional_persisted_leak" * 10
+    elif case == "nan":
+        payload["duration_ms"] = float("nan")
+    elif case == "inf":
+        payload["completed_at"] = float("inf")
+    elif case == "negative":
+        payload["ordinal"] = -1
+    elif case == "bool_position":
+        payload["batch"] = True
+    elif case == "wrong_owner":
+        payload["agent_name"] = "fictional_persisted_leak"
+    elif case == "missing_key":
+        del payload["tool_name"]
+    elif case == "json_array":
+        return '["fictional_persisted_leak"]'
+    return json.dumps(payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "oversized",
+        "invalid_utf8",
+        "deep_json",
+        "duplicate_key",
+        "unknown_field",
+        "invalid_enum",
+        "controls",
+        "oversized_id",
+        "nan",
+        "inf",
+        "negative",
+        "bool_position",
+        "wrong_owner",
+        "missing_key",
+        "json_array",
+    ],
+)
+async def test_corrupted_action_hydration_fails_closed_preserving_memory(service, case):
+    snapshot = trace(service.action_trace_collector)
+    repository = service._repository
+    repository.persist_turn(record(), "initial", snapshot)
+    with repository._transaction(write=True) as connection:
+        connection.execute(
+            "UPDATE memory_action SET payload_json=? WHERE event_index=1",
+            (corrupted_action_payload(snapshot, case),),
+        )
+    result = repository.get_action_traces(["memory"], "Engineer")["memory"]
+    assert result["availability"] == "truncated"
+    assert "invalid_persisted_action" in result["incomplete_reasons"]
+    assert result["episodes"][0]["actions"] == []
+    assert "does not mean no actions occurred" in result["warning"]
+    assert "fictional_persisted_leak" not in json.dumps(result)
+    handler = get_memory_retrieve_tool_handler(MemoryToolContext("Engineer", service))
+    hydrated = await handler(
+        query="fictional widget", detail="full", memory_ids=["memory"]
+    )
+    assert DOCUMENT in hydrated
+    assert "invalid_persisted_action" in hydrated
+    assert "fictional_persisted_leak" not in hydrated
+    assert "not authorization or proof of current external state" in hydrated
+
+
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        ("incomplete_json", '["fictional_persisted_leak\\n"]'),
+        ("resources_json", '["fictional_persisted_leak"]'),
+        ("resources_json", "x" * 5000),
+        ("resources_json", b"\xfffictional_persisted_leak"),
+        ("coverage", "fictional_persisted_leak"),
+        ("turn_id", "fictional_persisted_leak\n"),
+        ("inference_scope", "fictional_persisted_leak" * 30),
+        ("session_id", "fictional_persisted_leak\t"),
+        ("session_id", "fictional_persisted_leak"),
+        ("started_at", -1),
+        ("completed_at", float("inf")),
+        ("stored_count", 257),
+    ],
+)
+def test_corrupted_episode_hydration_fails_closed(service, column, value):
+    repository = service._repository
+    repository.persist_turn(record(), "initial", trace(service.action_trace_collector))
+    with repository._transaction(write=True) as connection:
+        if column == "turn_id":
+            connection.execute("DELETE FROM memory_action")
+        connection.execute(f"UPDATE memory_episode SET {column}=?", (value,))
+    result = repository.get_action_traces(["memory"], "Engineer")["memory"]
+    assert result["availability"] == "truncated"
+    assert "invalid_persisted_episode" in result["incomplete_reasons"]
+    assert result["episodes"] == []
+    assert "fictional_persisted_leak" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "corruption", ["missing_row", "column_mismatch", "noncontiguous"]
+)
+def test_action_row_consistency_validated_before_hydration(service, corruption):
+    repository = service._repository
+    repository.persist_turn(record(), "initial", trace(service.action_trace_collector))
+    with repository._transaction(write=True) as connection:
+        if corruption == "missing_row":
+            connection.execute("DELETE FROM memory_action WHERE event_index=1")
+        elif corruption == "column_mismatch":
+            connection.execute("UPDATE memory_action SET batch=-1 WHERE event_index=1")
+        else:
+            connection.execute(
+                "UPDATE memory_action SET event_index=9 WHERE event_index=1"
+            )
+    result = repository.get_action_traces(["memory"], "Engineer")["memory"]
+    assert result["availability"] == "truncated"
+    assert "invalid_persisted_action" in result["incomplete_reasons"]
+    assert result["episodes"][0]["actions"] == []
+
+
+def test_per_agent_snapshot_indices_are_contiguous_and_valid(service):
+    collector = service.action_trace_collector
+    token = bind_inference_scope("job:agents")
+    try:
+        collector.before_tool(context("parent", "Engineer"))
+        collector.before_tool(context("child", "Other"))
+        collector.after_tool(context("child", "Other"), None)
+        collector.after_tool(context("parent", "Engineer"), None)
+        collector.complete("Other")
+        collector.complete("Engineer")
+        for agent in ("Engineer", "Other"):
+            snapshot = collector.snapshot(agent)
+            assert [event.event_index for event in snapshot.events] == list(
+                range(snapshot.stored_count)
+            )
+            key = service._repository.persist_turn(
+                replace(record(agent), agent_name=agent), agent, snapshot
+            )
+            assert (
+                service.get_action_traces([key], agent)[key]["availability"]
+                == "supported"
+            )
+    finally:
+        reset_inference_scope(token)
+
+
+def test_ready_summary_controls_are_sanitized_only_at_snapshot(service):
+    from AgentCrew.modules.memory.action_trace import validate_action_trace
+
+    collector = service.action_trace_collector
+    token = bind_inference_scope("job:summary-controls")
+    try:
+        collector.before_tool(context())
+        collector.after_tool(context(), None)
+        collector.complete("Engineer")
+        summaries = SimpleNamespace(
+            get_ready_summary=lambda *args: "First\nsecond\u202ethird"
+        )
+        snapshot = collector.snapshot("Engineer", summaries)
+        assert snapshot.events[1].result_summary == "First second third"
+        validate_action_trace(snapshot, "Engineer")
+    finally:
+        reset_inference_scope(token)
+
+
+def test_hook_execution_does_not_call_background_validators(service):
+    from AgentCrew.modules.memory import action_trace
+
+    collector = service.action_trace_collector
+    token = bind_inference_scope("job:validation-boundary")
+    try:
+        with (
+            patch.object(
+                action_trace,
+                "validate_action_trace",
+                side_effect=AssertionError("validation on hook path"),
+            ),
+            patch.object(
+                action_trace,
+                "validate_action_event",
+                side_effect=AssertionError("validation on hook path"),
+            ),
+        ):
+            collector.before_tool(context())
+            collector.after_tool(context(), object())
+            collector.complete("Engineer")
+            assert collector.snapshot("Engineer").stored_count == 3
+    finally:
+        reset_inference_scope(token)
+
+
+def test_contract_maximum_valid_bounds_roundtrip(service):
+    from AgentCrew.modules.memory.action_trace import MAX_ACTION_JSON_BYTES
+
+    snapshot = trace(service.action_trace_collector)
+    agent, call = "😀" * 160, "c" * 160
+    event = replace(
+        snapshot.events[1],
+        action_id="a" * 160,
+        parent_action_id="p" * 160,
+        event_index=0,
+        batch=2**31 - 1,
+        ordinal=2**31 - 1,
+        agent_name=agent,
+        tool_name="t" * 160,
+        tool_call_id=call,
+        request_reference=f"tool_call:{call}",
+        result_reference=f"tool_result:{call}",
+        result_summary="😀" * 1024,
+        summary_provenance="model_reported",
+        summary_availability="ready",
+    )
+    snapshot = replace(
+        snapshot,
+        turn_id="t" * 160,
+        inference_scope="s" * 160,
+        agent_name=agent,
+        events=(event,),
+        observed_count=2**63 - 1,
+        stored_count=1,
+        incomplete_reasons=tuple(
+            (f"reason_{index}_" + "r" * 80)[:80] for index in range(16)
+        ),
+        resource_references=tuple(f"{index:064x}" for index in range(32)),
+    )
+    repository = service._repository
+    key = repository.persist_turn(
+        replace(record(), agent_name=agent), "maximum", snapshot
+    )
+    with repository._transaction() as connection:
+        size = connection.execute(
+            "SELECT length(CAST(payload_json AS BLOB)) FROM memory_action"
+        ).fetchone()[0]
+    assert size <= MAX_ACTION_JSON_BYTES
+    result = repository.get_action_traces([key], agent)[key]
+    assert result["episodes"][0]["actions"][0] == asdict(event)
+    assert not any(
+        reason.startswith("invalid_persisted")
+        for reason in result["incomplete_reasons"]
+    )
+
+
+def test_reinitialization_without_shutdown_preserves_existing_ownership(service):
+    setup = application_setup(service)
+    with pytest.raises(RuntimeError, match="Shut down owned memory"):
+        setup.setup_services(SimpleNamespace(provider="fictional"))
+    assert setup._memory_service is service
+    assert tool_result_summary._trace_collector is service.action_trace_collector
