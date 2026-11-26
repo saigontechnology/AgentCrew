@@ -222,6 +222,78 @@ def test_google_base_rates_exclude_dated_launch_discounts(model_id, expected):
     ) == expected
 
 
+REFUSELESS_EXPECTED = {
+    "glm-5.3-abliterated": ("GLM 5.3 Abliterated", 1.00, 2.00, 0.15, 256_000),
+    "glm-5.3-flash-abliterated": (
+        "GLM 5.3 Flash Abliterated",
+        0.12,
+        0.50,
+        0.025,
+        400_000,
+    ),
+    "deepseek-v4.1-flash-abliterated": (
+        "DeepSeek V4.1 Flash 1017 Abliterated",
+        0.12,
+        0.45,
+        0.019,
+        400_000,
+    ),
+    "deepseek-v4.1-flash-abliterated-fast": (
+        "DeepSeek V4.1 Flash 1017 Fast Abliterated",
+        0.12,
+        0.45,
+        0.025,
+        400_000,
+    ),
+    "kimi-k3.1-pro-abliterated": (
+        "Kimi K3.1 Pro Abliterated",
+        1.50,
+        3.00,
+        0.15,
+        256_000,
+    ),
+}
+
+
+def test_refuseless_available_catalog_and_single_default(registry):
+    models = registry.get_models_by_provider("refuseless")
+    assert len(models) == len(REFUSELESS_EXPECTED)
+    assert {m.id for m in models} == set(REFUSELESS_EXPECTED)
+    assert [m.id for m in models if m.default] == [DEFAULTS["refuseless"]]
+    assert PROVIDER_MODEL_MODULES["refuseless"] == (
+        "AgentCrew.modules.llm.model_definitions.refuseless",
+        "REFUSELESS_MODELS",
+    )
+    assert registry.get_current_model() is None
+
+
+@pytest.mark.parametrize("model_id,expected", REFUSELESS_EXPECTED.items())
+def test_refuseless_metadata_and_lazy_registry_selection(registry, model_id, expected):
+    registry.get_models_by_provider("refuseless")
+    qualified_id = f"refuseless/{model_id}"
+    model = registry.get_model(qualified_id)
+    assert model is catalog_model("refuseless", model_id)
+    assert (
+        model.name,
+        model.input_token_price_1m,
+        model.output_token_price_1m,
+        model.cached_token_price_1m,
+        model.max_context_token,
+    ) == expected
+    assert model.provider == "refuseless"
+    assert model.resolved_service_name() == "refuseless"
+    assert model.service_name is None
+    assert model.default == (model_id == DEFAULTS["refuseless"])
+    assert set(model.capabilities) == (
+        {"tool_use", "thinking", "stream"}
+        if model_id
+        in {"deepseek-v4.1-flash-abliterated-fast", "kimi-k3.1-pro-abliterated"}
+        else {"tool_use", "thinking", "vision", "stream"}
+    )
+    assert registry.set_current_model(qualified_id)
+    assert registry.get_current_model() is model
+
+
 def test_haiku_uses_long_prompt_tier_and_effective_context_not_provider_maximum():
     model = catalog_model("claude", "claude-haiku-5-5")
     assert (model.input_token_price_1m, model.output_token_price_1m) == (0.5, 2.5)
