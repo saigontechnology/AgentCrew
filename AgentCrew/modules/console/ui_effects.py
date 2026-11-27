@@ -238,17 +238,10 @@ class UIEffects:
             preview.append(label)
             content = Text()
             for kind, chunk in run.entries:
-                if kind == "tool":
-                    if content and not content.plain.endswith("\n"):
-                        content.append("\n")
-                    content.append(f"Tool: {chunk}\n", style=RICH_STYLE_GRAY)
-                else:
-                    content.append(
-                        chunk,
-                        style=RICH_STYLE_GRAY
-                        if kind == "thinking"
-                        else RICH_STYLE_WHITE,
-                    )
+                content.append(
+                    chunk,
+                    style=RICH_STYLE_GRAY if kind == "thinking" else RICH_STYLE_WHITE,
+                )
             rows = [row for row in content.wrap(self.console, width) if row.plain]
             preview.extend(rows[-5:])
         return Panel(Group(*preview), title="Delegating", border_style="yellow")
@@ -293,6 +286,8 @@ class UIEffects:
         self, run_id: str, agent_name: str, kind: str, text: str
     ) -> None:
         """Update the shared live preview for a single delegate run."""
+        if kind == "tool":
+            return
         with self._delegate_lock:
             if kind == "start":
                 if run_id in self._delegate_agents:
