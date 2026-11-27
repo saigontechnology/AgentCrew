@@ -170,6 +170,7 @@ class GoogleAINativeService(BaseLLMService):
                 "gemini-4-carbon",
                 "gemini-4-argon",
                 "gemini-4-hydrogen",
+                "gemini-4-neon",
             }
             else types.ThinkingConfig(thinking_budget=0)
         )

@@ -98,4 +98,16 @@ GOOGLE_MODELS = [
         cached_token_price_1m=0.075,
         default_reasoning="medium",
     ),
+    Model(
+        id="gemini-4-neon",
+        provider="google",
+        name="Gemini 4 Neon",
+        description="Frontier reasoning with fast task completion for complex coding, knowledge work, and science; paid tier only",
+        capabilities=["tool_use", "thinking", "vision", "stream", "structured_output"],
+        max_context_token=128_000,
+        input_token_price_1m=3.0,
+        output_token_price_1m=15.0,
+        cached_token_price_1m=0.15,
+        default_reasoning="high",
+    ),
 ]

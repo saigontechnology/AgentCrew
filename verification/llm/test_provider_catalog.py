@@ -210,6 +210,7 @@ def test_custom_and_raw_model_fallbacks_are_preserved(registry):
         ("gemini-4-carbon", (4.0, 20.0, 0.2, 128_000)),
         ("gemini-4-argon", (4.0, 20.0, 0.2, 128_000)),
         ("gemini-4-hydrogen", (1.5, 7.5, 0.075, 256_000)),
+        ("gemini-4-neon", (3.0, 15.0, 0.15, 128_000)),
     ],
 )
 def test_google_base_rates_exclude_dated_launch_discounts(model_id, expected):
@@ -220,6 +221,26 @@ def test_google_base_rates_exclude_dated_launch_discounts(model_id, expected):
         model.cached_token_price_1m,
         model.max_context_token,
     ) == expected
+
+
+def test_google_neon_metadata_and_registry_selection(registry):
+    registry.get_models_by_provider("google")
+    model = registry.get_model("google/gemini-4-neon")
+    assert model is catalog_model("google", "gemini-4-neon")
+    assert model.name == "Gemini 4 Neon"
+    assert model.resolved_service_name() == "google"
+    assert model.service_name is None
+    assert set(model.capabilities) == {
+        "tool_use",
+        "thinking",
+        "vision",
+        "stream",
+        "structured_output",
+    }
+    assert model.default_reasoning == "high"
+    assert not model.default
+    assert registry.set_current_model("google/gemini-4-neon")
+    assert registry.get_current_model() is model
 
 
 REFUSELESS_EXPECTED = {
@@ -338,6 +359,7 @@ NEW_MODELS = [
     ("google", "gemini-4-argon"),
     ("google", "gemini-4-carbon"),
     ("google", "gemini-4-hydrogen"),
+    ("google", "gemini-4-neon"),
     ("deepinfra", "Qwen/Qwen4-Max"),
     ("deepinfra", "moonshotai/Kimi-K3.1-Pro"),
     ("deepinfra", "nvidia/NVIDIA-Nemotron-3.5-Super-VL"),
