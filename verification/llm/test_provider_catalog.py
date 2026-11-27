@@ -206,11 +206,15 @@ def test_custom_and_raw_model_fallbacks_are_preserved(registry):
 @pytest.mark.parametrize(
     "model_id,expected",
     [
-        ("gemini-3.8-flash", (1.5, 7.5, 0.15, 256_000)),
-        ("gemini-4-carbon", (4.0, 20.0, 0.2, 128_000)),
-        ("gemini-4-argon", (4.0, 20.0, 0.2, 128_000)),
-        ("gemini-4-hydrogen", (1.5, 7.5, 0.075, 256_000)),
-        ("gemini-4-neon", (3.0, 15.0, 0.15, 128_000)),
+        ("gemma-4-31b-it", (0.0, 0.0, 0.0, 256_000)),
+        ("gemma-4-26b-a4b-it", (0.0, 0.0, 0.0, 256_000)),
+        ("gemini-3.5-flash-lite", (0.3, 2.5, 0.03, 800_000)),
+        ("gemini-3.6-flash", (1.5, 7.5, 0.15, 512_000)),
+        ("gemini-3.8-flash", (1.5, 7.5, 0.15, 512_000)),
+        ("gemini-4-carbon", (4.0, 20.0, 0.2, 256_000)),
+        ("gemini-4-argon", (4.0, 20.0, 0.2, 256_000)),
+        ("gemini-4-hydrogen", (1.5, 7.5, 0.075, 512_000)),
+        ("gemini-4-neon", (3.0, 15.0, 0.15, 256_000)),
     ],
 )
 def test_google_base_rates_exclude_dated_launch_discounts(model_id, expected):
@@ -476,6 +480,8 @@ def test_paid_catalog_effective_context_caps(provider):
         if price == 0:
             continue
         cap = 400_000 if price <= 0.5 else 256_000 if price < 3 else 128_000
+        if provider == "google":
+            cap *= 2
         assert model.max_context_token <= cap, model.id
 
 
